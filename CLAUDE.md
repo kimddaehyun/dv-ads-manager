@@ -38,6 +38,19 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `src/lib/friendly-error.ts` — 사용자 친화적 에러 변환
 - `manifest.config.ts` — `@crxjs/vite-plugin`이 빌드 시 manifest.json 생성
 
+## 디자인 시스템
+
+모든 시각 결정(색·간격·타이포·컴포넌트)의 **단일 진실의 원천**은 [`docs/DESIGN.md`](./docs/DESIGN.md). UI를 작성/수정할 때는 반드시 이 문서를 먼저 확인한다. 핵심:
+
+- **카드 v5 flat** — 보더·그림자 없이 페이지 배경(#fafafa)과 흰 카드(#fff)의 1% 명도차로만 구분.
+- **버튼 Vercel strict** — sm 28 / md 32 / lg 40, radius 6px, weight 500, `box-shadow` 절대 금지.
+- **버튼 역할** — default(검정 워밍 잉크 #1F1714) 95% 케이스 / **brand(DV 주황 #E6783B) 화면당 단 1개** / secondary(연회색).
+- **DV 주황 사용 면적 ~3% 이내** — 로고 + 1차 CTA + F001 "현재 N위 ▾" 배지 + focus ring. 페이지 배경·본문 텍스트·카드 보더·default 버튼 등에는 절대 X.
+- **Pretendard 1순위**, 3-weight(400/500/600) 시스템. 700 bold 금지.
+- **콘텐츠 오버레이는 `dvads-` prefix로 격리** — `ads.naver.com` 호스트 CSS와 충돌 방지.
+
+새 패턴이 필요하면 코드에 즉흥 도입하지 말고 `docs/DESIGN.md`를 먼저 갱신한 뒤 반영.
+
 ## License 시스템
 
 `naver-tag-picker`와 **같은 Supabase 프로젝트**를 재사용한다. 라이선스 키 한 개로 두 확장 모두 사용 가능한 구조(C 옵션). `verify_access` RPC 호출은 그대로, 별도 product 분기 없음.
