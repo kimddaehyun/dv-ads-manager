@@ -45,7 +45,7 @@ export type RankPosition = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13
 export const MAX_POSITION = 15;
 
 /**
- * F001 — 키워드별 1~10위 예상 입찰가 캐시.
+ * F001 — 키워드별 1~15위 예상 입찰가 캐시.
  * chrome.storage.local 키: `volume_cache:<keyword>`
  *
  * 데이터 소스: `POST /estimate/average-position-bid/keyword` (네이버 검색광고 API).

@@ -11,7 +11,7 @@
  * 추정치 — 호출자 customerId와 무관하게 동일하므로 캐시 키를 광고주별로 스코프할 필요가 없다.
  */
 
-/** F001 — 키워드별 1~10위 예상 입찰가 캐시 키 prefix */
+/** F001 — 키워드별 1~15위 예상 입찰가 캐시 키 prefix */
 export const VOLUME_CACHE_PREFIX = "volume_cache:";
 
 /** F002/F003 — 쇼핑 키워드별 순위 캐시 키 prefix */
