@@ -2,6 +2,7 @@ import logoUrl from "@/assets/icon-128.png";
 import { DemoSection } from "./DemoSection";
 import { CredentialsUi } from "@/options/credentials-ui";
 import { DUMMY_CREDENTIALS } from "./fixtures";
+import { PopupView } from "@/popup/App";
 
 export default function App() {
   return (
@@ -44,6 +45,18 @@ export default function App() {
 
         <DemoSection title="옵션 F011 · 라이선스 미설정 (잠금)">
           <CredentialsUi state="locked" />
+        </DemoSection>
+
+        <DemoSection title="팝업 F012 · 정상" description="라이선스 활성 + API 등록됨 — brand 버튼 0개">
+          <PopupView state="ok" />
+        </DemoSection>
+
+        <DemoSection title="팝업 F012 · API 미등록" description="brand 1개 (옵션 열기)">
+          <PopupView state="no-cred" />
+        </DemoSection>
+
+        <DemoSection title="팝업 F012 · 라이선스 미설정" description="empty state, brand 1개">
+          <PopupView state="no-license" />
         </DemoSection>
       </div>
     </div>
