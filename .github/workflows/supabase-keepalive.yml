@@ -1,0 +1,36 @@
+name: Supabase Keep-Alive
+
+on:
+  schedule:
+    # 3일에 한 번 UTC 12:00 (KST 21:00). 매월 1, 4, 7, ..., 28, 31일
+    - cron: "0 12 */3 * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "::error::SUPABASE_URL 또는 SUPABASE_ANON_KEY secret이 설정되지 않았습니다."
+            exit 1
+          fi
+          # 읽기 전용 RPC(verify_access)를 제로 UUID로 호출 → DB 활동 카운트.
+          # 행이 없으니 invalid_key만 반환하고 사이드이펙트는 없음.
+          status=$(curl -sS -o /tmp/resp.txt -w "%{http_code}" \
+            -X POST \
+            "${SUPABASE_URL%/}/rest/v1/rpc/verify_access" \
+            -H "apikey: $SUPABASE_ANON_KEY" \
+            -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"p_key":"00000000-0000-0000-0000-000000000000","p_device_id":"00000000-0000-0000-0000-000000000000"}')
+          echo "Supabase responded with HTTP $status"
+          head -c 300 /tmp/resp.txt; echo
+          if [ "$status" -lt 200 ] || [ "$status" -ge 300 ]; then
+            echo "::error::Unexpected HTTP $status"
+            exit 1
+          fi

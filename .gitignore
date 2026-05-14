@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-zip
+.DS_Store
+*.log
+.env*
+!.env.example
+.vscode
+.idea
+.claude/settings.local.json
+.claude.local.md
+*.tsbuildinfo
