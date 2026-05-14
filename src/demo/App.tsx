@@ -1,4 +1,7 @@
 import logoUrl from "@/assets/icon-128.png";
+import { DemoSection } from "./DemoSection";
+import { CredentialsUi } from "@/options/credentials-ui";
+import { DUMMY_CREDENTIALS } from "./fixtures";
 
 export default function App() {
   return (
@@ -16,10 +19,32 @@ export default function App() {
       </header>
 
       <div className="space-y-12">
-        {/* 시안 섹션들은 후속 Task에서 추가 */}
-        <p className="text-sm text-gray-500 italic">
-          시안은 다음 Task에서 추가됩니다.
-        </p>
+        <DemoSection title="옵션 F011 · 미등록">
+          <CredentialsUi state="empty" onSubmit={(v) => console.log("submit", v)} />
+        </DemoSection>
+
+        <DemoSection title="옵션 F011 · 등록됨">
+          <CredentialsUi
+            state="registered"
+            initial={DUMMY_CREDENTIALS}
+            onEdit={() => console.log("edit")}
+            onDelete={() => console.log("delete")}
+          />
+        </DemoSection>
+
+        <DemoSection title="옵션 F011 · 등록 실패">
+          <CredentialsUi
+            state="error"
+            initial={DUMMY_CREDENTIALS}
+            errorMessage="API 인증 실패 (401). 광고관리자에서 발급받은 secretKey가 맞는지 확인해주세요."
+            onCancel={() => console.log("cancel")}
+            onSubmit={(v) => console.log("retry", v)}
+          />
+        </DemoSection>
+
+        <DemoSection title="옵션 F011 · 라이선스 미설정 (잠금)">
+          <CredentialsUi state="locked" />
+        </DemoSection>
       </div>
     </div>
   );
