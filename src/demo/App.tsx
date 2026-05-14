@@ -3,6 +3,7 @@ import { DemoSection } from "./DemoSection";
 import { CredentialsUi } from "@/options/credentials-ui";
 import { DUMMY_CREDENTIALS } from "./fixtures";
 import { PopupView } from "@/popup/App";
+import { PowerlinkOverlay } from "@/overlay/PowerlinkOverlay";
 
 export default function App() {
   return (
@@ -57,6 +58,27 @@ export default function App() {
 
         <DemoSection title="팝업 F012 · 라이선스 미설정" description="empty state, brand 1개">
           <PopupView state="no-license" />
+        </DemoSection>
+
+        <DemoSection
+          title="F001 · 파워링크 (정상)"
+          description="자격증명 등록 + 라이선스 활성 — 배지 우측 정렬, 클릭 시 1~15위 미니 테이블 펼침"
+        >
+          <PowerlinkOverlay state="ok" />
+        </DemoSection>
+
+        <DemoSection
+          title="F001 · 파워링크 (자격증명 미등록)"
+          description="page banner warn — 배지 미주입"
+        >
+          <PowerlinkOverlay state="no-cred" />
+        </DemoSection>
+
+        <DemoSection
+          title="F001 · 파워링크 (라이선스 미설정)"
+          description="page banner lock — 배지 미주입"
+        >
+          <PowerlinkOverlay state="locked" />
         </DemoSection>
       </div>
     </div>
