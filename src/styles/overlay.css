@@ -1,0 +1,248 @@
+/**
+ * 콘텐츠 오버레이 CSS — ads.naver.com 호스트 페이지 inline 주입용.
+ *
+ * 모든 클래스 `dvads-` prefix로 격리. Tailwind 미사용 — 콘텐츠 스크립트는
+ * React/JSX 외부의 native DOM 조작이라 utility 클래스 컴파일 흐름 밖.
+ *
+ * 토큰 값은 DESIGN.md (src/styles/theme.css)와 일치시켜 유지.
+ * 한 쪽 변경 시 양쪽 동시 갱신.
+ *
+ * 사용처: src/demo/ (시안 검증), src/content/ (Phase 3에서 inline import).
+ */
+
+/* ─── 격리 boundary ─── */
+.dvads {
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-feature-settings: "tnum";
+  color: #171717;
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+.dvads *, .dvads *::before, .dvads *::after { box-sizing: border-box; }
+
+/* ─── 페이지 banner (페이지 상단 고정 안내) ─── */
+.dvads-page-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12px;
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+  border-bottom: 1px solid rgba(230, 120, 59, 0.4);
+  z-index: 2147483647;
+}
+.dvads-page-banner.warn {
+  background: rgba(217, 119, 6, 0.10);
+  color: #d97706;
+  border-bottom-color: rgba(217, 119, 6, 0.4);
+}
+.dvads-page-banner.lock {
+  background: #F3F4F6;
+  color: #666666;
+  border-bottom-color: #ECEEF0;
+}
+.dvads-page-banner .left {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.dvads-page-banner img {
+  width: 16px; height: 16px; border-radius: 3px;
+}
+.dvads-page-banner .right {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  opacity: 0.8;
+}
+.dvads-page-banner a {
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* ─── F001 — 순위 배지 (키워드 셀 우측 끝 inline) ─── */
+.dvads-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease;
+  user-select: none;
+}
+.dvads-rank-badge:hover {
+  background: rgba(230, 120, 59, 0.18);
+}
+.dvads-rank-badge .chev {
+  font-family: "Pretendard Variable", system-ui, sans-serif;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.dvads-rank-badge.warn {
+  background: rgba(217, 119, 6, 0.10);
+  color: #d97706;
+}
+.dvads-rank-badge.lock {
+  background: #F3F4F6;
+  color: #808080;
+  cursor: default;
+}
+.dvads-rank-badge.loading {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-rank-badge.loading::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid #808080;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+@keyframes dvads-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 키워드 셀 spacer (호스트 키워드명과 배지 사이 flex 분리) */
+.dvads-cell-spacer {
+  flex: 1 1 auto;
+}
+
+/* ─── F001 — 펼침 행 (1~15위 미니 테이블) ─── */
+.dvads-expand-row td {
+  padding: 0 !important;
+  background: #fafafa !important;
+}
+.dvads-expand-panel {
+  margin: 10px 12px 14px;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.dvads-expand-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.dvads-expand-hdr .meta {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: #666666;
+}
+.dvads-expand-hdr .refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #666666;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.dvads-expand-hdr .refresh-btn:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+
+.dvads-bid-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.dvads-bid-table th, .dvads-bid-table td {
+  padding: 7px 6px;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+}
+.dvads-bid-table th {
+  color: #666666;
+  font-weight: 500;
+  font-size: 10px;
+  padding-bottom: 6px;
+}
+.dvads-bid-table td { color: #171717; }
+.dvads-bid-table th:first-child,
+.dvads-bid-table td:first-child {
+  text-align: left;
+  color: #666666;
+  font-family: "Pretendard Variable", system-ui, sans-serif;
+  font-size: 11px;
+  width: 90px;
+}
+.dvads-bid-table tr.current td { background: rgba(230, 120, 59, 0.10); }
+.dvads-bid-table tr.current td:first-child { color: #E6783B; font-weight: 600; }
+.dvads-bid-table tr.current td:not(:first-child) { color: #E6783B; font-weight: 600; }
+
+/* ─── F002 — 쇼핑 그룹 토글 버튼 ─── */
+.dvads-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  background: #F3F4F6;
+  color: #171717;
+  border: 0;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease;
+}
+.dvads-toggle-btn:hover { background: #E5E7EB; }
+.dvads-toggle-btn.expanded {
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+}
+.dvads-toggle-btn .chev { font-size: 10px; }
+
+.dvads-shop-panel {
+  margin: 10px 12px 14px;
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.dvads-shop-hdr {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: #666666;
+}
+.dvads-shop-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.dvads-shop-table th, .dvads-shop-table td {
+  padding: 6px 8px;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+.dvads-shop-table th { color: #666666; font-weight: 500; font-size: 10px; }
+.dvads-shop-table td { color: #171717; }
+.dvads-shop-table th:first-child,
+.dvads-shop-table td:first-child {
+  text-align: left;
+  font-family: "Pretendard Variable", system-ui, sans-serif;
+}
+.dvads-shop-table tr.miss td { color: #a3a3a3; }
