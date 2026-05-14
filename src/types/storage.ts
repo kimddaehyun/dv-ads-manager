@@ -32,8 +32,17 @@ export interface LicenseState {
   verified_at: string;
 }
 
-/** 노출 순위 1~10위. F001/F002/F003 모두 동일 범위 사용 */
-export type RankPosition = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
+/**
+ * 노출 순위 1~15위. F001/F002/F003 모두 동일 범위 사용 (네이버 검색결과 1페이지 커버).
+ * 실제 호출 시 사용하는 max는 `MAX_POSITION` 상수로 일원화 (Spike C 결과 반영 가능).
+ */
+export type RankPosition = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
+
+/**
+ * 한 번에 조회할 최대 순위. F001 콘텐츠 오버레이 미니 테이블 컬럼 수.
+ * Spike C(Phase 3 Task 010 1일차) 실호출로 API 단일 호출 max 확정 후 조정.
+ */
+export const MAX_POSITION = 15;
 
 /**
  * F001 — 키워드별 1~10위 예상 입찰가 캐시.

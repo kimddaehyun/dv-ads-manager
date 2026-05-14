@@ -97,7 +97,7 @@
 - **Task 010: F001 파워링크 순위·입찰가 오버레이 구현**
   - **Spike C (1일차)**: 한 번의 실호출로 `POST /estimate/average-position-bid/keyword` 응답 schema 확정 → `RawPositionBidItem` 타입 정의
   - `src/lib/searchad.ts`에 `fetchPositionBids(keywords: string[], cred): Promise<{keyword, rank_to_bid}[]>` 신설
-    - 요청 body: `{device: "PC", items: [{key, position: 1}, ..., {key, position: 10}]}`
+    - 요청 body: `{device: "PC", items: [{key, position: 1}, ..., {key, position: 15}]}` (1페이지 커버. Spike C에서 단일 호출 max 확정 후 `MAX_POSITION` 상수 조정)
     - 429 backoff·400 swallow 기존 패턴 재사용
   - `background/index.ts`에 `GET_BID_ESTIMATE` 메시지 핸들러: `loadCredentials()` → 자격증명 존재 시 `fetchPositionBids` 호출 → 캐시 적재. 미등록이면 `has_credential: false` 응답
   - `volume-cache.ts` 키 스킴: `volume_cache:<keyword>` (구 키 일괄 폐기 또는 TTL 만료 대기)
