@@ -14,15 +14,15 @@ export default function App() {
           개인정보처리방침
         </a>
       </header>
-      <main className="p-4">
+      <main className="p-4 space-y-3">
         <div className="text-xs text-gray-500">
-          광고 대시보드(ads.naver.com)에서 키워드 옆 입찰가·순위가 자동으로 표시됩니다.
+          광고관리자(ads.naver.com)에 진입하면 파워링크 키워드 옆에 순위·예상 입찰가가 자동 표시됩니다.
           <br />
-          API 키 설정은 옵션 페이지에서 진행해주세요.
+          라이선스와 광고주별 API 키 설정은 옵션 페이지에서 진행해주세요.
         </div>
         <button
           type="button"
-          className="mt-3 w-full rounded border px-3 py-1.5 text-xs hover:bg-gray-50"
+          className="w-full rounded border px-3 py-1.5 text-xs hover:bg-gray-50"
           onClick={() => chrome.runtime.openOptionsPage()}
         >
           옵션 열기

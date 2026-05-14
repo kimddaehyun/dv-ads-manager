@@ -15,12 +15,12 @@ const COLLECTED: Row[] = [
   },
   {
     data: "네이버 검색광고 API 자격증명 (Customer ID / Access License / Secret Key)",
-    use: "본인 명의의 검색광고 API 호출 (검색량 조회)",
+    use: "사용자가 등록한 광고주의 검색광고 API 호출 (키워드별 순위·예상 입찰가 조회)",
     destination: "사용자 PC만 (`chrome.storage.local`) - 외부 전송 없음",
   },
   {
-    data: "네이버 쇼핑 검색어 · 검색 결과 · manuTag · sellerTags",
-    use: "패널 안에서 태그 추출·동의어·노출 분석 표시",
+    data: "광고관리자 페이지의 키워드·입찰가·소재 정보",
+    use: "키워드 옆 오버레이에 순위·예상 입찰가 표시",
     destination: "사용자 브라우저 메모리만 - 외부 전송 없음",
   },
 ];

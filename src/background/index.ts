@@ -1,46 +1,19 @@
-import { fetchVolumes, loadCredentials } from "@/lib/searchad";
-import type { KeywordVolume } from "@/lib/searchad";
-import { getCachedVolumes, putVolumes } from "@/lib/volume-cache";
-import { fetchProductSearchPopular } from "@/lib/search-popular";
-import {
-  getCached as getCachedPopular,
-  putCache as putCachePopular,
-} from "@/lib/search-popular-cache";
-import type { ProductPopularResult } from "@/types";
+/**
+ * 디브이 애드 매니저 — MV3 서비스 워커.
+ *
+ * 책임: 콘텐츠 스크립트·팝업·옵션 페이지에서 오는 메시지 라우팅.
+ *   - OPEN_OPTIONS: 옵션 페이지 열기
+ *   - (예정) GET_BID_ESTIMATE: 키워드 + 광고주 customerId → 1~10위 예상 입찰가 (F001)
+ *   - (예정) GET_PRODUCT_RANK: 쇼핑검색광고 소재 → 자동매칭 키워드별 순위·입찰가 (F002/F003, 데이터 소스 TBD)
+ *
+ * 메시지 계약과 핸들러 본문은 docs/PRD.md의 기능 명세를 따른다. 현재는 골격만.
+ */
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("[ad-manager] installed");
+  console.log("[dv-ads] service worker installed");
 });
 
-interface VolumeMessage {
-  type: "GET_VOLUMES";
-  keywords: string[];
-}
-
-interface VolumeResponse {
-  ok: boolean;
-  volumes?: KeywordVolume[];
-  error?: string;
-  hasCredentials: boolean;
-}
-
-interface SearchPopularMessage {
-  type: "GET_SEARCH_POPULAR";
-  keyword: string;
-}
-
-interface SearchPopularResponse {
-  ok: boolean;
-  data?: ProductPopularResult;
-  cached?: boolean;
-  cachedAt?: number;
-  error?: string;
-}
-
-type Msg =
-  | VolumeMessage
-  | SearchPopularMessage
-  | { type: "OPEN_OPTIONS" };
+type Msg = { type: "OPEN_OPTIONS" };
 
 chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
   if (msg?.type === "OPEN_OPTIONS") {
@@ -48,60 +21,7 @@ chrome.runtime.onMessage.addListener((msg: Msg, _sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
-  if (msg?.type === "GET_VOLUMES") {
-    void handleVolumes(msg.keywords).then(sendResponse);
-    return true;
-  }
-  if (msg?.type === "GET_SEARCH_POPULAR") {
-    void handleSearchPopular(msg.keyword).then(sendResponse);
-    return true;
-  }
   return false;
 });
-
-async function handleSearchPopular(
-  keyword: string,
-): Promise<SearchPopularResponse> {
-  try {
-    const cached = await getCachedPopular(keyword);
-    if (cached) {
-      return {
-        ok: true,
-        data: cached.result,
-        cached: true,
-        cachedAt: cached.cachedAt,
-      };
-    }
-    const fresh = await fetchProductSearchPopular(keyword);
-    await putCachePopular(keyword, fresh);
-    return { ok: true, data: fresh, cached: false };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-}
-
-async function handleVolumes(keywords: string[]): Promise<VolumeResponse> {
-  const cred = await loadCredentials();
-  if (!cred) {
-    return { ok: false, error: "API 키 미설정", hasCredentials: false };
-  }
-
-  try {
-    const { hit, miss } = await getCachedVolumes(keywords);
-    let fresh: KeywordVolume[] = [];
-    if (miss.length > 0) {
-      fresh = await fetchVolumes(miss, cred);
-      await putVolumes(fresh);
-    }
-    const all = [...hit.values(), ...fresh];
-    return { ok: true, volumes: all, hasCredentials: true };
-  } catch (e) {
-    return {
-      ok: false,
-      error: e instanceof Error ? e.message : String(e),
-      hasCredentials: true,
-    };
-  }
-}
 
 export {};
