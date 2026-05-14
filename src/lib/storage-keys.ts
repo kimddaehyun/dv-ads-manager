@@ -2,19 +2,14 @@
  * 디브이 애드 매니저 — chrome.storage.local 키 상수와 빌더.
  *
  * 본 확장은 서버 DB 없이 chrome.storage.local에 라이선스·자격증명·캐시를 보관한다.
- * quota는 약 5MB — 광고주 N × 키워드 M × rank_to_bid 누적 시 prune 필요 (MVP 이후 백로그).
+ * quota는 약 5MB — 키워드 누적 시 prune 필요 (MVP 이후 백로그).
  *
- * naver-tag-picker와 공유되지 않는 본 repo 전용 키만 정의. 코어 라이브러리가 직접
- * 관리하는 키(예: `searchad.ts`의 `searchadCredentials` 구 단일 키, `license.ts`의
- * license 관련 키, `volume-cache.ts`의 평면 `volumeCache`)는 각 모듈에 그대로 둔다 —
- * 코어 동기화 정책(CLAUDE.md "코어 코드 변경 정책").
+ * 자격증명 자체의 키(`searchadCredentials`)는 코어 라이브러리 `searchad.ts`가 직접 관리하므로
+ * 여기에 정의하지 않는다 — 코어 동기화 정책(CLAUDE.md "코어 코드 변경 정책").
  *
- * F011 마이그레이션: 본 repo는 신규 키 `searchad_credentials`(배열)를 사용하되,
- * `searchad.ts`의 어댑터 함수가 구 키 `searchadCredentials`를 1회 변환 후 삭제.
+ * 본 확장은 단일 자격증명 모델을 사용한다. 검색광고 API의 입찰가/볼륨 응답은 시장 단위
+ * 추정치 — 호출자 customerId와 무관하게 동일하므로 캐시 키를 광고주별로 스코프할 필요가 없다.
  */
-
-/** F011 — 자격증명 다중 관리(배열). 본 repo 전용 */
-export const SEARCHAD_CREDENTIALS_KEY = "searchad_credentials";
 
 /** F001 — 키워드별 1~10위 예상 입찰가 캐시 키 prefix */
 export const VOLUME_CACHE_PREFIX = "volume_cache:";
@@ -35,11 +30,9 @@ export const CURRENT_BID_PREFIX = "current_bid:";
 export const normalizeKeyword = (raw: string): string =>
   raw.normalize("NFC").replace(/\s+/g, "").toLowerCase();
 
-/** F001 캐시 키 빌더 — `volume_cache:<customer_id>:<keyword>` */
-export const keyForVolumeCache = (
-  customerId: string,
-  keyword: string,
-): string => `${VOLUME_CACHE_PREFIX}${customerId}:${normalizeKeyword(keyword)}`;
+/** F001 캐시 키 빌더 — `volume_cache:<keyword>` */
+export const keyForVolumeCache = (keyword: string): string =>
+  `${VOLUME_CACHE_PREFIX}${normalizeKeyword(keyword)}`;
 
 /** F002/F003 캐시 키 빌더 — `shopping_cache:<product_id>:<keyword>` */
 export const keyForShoppingCache = (
@@ -47,11 +40,9 @@ export const keyForShoppingCache = (
   keyword: string,
 ): string => `${SHOPPING_CACHE_PREFIX}${productId}:${normalizeKeyword(keyword)}`;
 
-/** F001 현재 입찰가 스냅샷 키 빌더 — `current_bid:<customer_id>:<keyword>` */
-export const keyForCurrentBid = (
-  customerId: string,
-  keyword: string,
-): string => `${CURRENT_BID_PREFIX}${customerId}:${normalizeKeyword(keyword)}`;
+/** F001 현재 입찰가 스냅샷 키 빌더 — `current_bid:<keyword>` */
+export const keyForCurrentBid = (keyword: string): string =>
+  `${CURRENT_BID_PREFIX}${normalizeKeyword(keyword)}`;
 
 /**
  * TODO (MVP 이후 백로그): chrome.storage.local quota prune 정책.

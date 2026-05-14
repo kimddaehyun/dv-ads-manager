@@ -8,8 +8,8 @@
 
 - **파워링크 순위·입찰가 오버레이 (F001)**: 키워드 행 옆에 현재 추정 순위 + 1~10위 예상 입찰가
 - **쇼핑검색광고 그룹·소재 키워드 표시 (F002/F003)**: 소재의 자동매칭 키워드별 현재 순위·예상 입찰가
-- **광고주별 자격증명 다중 관리 (F011)**: 대행사 AE가 운영하는 N개 광고주의 검색광고 API 자격증명을 한 확장에서 관리
-- **활성 광고주 자동 감지·매칭 (F013)**: 현재 보고 있는 광고주가 어떤 계정인지·자격증명이 등록돼 있는지 즉시 인식
+- **검색광고 API 자격증명 등록 (F011)**: `customerId` + `accessLicense` + `secretKey` 1쌍 등록 (시장 단위 데이터라 광고주 매칭 불필요)
+- **라이선스·캐시 관리 (F010/F012)**: Supabase RPC 라이선스 검증, 활성 탭 캐시 강제 갱신
 
 상세 명세는 [`docs/PRD.md`](./PRD.md) 참조.
 
@@ -29,7 +29,7 @@
 3. **작업 구현**
    - 변경 후 항상 `npm run typecheck` + `npm run build`로 `dist/` 갱신
    - 사용자가 `chrome://extensions` Reload 후 동작 확인
-   - 광고주 컨텍스트(자격증명 매칭/미매칭, 라이선스 활성/비활성)별 분기 모두 수동 검증
+   - 라이선스 활성/비활성, 자격증명 등록/미등록 분기를 수동 검증
 
 4. **로드맵 업데이트**
    - 완료된 Task에 `✅ - 완료` 표기, 하위 체크리스트 ✅ 추가
@@ -46,10 +46,10 @@
   - ✅ background 메시지 라우터에 `OPEN_OPTIONS` 핸들러 + F001/F002/F003 신규 메시지 자리 주석
   - 신규 메시지 타입(`GET_BID_ESTIMATE`, `GET_PRODUCT_RANK`)의 TypeScript 인터페이스를 `src/types/messages.ts`에 정의 (다음 Task에서)
 
-- **Task 002: 데이터 모델 타입 + storage 헬퍼 골격** ✅ - 완료
-  - ✅ PRD §데이터 모델의 5개 모델(LicenseState, SearchadCredential[], ActiveAdvertiser, KeywordVolumeCache, ShoppingRankCache, CurrentBidSnapshot) TypeScript 인터페이스 정의 — `src/types/storage.ts`
-  - ✅ `src/types/messages.ts`에 콘텐츠 ↔ background 메시지 요청/응답 타입 정의 (OPEN_OPTIONS / GET_BID_ESTIMATE / GET_PRODUCT_RANK / DETECT_ADVERTISER / REFRESH_ACTIVE_TAB)
-  - ✅ `src/lib/storage-keys.ts`에 chrome.storage 키 상수 + 빌더 (`SEARCHAD_CREDENTIALS_KEY`, `keyForVolumeCache`, `keyForShoppingCache`, `keyForCurrentBid`) + `normalizeKeyword`
+- **Task 002: 데이터 모델 타입 + storage 헬퍼 골격** ✅ - 완료 (2026-05-14 단일 자격증명 모델로 재정리)
+  - ✅ PRD §데이터 모델의 4개 캐시·라이선스 모델(LicenseState, KeywordVolumeCache, ShoppingRankCache, CurrentBidSnapshot) TypeScript 인터페이스 정의 — `src/types/storage.ts`. 자격증명 자체(`SearchadCredentials`)는 코어 라이브러리 `searchad.ts`가 관리하므로 별도 정의 X.
+  - ✅ `src/types/messages.ts`에 콘텐츠 ↔ background 메시지 요청/응답 타입 정의 (OPEN_OPTIONS / GET_BID_ESTIMATE / GET_PRODUCT_RANK / REFRESH_ACTIVE_TAB)
+  - ✅ `src/lib/storage-keys.ts`에 chrome.storage 키 상수 + 빌더 (`keyForVolumeCache`, `keyForShoppingCache`, `keyForCurrentBid`) + `normalizeKeyword`. 캐시는 키워드 단위 스코프(검색광고 API 응답이 시장 단위 추정치).
   - ✅ `chrome.storage.local` quota 5MB 인지 주석 + 향후 prune 훅 자리 (`PRUNE_HOOK_PLACEHOLDER`)
 
 ### Phase 2: UI/UX 완성 (더미 데이터 활용)
@@ -60,43 +60,33 @@
   - 콘텐츠 오버레이 격리 정책: 모든 루트 클래스에 `dvads-` prefix, 충분한 `z-index`
   - Pretendard 적용 + `tabular-nums` 숫자 정렬
 
-- **Task 004: 옵션 페이지 UI 완성 (F011 자격증명 목록·추가·삭제 폼)**
+- **Task 004: 옵션 페이지 UI 완성 (F011 단일 자격증명 폼)**
   - 기존 `LicenseUi` (F010)·`DataDisclosure` 유지
-  - F011 placeholder를 실제 UI로 교체: 등록된 자격증명 목록(customerId + 별칭) 카드, 행별 수정·삭제 버튼, 비밀값 마스킹 + 가시화 토글
-  - "새 자격증명 추가" 폼: customerId·accessLicense·secretKey·label 입력 + customerId 중복 검사
-  - 더미 자격증명 배열로 먼저 렌더 (storage 연동은 Task 008)
+  - F011 placeholder를 실제 UI로 교체: customerId·accessLicense·secretKey 3개 입력 + 비밀값 마스킹·가시화 토글
+  - 등록 상태에서는 마스킹된 요약 + 수정·삭제 버튼 노출 (수정은 폼을 다시 열어 덮어쓰기)
+  - 더미 상태로 미등록·등록 두 분기 렌더 (storage 연동은 Task 008)
   - 검증/저장 실패 시 친화적 에러 메시지(`friendly-error.ts`) 적용
 
-- **Task 005: 팝업 페이지 UI 완성 (F012 + F013)**
+- **Task 005: 팝업 페이지 UI 완성 (F012)**
   - 라이선스 상태 카드: tier(베이직)·만료일·검증 시각
-  - 현재 탭 상태 카드: 활성 광고주 customerId·별칭, 자격증명 매칭 여부 배지, 페이지 종류(파워링크/쇼핑 그룹/쇼핑 소재/비활성)
   - "지금 다시 조회" 캐시 강제 갱신 버튼
   - 라이선스 미설정·자격증명 미등록 시 "옵션 열기" CTA
-  - 더미 상태로 모든 분기(활성/비활성/매칭/미매칭) 렌더
+  - 더미 상태로 두 분기(활성/비활성) 렌더
 
 - **Task 006: 콘텐츠 오버레이 UI 시안 (더미 데이터)**
   - 파워링크 키워드 옆 배지(현재 순위) + 펼침 표(1~10위 예상 입찰가) (F001 시안)
   - 쇼핑 그룹 뷰 소재 행 inline 펼침 토글 + 키워드 × 1~10위 테이블 (F002 시안)
   - 쇼핑 소재 상세 풀 패널(정렬·검색 가능) (F003 시안)
-  - F013 매칭 상태 배지(매칭/미매칭/잠금)
+  - 자격증명 미등록·라이선스 미검증 안내 배지
   - 셀렉터 미정 단계라 별도 `demo-page/index.html`을 만들고 거기에 시안 렌더링 (npm run dev에서 접근)
 
 ### Phase 3: 핵심 기능 구현
 
-- **Task 007: F013 Spike A — 활성 광고주 customerId 자동 감지 전략 확정**
-  - `ads.naver.com`의 광고주별 페이지 URL 패턴 조사 (예: `/customer/12345/...`)
-  - SPA 헤더의 광고주 라벨 텍스트 + customerId 노출 위치 DOM 조사
-  - `MutationObserver`로 SPA 라우팅 변경 감지 가능성 확인
-  - 폴백 드롭다운(사용자 명시 선택) UI 시안
-  - 산출물: 채택 전략(URL 패턴 → DOM 헤더 → 폴백 드롭다운 계단식) + 셀렉터 목록 + Plan A/B 출시 분기 결정 (PRD 부록 참고)
-  - 예상 기간: 3-5d
-
-- **Task 008: F011 자격증명 다중 관리 구현 (storage 마이그레이션)**
-  - `src/lib/searchad.ts`에 신규 함수 추가: `loadAllCredentials()`, `addCredential(c)`, `removeCredential(customerId)`, `findCredentialByCustomerId(id)` — 새 storage 키 `searchad_credentials` (배열) 사용
-  - 1회 마이그레이션: 구 키 `searchadCredentials`(단일 객체) 존재 시 `[{...단일자, label: "기본"}]`로 변환 후 신규 키에 저장하고 구 키 삭제
-  - 기존 `loadCredentials`/`saveCredentials`는 어댑터(`loadAllCredentials()[0]`)로 유지 → naver-tag-picker 호환 보장
-  - Task 004의 더미 데이터를 실제 storage 연동으로 교체
-  - 수동 검증: 옵션 페이지에서 3개 자격증명 등록·삭제·중복 검사 동작 확인
+- **Task 008: F011 단일 자격증명 옵션 폼 구현 (storage 연동)**
+  - `src/lib/searchad.ts`의 기존 `loadCredentials`/`saveCredentials`/`clearCredentials` 그대로 사용 — 단일 객체 모델 유지 (코어 동기화)
+  - Task 004의 더미 자격증명 상태를 실제 storage 연동으로 교체
+  - 입력값 검증: customerId 숫자 문자열, accessLicense·secretKey non-empty
+  - 수동 검증: 옵션 페이지에서 자격증명 등록 → 수정 → 삭제 → 빈 상태 안내까지 동작 확인
 
 - **Task 009: F010 라이선스 검증 통합 + 기능 게이트**
   - 기존 `license.ts`·`LicenseUi`는 그대로 사용 (코어 동기화)
@@ -109,25 +99,24 @@
   - `src/lib/searchad.ts`에 `fetchPositionBids(keywords: string[], cred): Promise<{keyword, rank_to_bid}[]>` 신설
     - 요청 body: `{device: "PC", items: [{key, position: 1}, ..., {key, position: 10}]}`
     - 429 backoff·400 swallow 기존 패턴 재사용
-  - `background/index.ts`에 `GET_BID_ESTIMATE` 메시지 핸들러: 활성 customerId로 자격증명 매칭 → fetchPositionBids 호출 → 캐시 적재
-  - `volume-cache.ts` 키 스킴 customerId-scoped로 마이그레이션: `volume_cache:<customer_id>:<keyword>` (구 키 일괄 폐기 또는 customerId="legacy"로 일시 보존 후 TTL 만료)
-  - 콘텐츠 스크립트: 파워링크 키워드 테이블 셀렉터 + Task 007의 customerId 감지 + GET_BID_ESTIMATE 호출 + 행 옆 배지·펼침 렌더
-  - 매칭 실패(자격증명 미등록) 시 "이 광고주의 검색광고 API 자격증명 미등록" 안내 배지 + 옵션 페이지 바로가기
+  - `background/index.ts`에 `GET_BID_ESTIMATE` 메시지 핸들러: `loadCredentials()` → 자격증명 존재 시 `fetchPositionBids` 호출 → 캐시 적재. 미등록이면 `has_credential: false` 응답
+  - `volume-cache.ts` 키 스킴: `volume_cache:<keyword>` (구 키 일괄 폐기 또는 TTL 만료 대기)
+  - 콘텐츠 스크립트: 파워링크 키워드 테이블 셀렉터 + GET_BID_ESTIMATE 호출 + 행 옆 배지·펼침 렌더
+  - 자격증명 미등록 시 "검색광고 API 자격증명 미등록" 안내 배지 + 옵션 페이지 바로가기
   - 수동 검증: ads.naver.com 광고주 페이지에서 키워드 추가/수정/삭제 시 오버레이 자동 갱신, 429/401/네트워크 에러 시 친화적 메시지
 
-- **Task 011: F012 팝업 캐시·매칭 표시 통합**
-  - `chrome.tabs.query({active:true, currentWindow:true})` → 활성 탭의 host 확인 (host_permissions만으로 충분한지 1일차 확인, 불가 시 `"activeTab"` 추가)
-  - 콘텐츠 스크립트에 메시지로 현재 광고주 customerId + 페이지 종류 요청 → 팝업 카드 렌더
-  - "지금 다시 조회": 활성 탭에 해당하는 customerId-scoped 캐시만 부분 만료 후 콘텐츠 스크립트에 재조회 트리거 메시지 전송 (전체 캐시 클리어 X)
-  - 수동 검증: 광고주 A·B 두 탭에서 캐시 갱신이 독립적으로 동작하는지
+- **Task 011: F012 팝업 캐시 갱신 통합**
+  - `chrome.tabs.query({active:true, currentWindow:true})` → 활성 탭 확인 (host_permissions만으로 충분한지 1일차 확인, 불가 시 `"activeTab"` 추가)
+  - "지금 다시 조회": 활성 탭에 해당하는 키워드 캐시 만료 + 콘텐츠 스크립트에 재조회 트리거 메시지 전송 (전체 캐시 클리어 X)
+  - 수동 검증: 라이선스 활성 + 자격증명 등록 상태에서 캐시 갱신이 활성 탭에 정상 전달되는지
 
 - **Task 011-1: Phase 3 통합 수동 검증**
   - chrome://extensions reload 후 시나리오 검증
     - 라이선스 미설정 → 옵션 페이지 안내 + 오버레이 잠금
-    - 라이선스 활성 + 광고주 A 자격증명 매칭 → 파워링크 오버레이 정상
-    - 라이선스 활성 + 광고주 B 자격증명 미등록 → 매칭 실패 안내 배지
-    - 다른 광고주 탭 전환 시 팝업 카드와 오버레이가 즉시 갱신되는지
-  - naver-tag-picker 측 호환 확인 (어댑터 함수가 단일 자격증명을 기대하는 호출부에서 깨지지 않음)
+    - 라이선스 활성 + 자격증명 등록 → 파워링크 오버레이 정상
+    - 라이선스 활성 + 자격증명 미등록 → 미등록 안내 배지 + 옵션 페이지 링크
+    - 광고주 탭 전환 시 오버레이가 정상 재초기화되는지
+  - naver-tag-picker 측 호환 확인 (코어 lib `searchad.ts`에 본 repo가 추가한 함수가 그쪽 빌드를 깨지 않는지)
 
 ### Phase 4: 고급 기능 및 최적화
 
@@ -136,7 +125,7 @@
     - 검색광고 API의 쇼핑 영역 endpoint 존재 여부 (공식 문서 정독)
     - `ads.naver.com` 페이지 DOM에서 자동매칭 키워드 추출 + `search.shopping.naver.com` 재조회
     - 내부 XHR 재호출 (host page 비공식 API 가로채기)
-  - 채택 안에 따른 자격증명 매칭 정책 정의 (검색광고 API면 F001과 동일 매칭, DOM/쿠키 기반이면 매칭 무관)
+  - 채택 안에 따라 자격증명 필요 여부 정의 (검색광고 API면 F011 자격증명 재사용, DOM/쿠키 기반이면 자격증명 무관)
   - `host_permissions` 5번째 추가 필요 여부 결정
   - 산출물: 채택 endpoint·인증 방식·캐시 키 스킴·에러 분기. Plan A(v0.2 분리) / Plan B(v0.1 일괄) 최종 결정
   - 예상 기간: 3-7d
@@ -164,4 +153,4 @@
 ---
 
 **📅 최종 업데이트**: 2026-05-14
-**📊 진행 상황**: Phase 1 완료 ✅ (2/15 Tasks 완료)
+**📊 진행 상황**: Phase 1 완료 ✅ (2/13 Tasks 완료, 단일 자격증명 모델 적용으로 Task 007 제거)
