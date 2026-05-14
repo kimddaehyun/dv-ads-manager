@@ -61,24 +61,24 @@
   - Pretendard 적용 + `tabular-nums` 숫자 정렬
 
 - **Task 004: 옵션 페이지 UI 완성 (F011 단일 자격증명 폼)** ✅ - 완료
-  - 기존 `LicenseUi` (F010)·`DataDisclosure` 유지
-  - F011 placeholder를 실제 UI로 교체: customerId·accessLicense·secretKey 3개 입력 + 비밀값 마스킹·가시화 토글
-  - 등록 상태에서는 마스킹된 요약 + 수정·삭제 버튼 노출 (수정은 폼을 다시 열어 덮어쓰기)
-  - 더미 상태로 미등록·등록 두 분기 렌더 (storage 연동은 Task 008)
-  - 검증/저장 실패 시 친화적 에러 메시지(`friendly-error.ts`) 적용
+  - ✅ 기존 `LicenseUi` (F010)·`DataDisclosure` 유지
+  - ✅ F011 placeholder를 `src/options/credentials-ui.tsx`로 교체: customerId·accessLicense·secretKey 3개 입력 + 비밀값 마스킹·가시화 토글
+  - ✅ 등록 상태에서는 마스킹된 요약 + 수정·삭제 액션 리스트 노출
+  - ✅ 더미 상태로 **4 분기** 렌더 (미등록 / 등록됨 / 등록 실패 / 라이선스 미설정 lock) — storage 연동은 Task 008
+  - ✅ 폼 검증: customerId 숫자 정규식, accessLicense/secretKey non-empty. 실패 시 친화적 에러 메시지
 
 - **Task 005: 팝업 페이지 UI 완성 (F012)** ✅ - 완료
-  - 라이선스 상태 카드: tier(베이직)·만료일·검증 시각
-  - "지금 다시 조회" 캐시 강제 갱신 버튼
-  - 라이선스 미설정·자격증명 미등록 시 "옵션 열기" CTA
-  - 더미 상태로 두 분기(활성/비활성) 렌더
+  - ✅ DESIGN.md §4.6 KPI 카드 패턴으로 라이선스 상태를 hero로 강조 (label + 큰 dot + meta 인라인)
+  - ✅ "지금 다시 조회" 캐시 강제 갱신 버튼 (default) + "옵션 열기" (secondary/brand 분기)
+  - ✅ 더미 상태로 **3 분기** 렌더 (ok / API 미등록 / 라이선스 미설정)
+  - ✅ `PopupView` named export로 데모 페이지 재사용
 
 - **Task 006: 콘텐츠 오버레이 UI 시안 (더미 데이터)** ✅ - 완료
-  - 파워링크 키워드 옆 배지(현재 순위) + 펼침 표(1~15위 예상 입찰가) (F001 시안)
-  - 쇼핑 그룹 뷰 소재 행 inline 펼침 토글 + 키워드 × 1~15위 테이블 (F002 시안)
-  - 쇼핑 소재 상세 풀 패널(정렬·검색 가능) (F003 시안)
-  - 자격증명 미등록·라이선스 미검증 안내 배지
-  - 셀렉터 미정 단계라 별도 `demo-page/index.html`을 만들고 거기에 시안 렌더링 (npm run dev에서 접근)
+  - ✅ `src/styles/overlay.css` — hand-rolled `dvads-*` prefix CSS (호스트 격리, Tailwind 미사용)
+  - ✅ F001 `PowerlinkOverlay`: 파워링크 키워드 우측 끝 순위 배지 (`N위 ▾` 1~15 / `순위권 밖 ▾` / `분석 중…`) + 클릭 시 1~15위 미니 테이블 펼침. 3 상태 (ok / no-cred / locked)
+  - ✅ F002 `ShoppingGroupOverlay`: 소재 행 토글 + 자동매칭 키워드 × 1~15위 테이블 inline 펼침
+  - ✅ F003 `ShoppingDetailOverlay`: 소재 상세 풀패널 + 키워드 검색 input
+  - ✅ 셀렉터 미정 단계라 별도 Vite 엔트리 `src/demo/index.html` 작성 — `npm run dev` 시 `http://localhost:5173/src/demo/index.html`에서 12개 시안(옵션 4·팝업 3·F001 3·F002·F003) stack 렌더. `dist/` 빌드에는 미포함
 
 ### Phase 3: 핵심 기능 구현
 
