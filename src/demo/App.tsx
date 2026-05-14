@@ -4,6 +4,8 @@ import { CredentialsUi } from "@/options/credentials-ui";
 import { DUMMY_CREDENTIALS } from "./fixtures";
 import { PopupView } from "@/popup/App";
 import { PowerlinkOverlay } from "@/overlay/PowerlinkOverlay";
+import { ShoppingGroupOverlay } from "@/overlay/ShoppingGroupOverlay";
+import { ShoppingDetailOverlay } from "@/overlay/ShoppingDetailOverlay";
 
 export default function App() {
   return (
@@ -79,6 +81,20 @@ export default function App() {
           description="page banner lock — 배지 미주입"
         >
           <PowerlinkOverlay state="locked" />
+        </DemoSection>
+
+        <DemoSection
+          title="F002 · 쇼핑 그룹 inline 펼침"
+          description="데이터 소스 Spike B 종속. 토글 secondary, 펼침 시 1~15위 미니 테이블."
+        >
+          <ShoppingGroupOverlay />
+        </DemoSection>
+
+        <DemoSection
+          title="F003 · 쇼핑 소재 상세 풀패널"
+          description="자동매칭 키워드 검색 + 1~15위 입찰가."
+        >
+          <ShoppingDetailOverlay />
         </DemoSection>
       </div>
     </div>
