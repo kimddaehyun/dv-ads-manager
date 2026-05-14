@@ -52,28 +52,28 @@
   - ✅ `src/lib/storage-keys.ts`에 chrome.storage 키 상수 + 빌더 (`keyForVolumeCache`, `keyForShoppingCache`, `keyForCurrentBid`) + `normalizeKeyword`. 캐시는 키워드 단위 스코프(검색광고 API 응답이 시장 단위 추정치).
   - ✅ `chrome.storage.local` quota 5MB 인지 주석 + 향후 prune 훅 자리 (`PRUNE_HOOK_PLACEHOLDER`)
 
-### Phase 2: UI/UX 완성 (더미 데이터 활용)
+### Phase 2: UI/UX 완성 (더미 데이터 활용) ✅
 
-- **Task 003: 공통 UI 컴포넌트 + 디자인 토큰 정리**
+- **Task 003: 공통 UI 컴포넌트 + 디자인 토큰 정리** ✅ - 완료
   - Tailwind v4 `@theme` 블록에 색·간격·둥글기 토큰 정리 (브랜드 오렌지 `#E6783B` 포함)
   - 콘텐츠 오버레이·팝업·옵션 공통으로 쓰일 `Badge`, `Card`, `Field`, `Button` React 컴포넌트
   - 콘텐츠 오버레이 격리 정책: 모든 루트 클래스에 `dvads-` prefix, 충분한 `z-index`
   - Pretendard 적용 + `tabular-nums` 숫자 정렬
 
-- **Task 004: 옵션 페이지 UI 완성 (F011 단일 자격증명 폼)**
+- **Task 004: 옵션 페이지 UI 완성 (F011 단일 자격증명 폼)** ✅ - 완료
   - 기존 `LicenseUi` (F010)·`DataDisclosure` 유지
   - F011 placeholder를 실제 UI로 교체: customerId·accessLicense·secretKey 3개 입력 + 비밀값 마스킹·가시화 토글
   - 등록 상태에서는 마스킹된 요약 + 수정·삭제 버튼 노출 (수정은 폼을 다시 열어 덮어쓰기)
   - 더미 상태로 미등록·등록 두 분기 렌더 (storage 연동은 Task 008)
   - 검증/저장 실패 시 친화적 에러 메시지(`friendly-error.ts`) 적용
 
-- **Task 005: 팝업 페이지 UI 완성 (F012)**
+- **Task 005: 팝업 페이지 UI 완성 (F012)** ✅ - 완료
   - 라이선스 상태 카드: tier(베이직)·만료일·검증 시각
   - "지금 다시 조회" 캐시 강제 갱신 버튼
   - 라이선스 미설정·자격증명 미등록 시 "옵션 열기" CTA
   - 더미 상태로 두 분기(활성/비활성) 렌더
 
-- **Task 006: 콘텐츠 오버레이 UI 시안 (더미 데이터)**
+- **Task 006: 콘텐츠 오버레이 UI 시안 (더미 데이터)** ✅ - 완료
   - 파워링크 키워드 옆 배지(현재 순위) + 펼침 표(1~15위 예상 입찰가) (F001 시안)
   - 쇼핑 그룹 뷰 소재 행 inline 펼침 토글 + 키워드 × 1~15위 테이블 (F002 시안)
   - 쇼핑 소재 상세 풀 패널(정렬·검색 가능) (F003 시안)
@@ -153,4 +153,4 @@
 ---
 
 **📅 최종 업데이트**: 2026-05-14
-**📊 진행 상황**: Phase 1 완료 ✅ (2/13 Tasks 완료, 단일 자격증명 모델 적용으로 Task 007 제거)
+**📊 진행 상황**: Phase 1·2 완료 ✅ (6/13 Tasks 완료)
