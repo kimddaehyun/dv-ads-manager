@@ -237,6 +237,159 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// ---- F001 — 키워드별 1~10위 예상 입찰가 ----
+
+import { MAX_POSITION, type RankPosition } from "@/types/storage";
+
+const POSITION_BID_ENDPOINT = "/estimate/average-position-bid/keyword";
+const POSITION_BID_BATCH_KEYWORDS = 5; // 한 요청에 키워드 최대 5개 (각 1~10위 = 50 items)
+
+export interface PositionBidsItem {
+  keyword: string;
+  /** 1~10위 → 예상 입찰가(원). 응답에서 빠진 순위는 누락됨 */
+  rank_to_bid: Partial<Record<RankPosition, number>>;
+}
+
+/**
+ * Spike C — 응답 schema는 첫 실호출로 확정. 알려진 후보 wrapper(`estimate`/`result`/`items`)와
+ * 필드명(`key`/`keyword`/`position`/`rank`/`bid`)을 defensive하게 모두 시도하고,
+ * raw 응답은 콘솔에 1회 출력해 사용자가 비교·보정할 수 있게 한다.
+ */
+interface RawPositionBidItem {
+  key?: string;
+  keyword?: string;
+  position?: number;
+  rank?: number;
+  bid?: number | string;
+}
+
+let spikeLogged = false;
+
+export async function fetchPositionBids(
+  keywords: string[],
+  cred: SearchadCredentials,
+): Promise<PositionBidsItem[]> {
+  const cleaned = Array.from(
+    new Set(keywords.map((k) => k.trim()).filter(Boolean)),
+  );
+  if (cleaned.length === 0) return [];
+
+  const results: PositionBidsItem[] = [];
+  for (let i = 0; i < cleaned.length; i += POSITION_BID_BATCH_KEYWORDS) {
+    const batch = cleaned.slice(i, i + POSITION_BID_BATCH_KEYWORDS);
+    let part: PositionBidsItem[];
+    try {
+      part = await callPositionBid(batch, cred);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("429")) {
+        await sleep(1500);
+        try {
+          part = await callPositionBid(batch, cred);
+        } catch (e2) {
+          const m2 = e2 instanceof Error ? e2.message : String(e2);
+          if (m2.includes("400")) {
+            console.warn("[searchad] position-bid batch 400 after 429 retry, skipping", batch);
+            part = [];
+          } else {
+            throw e2;
+          }
+        }
+      } else if (msg.includes("400")) {
+        console.warn("[searchad] position-bid batch 400, skipping", batch);
+        part = [];
+      } else {
+        throw e;
+      }
+    }
+    results.push(...part);
+    if (i + POSITION_BID_BATCH_KEYWORDS < cleaned.length) await sleep(300);
+  }
+  return results;
+}
+
+async function callPositionBid(
+  keywords: string[],
+  cred: SearchadCredentials,
+): Promise<PositionBidsItem[]> {
+  const timestamp = Date.now().toString();
+  const method = "POST";
+  const signature = await sign(timestamp, method, POSITION_BID_ENDPOINT, cred.secretKey);
+
+  const items = keywords.flatMap((k) =>
+    Array.from({ length: MAX_POSITION }, (_, i) => ({ key: k, position: i + 1 })),
+  );
+  const body = JSON.stringify({ device: "PC", items });
+
+  const res = await fetch(BASE_URL + POSITION_BID_ENDPOINT, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Timestamp": timestamp,
+      "X-API-KEY": cred.accessLicense,
+      "X-Customer": cred.customerId,
+      "X-Signature": signature,
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.warn(`[searchad] position-bid API ${res.status}`, text);
+    throw new Error(`검색광고 API ${res.status}`);
+  }
+
+  const json = (await res.json()) as unknown;
+  if (!spikeLogged) {
+    spikeLogged = true;
+    console.log("[searchad] position-bid raw response (Spike C 1회 보정용)", json);
+  }
+  return parsePositionBidResponse(json, keywords);
+}
+
+function parsePositionBidResponse(
+  json: unknown,
+  requestedKeywords: string[],
+): PositionBidsItem[] {
+  const items = extractItemsArray(json);
+  const byKeyword = new Map<string, Partial<Record<RankPosition, number>>>();
+  for (const raw of items) {
+    const keyword = raw.key ?? raw.keyword;
+    const position = raw.position ?? raw.rank;
+    const bid = typeof raw.bid === "string" ? parseInt(raw.bid, 10) : raw.bid;
+    if (
+      typeof keyword !== "string" ||
+      typeof position !== "number" ||
+      !Number.isInteger(position) ||
+      position < 1 ||
+      position > MAX_POSITION ||
+      typeof bid !== "number" ||
+      !Number.isFinite(bid)
+    ) {
+      continue;
+    }
+    const existing = byKeyword.get(keyword) ?? {};
+    existing[position as RankPosition] = bid;
+    byKeyword.set(keyword, existing);
+  }
+
+  // 요청 키워드 순서로 결과 정렬
+  return requestedKeywords
+    .map((k) => ({ keyword: k, rank_to_bid: byKeyword.get(k) ?? {} }))
+    .filter((r) => Object.keys(r.rank_to_bid).length > 0);
+}
+
+function extractItemsArray(json: unknown): RawPositionBidItem[] {
+  if (Array.isArray(json)) return json as RawPositionBidItem[];
+  if (!json || typeof json !== "object") return [];
+  const obj = json as Record<string, unknown>;
+  for (const k of ["estimate", "result", "items", "data", "keywordList"]) {
+    const v = obj[k];
+    if (Array.isArray(v)) return v as RawPositionBidItem[];
+  }
+  return [];
+}
+
 const CRED_KEY = "searchadCredentials";
 
 export async function loadCredentials(): Promise<SearchadCredentials | null> {

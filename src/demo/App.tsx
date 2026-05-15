@@ -46,11 +46,7 @@ export default function App() {
           />
         </DemoSection>
 
-        <DemoSection title="옵션 F011 · 라이선스 미설정 (잠금)">
-          <CredentialsUi state="locked" />
-        </DemoSection>
-
-        <DemoSection title="팝업 F012 · 정상" description="라이선스 활성 + API 등록됨 — brand 버튼 0개">
+        <DemoSection title="팝업 F012 · 정상" description="API 등록됨 — brand 버튼 0개">
           <PopupView state="ok" />
         </DemoSection>
 
@@ -58,13 +54,9 @@ export default function App() {
           <PopupView state="no-cred" />
         </DemoSection>
 
-        <DemoSection title="팝업 F012 · 라이선스 미설정" description="empty state, brand 1개">
-          <PopupView state="no-license" />
-        </DemoSection>
-
         <DemoSection
           title="F001 · 파워링크 (정상)"
-          description="자격증명 등록 + 라이선스 활성 — 배지 우측 정렬, 클릭 시 1~15위 미니 테이블 펼침"
+          description="자격증명 등록 — 배지 우측 정렬, 클릭 시 1~10위 미니 테이블 펼침"
         >
           <PowerlinkOverlay state="ok" />
         </DemoSection>
@@ -77,22 +69,15 @@ export default function App() {
         </DemoSection>
 
         <DemoSection
-          title="F001 · 파워링크 (라이선스 미설정)"
-          description="page banner lock — 배지 미주입"
-        >
-          <PowerlinkOverlay state="locked" />
-        </DemoSection>
-
-        <DemoSection
           title="F002 · 쇼핑 그룹 inline 펼침"
-          description="데이터 소스 Spike B 종속. 토글 secondary, 펼침 시 1~15위 미니 테이블."
+          description="데이터 소스 Spike B 종속. 토글 secondary, 펼침 시 1~10위 미니 테이블."
         >
           <ShoppingGroupOverlay />
         </DemoSection>
 
         <DemoSection
           title="F003 · 쇼핑 소재 상세 풀패널"
-          description="자동매칭 키워드 검색 + 1~15위 입찰가."
+          description="자동매칭 키워드 검색 + 1~10위 입찰가."
         >
           <ShoppingDetailOverlay />
         </DemoSection>

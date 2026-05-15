@@ -4,14 +4,14 @@
  * 본 확장은 서버 DB 없이 chrome.storage.local에 라이선스·자격증명·캐시를 보관한다.
  * quota는 약 5MB — 키워드 누적 시 prune 필요 (MVP 이후 백로그).
  *
- * 자격증명 자체의 키(`searchadCredentials`)는 코어 라이브러리 `searchad.ts`가 직접 관리하므로
- * 여기에 정의하지 않는다 — 코어 동기화 정책(CLAUDE.md "코어 코드 변경 정책").
+ * 자격증명 자체의 키(`searchadCredentials`)는 `src/lib/searchad.ts`가 직접 관리하므로
+ * 여기에 정의하지 않는다.
  *
  * 본 확장은 단일 자격증명 모델을 사용한다. 검색광고 API의 입찰가/볼륨 응답은 시장 단위
  * 추정치 — 호출자 customerId와 무관하게 동일하므로 캐시 키를 광고주별로 스코프할 필요가 없다.
  */
 
-/** F001 — 키워드별 1~15위 예상 입찰가 캐시 키 prefix */
+/** F001 — 키워드별 1~10위 예상 입찰가 캐시 키 prefix */
 export const VOLUME_CACHE_PREFIX = "volume_cache:";
 
 /** F002/F003 — 쇼핑 키워드별 순위 캐시 키 prefix */

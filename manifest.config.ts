@@ -21,7 +21,6 @@ export default defineManifest({
     "https://ads.naver.com/*",
     "https://api.searchad.naver.com/*",
     "https://sell.smartstore.naver.com/*",
-    "https://*.supabase.co/*",
   ],
   options_ui: {
     page: "src/options/index.html",

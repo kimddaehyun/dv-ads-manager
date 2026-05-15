@@ -1,28 +1,3 @@
-export type VerifyReason =
-  | "ok"
-  | "invalid_key"
-  | "inactive"
-  | "expired"
-  | "device_kicked"
-  | "no_key"
-  | "network_error";
-
-export type LicenseTier = "basic" | "brand";
-
-export interface VerifyAccessResult {
-  allowed: boolean;
-  reason: VerifyReason;
-  expires_at?: string | null;
-  max_devices?: number | null;
-  active_devices?: number;
-  tier?: LicenseTier;
-}
-
-export interface RegisterDeviceResult {
-  ok: boolean;
-  reason: VerifyReason;
-}
-
 // 스마트스토어센터 "상품 경쟁지표" 응답
 // GET /api/product/shared/product-search-popular?_action=productSearchPopularByKeyword&keyword=...
 export interface ProductPopularProduct {

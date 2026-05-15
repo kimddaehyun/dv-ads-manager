@@ -1,13 +1,10 @@
 /**
  * F011 — 검색광고 API 자격증명 등록·관리 UI.
  *
- * 4가지 상태:
+ * 3가지 상태:
  *   - empty       : 미등록 → 폼 렌더
  *   - registered  : 등록됨 → 마스킹 요약 + 수정·삭제 액션 리스트
  *   - error       : 등록 실패 → 폼 + 에러 메시지 (재시도 의도)
- *   - locked      : 라이선스 미설정 → 폼 비활성 + lock banner
- *
- * Phase 2 단계에서는 props로 상태/콜백 받음 — Phase 3 Task 008에서 부모가 storage 연결.
  */
 
 import { useState } from "react";
@@ -17,9 +14,9 @@ import { Field } from "@/components/Field";
 import { Input } from "@/components/Input";
 import { ActionRow } from "@/components/ActionRow";
 import { Badge } from "@/components/Badge";
-import { PlusIcon, XIcon, EyeIcon, EyeOffIcon, EditIcon, TrashIcon, LockIcon } from "@/icons";
+import { PlusIcon, XIcon, EyeIcon, EyeOffIcon, EditIcon, TrashIcon } from "@/icons";
 
-export type CredentialsState = "empty" | "registered" | "error" | "locked";
+export type CredentialsState = "empty" | "registered" | "error";
 
 export interface CredentialsValue {
   customerId: string;
@@ -46,20 +43,6 @@ export function CredentialsUi({
   onEdit,
   onDelete,
 }: CredentialsUiProps) {
-  if (state === "locked") {
-    return (
-      <div>
-        <SectionLabel>검색광고 API</SectionLabel>
-        <Card>
-          <div className="flex items-center gap-2.5 px-4 py-3.5 rounded-lg bg-state-warning/10 text-state-warning text-sm">
-            <LockIcon className="w-4 h-4 shrink-0" />
-            <span>먼저 라이선스 키를 등록해주세요.</span>
-          </div>
-        </Card>
-      </div>
-    );
-  }
-
   if (state === "registered" && initial) {
     return (
       <div>

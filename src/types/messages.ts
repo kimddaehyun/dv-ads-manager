@@ -25,7 +25,7 @@ export interface OpenOptionsResponse {
 }
 
 /**
- * F001 — 키워드별 1~15위 예상 입찰가 일괄 조회.
+ * F001 — 키워드별 1~10위 예상 입찰가 일괄 조회.
  *
  * background: 등록된 자격증명으로 `POST /estimate/average-position-bid/keyword` 호출 → 캐시.
  * 자격증명이 없으면 `has_credential: false`로 응답 (콘텐츠 스크립트는 안내 배지로 폴백).

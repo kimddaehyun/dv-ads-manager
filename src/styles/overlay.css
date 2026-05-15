@@ -120,7 +120,7 @@
   flex: 1 1 auto;
 }
 
-/* ─── F001 — 펼침 행 (1~15위 미니 테이블) ─── */
+/* ─── F001 — 펼침 행 (1~10위 미니 테이블) ─── */
 .dvads-expand-row td {
   padding: 0 !important;
   background: #fafafa !important;
@@ -189,6 +189,33 @@
 .dvads-bid-table tr.current td { background: rgba(230, 120, 59, 0.10); }
 .dvads-bid-table tr.current td:first-child { color: #E6783B; font-weight: 600; }
 .dvads-bid-table tr.current td:not(:first-child) { color: #E6783B; font-weight: 600; }
+
+/* ─── F001 — 부유 popover (가상화 테이블에 행 삽입 X, 배지 아래 anchored) ─── */
+.dvads-popover {
+  background: #ffffff;
+  border-radius: 8px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.05);
+  min-width: 640px;
+  max-width: calc(100vw - 32px);
+}
+.dvads-popover-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.dvads-popover-hdr .kw {
+  font-size: 13px;
+  font-weight: 600;
+  color: #171717;
+}
+.dvads-popover-hdr .meta {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  color: #808080;
+}
 
 /* ─── F002 — 쇼핑 그룹 토글 버튼 ─── */
 .dvads-toggle-btn {

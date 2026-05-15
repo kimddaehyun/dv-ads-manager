@@ -1,51 +1,25 @@
 /**
  * 디브이 애드 매니저 — 영속 저장소 데이터 모델.
  *
- * 본 확장은 서버 DB를 보유하지 않는다. 사용자 측 영속 저장소는 `chrome.storage.local`이며,
- * 라이선스 검증만 Supabase의 기존 RPC를 호출한다.
+ * 본 확장은 서버 DB를 보유하지 않는다. 사용자 측 영속 저장소는 `chrome.storage.local`이다.
  *
- * 본 파일은 본 repo 전용 타입만 정의 — naver-tag-picker와 공유되는 타입은
- * `src/types/index.ts`에 그대로 둔다 (코어 동기화 정책).
+ * 자격증명 형태(`SearchadCredentials`)는 `src/lib/searchad.ts`에서 단일 객체로 정의·관리한다.
+ * 본 파일에서는 캐시 모델만 정의한다.
+ */
+
+/**
+ * 노출 순위 1~10위. F001/F002/F003 모두 동일 범위 사용 (네이버 검색결과 1페이지 커버).
  *
- * 자격증명 자체의 형태(`SearchadCredentials`)는 코어 라이브러리 `src/lib/searchad.ts`에
- * 정의돼 있고 본 확장도 그대로 단일 객체로 사용한다. 본 파일에서는 캐시 모델만 정의한다.
+ * Spike C 결과 (2026-05-15): 네이버 검색광고 API `/estimate/average-position-bid/keyword`는
+ * `position` 필드를 1~10만 허용. 11 이상은 400 "position(N) must be lower than 10" 반환.
  */
+export type RankPosition = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
-import type { LicenseTier } from "./index";
+/** 한 번에 조회할 최대 순위. F001 콘텐츠 오버레이 미니 테이블 컬럼 수. */
+export const MAX_POSITION = 10;
 
 /**
- * F010 — 라이선스 검증 결과 영속 저장.
- * chrome.storage.local 키: `license`
- *
- * 디바이스 ID와 키만 외부(Supabase RPC `verify_access`)로 전송된다.
- */
-export interface LicenseState {
-  /** 사용자가 입력한 라이선스 키 원문 */
-  key: string;
-  /** 본 확장이 디바이스를 식별하기 위해 생성한 UUID */
-  device_id: string;
-  /** Supabase RPC가 반환한 등급. MVP는 `basic` 단일이며 `brand`는 자매 호환 필드 */
-  tier: LicenseTier;
-  /** 라이선스 만료 일시 (ISO date string). null이면 무제한 */
-  expires_at: string | null;
-  /** 마지막 검증 성공 시각 (ISO date string) */
-  verified_at: string;
-}
-
-/**
- * 노출 순위 1~15위. F001/F002/F003 모두 동일 범위 사용 (네이버 검색결과 1페이지 커버).
- * 실제 호출 시 사용하는 max는 `MAX_POSITION` 상수로 일원화 (Spike C 결과 반영 가능).
- */
-export type RankPosition = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15;
-
-/**
- * 한 번에 조회할 최대 순위. F001 콘텐츠 오버레이 미니 테이블 컬럼 수.
- * Spike C(Phase 3 Task 010 1일차) 실호출로 API 단일 호출 max 확정 후 조정.
- */
-export const MAX_POSITION = 15;
-
-/**
- * F001 — 키워드별 1~15위 예상 입찰가 캐시.
+ * F001 — 키워드별 1~10위 예상 입찰가 캐시.
  * chrome.storage.local 키: `volume_cache:<keyword>`
  *
  * 데이터 소스: `POST /estimate/average-position-bid/keyword` (네이버 검색광고 API).

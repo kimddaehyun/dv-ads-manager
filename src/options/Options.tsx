@@ -1,13 +1,60 @@
 import iconUrl from "@/assets/icon-128.png";
-import LicenseUi from "./license-ui";
 import DataDisclosure from "./data-disclosure";
 import { CredentialsUi, type CredentialsState, type CredentialsValue } from "./credentials-ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { loadCredentials, saveCredentials, clearCredentials } from "@/lib/searchad";
 
 export default function Options() {
-  // Phase 2 단계: 더미 상태. Phase 3 Task 008에서 storage 연결.
   const [credState, setCredState] = useState<CredentialsState>("empty");
   const [creds, setCreds] = useState<CredentialsValue | undefined>(undefined);
+  const [credError, setCredError] = useState<string | undefined>(undefined);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    loadCredentials()
+      .then((stored) => {
+        if (cancelled) return;
+        if (stored) {
+          setCreds(stored);
+          setCredState("registered");
+        }
+      })
+      .catch((e) => {
+        console.warn("[options] loadCredentials failed", e);
+      })
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleSubmit(v: CredentialsValue) {
+    try {
+      await saveCredentials(v);
+      setCreds(v);
+      setCredError(undefined);
+      setCredState("registered");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setCredError(`저장에 실패했어요: ${msg}`);
+      setCredState("error");
+    }
+  }
+
+  async function handleDelete() {
+    if (!confirm("등록 정보를 삭제할까요? 다시 사용하려면 재등록해야 합니다.")) return;
+    try {
+      await clearCredentials();
+      setCreds(undefined);
+      setCredError(undefined);
+      setCredState("empty");
+    } catch (e) {
+      console.warn("[options] clearCredentials failed", e);
+    }
+  }
 
   return (
     <div className="max-w-2xl mx-auto p-8">
@@ -24,24 +71,20 @@ export default function Options() {
       </p>
 
       <div className="space-y-5">
-        <LicenseUi />
-
-        <CredentialsUi
-          state={credState}
-          initial={creds}
-          onSubmit={(v) => {
-            setCreds(v);
-            setCredState("registered");
-          }}
-          onCancel={() => setCredState("empty")}
-          onEdit={() => setCredState("empty")}
-          onDelete={() => {
-            if (confirm("등록 정보를 삭제할까요? 다시 사용하려면 재등록해야 합니다.")) {
-              setCreds(undefined);
-              setCredState("empty");
-            }
-          }}
-        />
+        {loaded && (
+          <CredentialsUi
+            state={credState}
+            initial={creds}
+            errorMessage={credError}
+            onSubmit={handleSubmit}
+            onCancel={() => {
+              setCredError(undefined);
+              setCredState(creds ? "registered" : "empty");
+            }}
+            onEdit={() => setCredState("empty")}
+            onDelete={handleDelete}
+          />
+        )}
       </div>
 
       <div className="mt-8">

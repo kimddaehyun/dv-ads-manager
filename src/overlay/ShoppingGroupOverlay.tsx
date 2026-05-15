@@ -79,7 +79,7 @@ function KeywordPanel({ keywords }: { keywords: NonNullable<DemoShoppingProduct[
   return (
     <div className="dvads dvads-shop-panel">
       <div className="dvads-shop-hdr">
-        <span>자동매칭 키워드 {keywords.length}개 × 1~15위 예상 입찰가</span>
+        <span>자동매칭 키워드 {keywords.length}개 × 1~10위 예상 입찰가</span>
         <span>3분 전 캐시</span>
       </div>
       <table className="dvads-shop-table">

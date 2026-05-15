@@ -1,4 +1,4 @@
-const PRIVACY_URL = "https://kimddaehyun.github.io/dv-tag-legal/";
+const PRIVACY_URL = "https://kimddaehyun.github.io/dv-ads-legal/";
 const ORANGE = "#E6783B";
 
 interface Row {
@@ -8,11 +8,6 @@ interface Row {
 }
 
 const COLLECTED: Row[] = [
-  {
-    data: "라이선스 키 · 디바이스 ID · User-Agent",
-    use: "라이선스 정상 발급 여부 및 디바이스 수 관리",
-    destination: "운영자 서버 (`*.supabase.co`)",
-  },
   {
     data: "네이버 검색광고 API 자격증명 (Customer ID / Access License / Secret Key)",
     use: "사용자가 등록한 광고주의 검색광고 API 호출 (키워드별 순위·예상 입찰가 조회)",

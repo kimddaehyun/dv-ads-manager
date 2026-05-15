@@ -8,10 +8,9 @@
  * Phase 3 Task 010에서 실제 콘텐츠 스크립트는 이 컴포넌트를 그대로 쓰지 않고
  * native DOM 조작으로 동일한 마크업·CSS 클래스를 host DOM에 삽입.
  *
- * 3 상태:
- *   - ok        : 자격증명 등록 + 라이선스 활성 → 배지·펼침 활성
+ * 2 상태:
+ *   - ok        : 자격증명 등록 → 배지·펼침 활성
  *   - no-cred   : 자격증명 미등록 → page banner warn + 배지 없음
- *   - locked    : 라이선스 미설정 → page banner lock + 배지 없음
  */
 
 import { useState } from "react";
@@ -19,7 +18,7 @@ import iconUrl from "@/assets/icon-128.png";
 import type { DemoKeyword } from "@/demo/fixtures";
 import { DUMMY_KEYWORDS } from "@/demo/fixtures";
 
-export type PowerlinkState = "ok" | "no-cred" | "locked";
+export type PowerlinkState = "ok" | "no-cred";
 
 interface Props {
   state: PowerlinkState;
@@ -30,7 +29,6 @@ export function PowerlinkOverlay({ state }: Props) {
     <div className="bg-white border border-gray-300 rounded overflow-hidden">
       {state === "ok" && <ActiveBanner />}
       {state === "no-cred" && <NoCredBanner />}
-      {state === "locked" && <LockedBanner />}
 
       <div className="px-3.5 py-2.5 bg-gray-50 border-b border-gray-300 text-xs text-gray-600">
         광고관리자 › 캠페인 › 파워링크 그룹A › 키워드
@@ -61,7 +59,7 @@ function ActiveBanner() {
     <div className="dvads dvads-page-banner">
       <span className="left">
         <img src={iconUrl} alt="DV" />
-        <span>디브이 애드 매니저 활성 · 1~15위 분석 (6개 키워드)</span>
+        <span>디브이 애드 매니저 활성 · 1~10위 분석 (6개 키워드)</span>
       </span>
       <span className="right">캐시 2분 전</span>
     </div>
@@ -76,20 +74,6 @@ function NoCredBanner() {
         <span>
           디브이 애드 매니저: 검색광고 API 키가 등록돼 있지 않아 분석이 비활성입니다.{" "}
           <a>옵션에서 등록 →</a>
-        </span>
-      </span>
-    </div>
-  );
-}
-
-function LockedBanner() {
-  return (
-    <div className="dvads dvads-page-banner lock">
-      <span className="left">
-        <span style={{ fontSize: 14 }}>🔒</span>
-        <span>
-          디브이 애드 매니저: 라이선스 키가 필요합니다.{" "}
-          <a style={{ color: "#E6783B" }}>옵션에서 등록 →</a>
         </span>
       </span>
     </div>
@@ -152,7 +136,7 @@ function BidExpandPanel({ rankToBid, currentRank }: { rankToBid: number[]; curre
   return (
     <div className="dvads dvads-expand-panel">
       <div className="dvads-expand-hdr">
-        <span className="meta">1~15위 예상 입찰가 · 시장 단위 추정 · 2분 전 캐시</span>
+        <span className="meta">1~10위 예상 입찰가 · 시장 단위 추정 · 2분 전 캐시</span>
         <button className="refresh-btn" onClick={() => console.log("refresh")}>↻ 새로고침</button>
       </div>
       <table className="dvads-bid-table">

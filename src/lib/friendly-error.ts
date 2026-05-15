@@ -11,7 +11,8 @@ export type FriendlyErrorKind =
   | "extract"
   | "synonym"
   | "test"
-  | "searchPopular";
+  | "searchPopular"
+  | "bid";
 
 export function friendlyApiError(
   err: string | undefined,
@@ -65,6 +66,8 @@ export function friendlyApiError(
       // 패널 측에서 "스마트스토어센터" 토큰을 a 태그로 치환해 렌더한다.
       // 다른 호출자에게도 평문으로 의미가 통하도록 키워드는 그대로 둔다.
       return "이 기능은 브랜드 스토어 계정에서만 동작합니다. 스마트스토어센터에 브랜드 계정으로 로그인되어 있는지 확인해 주세요";
+    case "bid":
+      return "예상 입찰가 조회 실패. 잠시 후 다시 시도해 주세요";
     case "test":
     default:
       return "연결 실패. 잠시 후 다시 시도해 주세요";

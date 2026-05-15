@@ -3,12 +3,6 @@
  * Phase 3 실 storage·API 연동 시 이 fixture들이 실제 값으로 대체됨.
  */
 
-export const DUMMY_LICENSE = {
-  tier: "basic",
-  expiresAt: "2026-12-31",
-  verifiedAt: "3분 전",
-};
-
 export const DUMMY_CREDENTIALS = {
   customerId: "12345",
   accessLicense: "0100000000abcdef0123456789",
