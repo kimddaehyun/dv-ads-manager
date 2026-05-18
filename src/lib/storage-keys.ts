@@ -20,6 +20,9 @@ export const SHOPPING_CACHE_PREFIX = "shopping_cache:";
 /** F001 — 현재 입찰가 스냅샷 키 prefix */
 export const CURRENT_BID_PREFIX = "current_bid:";
 
+/** F001 — 키워드 × 입찰가 → 예상 성과(노출/클릭/CPC/광고비) 캐시 키 prefix */
+export const PERFORMANCE_CACHE_PREFIX = "performance_cache:";
+
 /**
  * 키워드 정규화 — chrome.storage 키와 캐시 룩업의 일관성을 위해 호출자가 사용.
  *
@@ -43,6 +46,15 @@ export const keyForShoppingCache = (
 /** F001 현재 입찰가 스냅샷 키 빌더 — `current_bid:<keyword>` */
 export const keyForCurrentBid = (keyword: string): string =>
   `${CURRENT_BID_PREFIX}${normalizeKeyword(keyword)}`;
+
+/**
+ * F001 성과 추정 캐시 키 빌더 — `performance_cache:<keyword>:<bid>`.
+ *
+ * bid를 키에 포함하므로 같은 키워드라도 입찰가가 다르면 별도 캐시 엔트리.
+ * 사용자가 광고관리자에서 입찰가를 변경하면 자동 cache miss → 새 호출.
+ */
+export const keyForPerformanceCache = (keyword: string, bid: number): string =>
+  `${PERFORMANCE_CACHE_PREFIX}${normalizeKeyword(keyword)}:${bid}`;
 
 /**
  * TODO (MVP 이후 백로그): chrome.storage.local quota prune 정책.

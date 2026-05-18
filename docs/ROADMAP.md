@@ -88,8 +88,9 @@
 
 - ~~**Task 009: F010 라이선스 검증 통합 + 기능 게이트**~~ — **취소** (2026-05-15 라이선스 시스템 제거 결정)
 
-- **Task 010: F001 파워링크 순위·입찰가 오버레이 구현** 🟡 - 1차 구현 완료 (정상 응답 raw 로그 확인 + 현재가 셀렉터 보강 대기)
-  - ✅ **Spike C 1차 (2026-05-15)**: 실호출로 API 제약 확인 — `POST /estimate/average-position-bid/keyword`의 `position` 필드는 **1~10만 허용** (11 이상 시 400 `position(N) must be lower than 10`). `MAX_POSITION` 15→10, `RankPosition` 1..10으로 축소. 정상 응답 schema는 미확정 (defensive parser 유지) — 사용자 reload 후 raw 응답 1회 확인 시 파서 좁히기
+- **Task 010: F001 파워링크 순위·입찰가 오버레이 구현** 🟡 - 1차 구현 완료 (schema 확정 ✅ + 현재가 셀렉터 보강 대기)
+  - ✅ **Spike C 1차 (2026-05-15)**: 실호출로 API 제약 확인 — `POST /estimate/average-position-bid/keyword`의 `position` 필드는 **1~10만 허용** (11 이상 시 400 `position(N) must be lower than 10`). `MAX_POSITION` 15→10, `RankPosition` 1..10으로 축소
+  - ✅ **Spike C 2차 (2026-05-18)**: 정상 응답 schema 확정 — `{device: "PC", estimate: [{key, position, bid}, ...]}`. 50 items/batch = 5 keywords × 10 positions. `extractItemsArray`의 `estimate` 키 매칭으로 parser 정상 동작. defensive fallback은 호환성 안전망으로 유지
   - ✅ `src/lib/searchad.ts`에 `fetchPositionBids(keywords, cred): Promise<PositionBidsItem[]>` 추가
     - 요청 body: `{device: "PC", items: [{key, position 1~10}]}` (5 키워드/배치 = 50 items)
     - 429 backoff·400 swallow 패턴 재사용. HMAC POST 서명
@@ -99,8 +100,9 @@
   - ✅ 에러 상태 배지: `확장 응답 없음`, `백그라운드 응답 없음`, `API 키 인증 실패`, `예상 입찰가 조회 실패` 등 friendly-error 변환 메시지 노출
   - ✅ 자격증명 미등록 시 배지 "API 키 미등록" → 클릭 시 OPEN_OPTIONS
   - ✅ 가상화 테이블 대응: 행 삽입(`<tr>`) 대신 **floating popover** 사용 (`position: fixed`, 배지 아래 anchored, 화면 우측 보정, outside click·Escape로 닫힘)
-  - ⏸ **현재 추정 순위 표시 보류**: 사용자가 제공한 HTML 스니펫이 키워드 셀 단독 → "현재 입찰가" 컬럼 셀렉터 미확보. 일단 배지는 "1~10위 ▾"로 표시. 현재가 컬럼 위치 확보 시 → 추정 순위 + "현재 N위 ▾" 표시 추가
-  - ⏸ **정상 응답 schema 확정 대기**: 1~10 호출 후 service worker 콘솔의 `[searchad] position-bid raw response (Spike C 1회 보정용)` 출력 공유 시 파서 좁히기 + defensive 코드 제거
+  - ✅ **silent-empty 감지** (2026-05-18): 응답 schema mismatch 등으로 N개 요청 → 0개 응답 시 배지가 "분석 중…"에 영원히 멈추던 버그 패치. `lastError = "응답 비어있음 (서비스 워커 콘솔 확인)"`로 가시화
+  - ✅ **현재 추정 순위 표시 구현** (2026-05-18): `src/lib/rank.ts`의 `estimateRank(userBid, rankToBid)` — max(N) where market[N] ≤ userBid. 콘텐츠 스크립트는 같은 `<tr>` 내 "N원" 패턴 셀에서 현재 입찰가 파싱 후 배지를 "N위"(brand) / "순위권 밖"(warn) / "시세"(fallback)로 분기. popover 헤더에 "내 입찰가 N원 → 추정 R위" + 해당 행만 brand subtle 강조
+  - ✅ **성과 추정 통합** (2026-05-18): `POST /estimate/performance-bulk` 호출로 현재 입찰가 기준 노출수/클릭수/평균CPC/광고비 4지표 받아 popover 하단 카드에 표시. `fetchPerformance` (`searchad.ts`) + `performance-cache` 신규 + bid 추정과 병렬 호출(`Promise.all`). 캐시 키 `performance_cache:<keyword>:<bid>` (TTL 4h). 80 키워드 = 1 배치 (배치 한도 200 items)
 
 - **Task 011: F012 팝업 캐시 갱신 통합**
   - `chrome.tabs.query({active:true, currentWindow:true})` → 활성 탭 확인 (host_permissions만으로 충분한지 1일차 확인, 불가 시 `"activeTab"` 추가)
@@ -147,5 +149,5 @@
 
 ---
 
-**📅 최종 업데이트**: 2026-05-15
-**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008 완료 + Task 010 1차 구현 🟡 (Spike C 1차 통과·정상 응답 schema 보정 + 현재가 셀렉터 보강 대기)
+**📅 최종 업데이트**: 2026-05-18
+**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010 완료 ✅ (Task 011·011-1 대기). Task 010: Spike C 완료 + 현재 N위 표시 + 성과 추정(노출/클릭/CPC/광고비) popover 통합까지 마감 — 입찰가 셀렉터는 텍스트 패턴(`/[\d,]+\s*원/`) 기반 fallback으로 동작 중, 호스트 마크업 확정 시 좁힐 수 있음

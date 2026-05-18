@@ -12,6 +12,7 @@
 
 import type {
   KeywordVolumeCache,
+  KeywordPerformanceCache,
   ShoppingRankCache,
 } from "./storage";
 
@@ -25,21 +26,28 @@ export interface OpenOptionsResponse {
 }
 
 /**
- * F001 — 키워드별 1~10위 예상 입찰가 일괄 조회.
+ * F001 — 키워드별 1~10위 예상 입찰가 + (선택) 성과 추정 일괄 조회.
  *
- * background: 등록된 자격증명으로 `POST /estimate/average-position-bid/keyword` 호출 → 캐시.
+ * background:
+ *   - `POST /estimate/average-position-bid/keyword` → 1~10위 시장 입찰가
+ *   - currentBid가 있는 키워드에 대해 `POST /estimate/performance-bulk` → 4지표
+ *   - 두 API 병렬 호출 + 각각 별도 캐시
+ *
  * 자격증명이 없으면 `has_credential: false`로 응답 (콘텐츠 스크립트는 안내 배지로 폴백).
  * 검색광고 API 응답은 시장 단위 추정치 — 어떤 자격증명으로 호출해도 같은 숫자가 나오므로
  * 광고주 매칭 개념은 적용하지 않는다.
  */
 export interface GetBidEstimateRequest {
   type: "GET_BID_ESTIMATE";
-  keywords: string[];
+  /** 키워드별 요청 — currentBid 있으면 성과 추정도 함께 받음 */
+  keywords: Array<{ keyword: string; currentBid: number | null }>;
 }
 
 export interface GetBidEstimateResponse {
   ok: boolean;
   data?: KeywordVolumeCache[];
+  /** 성과 추정 결과 — currentBid가 있던 키워드만 포함 (없거나 호출 실패 시 omit) */
+  performance?: KeywordPerformanceCache[];
   error?: string;
   /** 자격증명이 등록돼 있지 않으면 false */
   has_credential?: boolean;

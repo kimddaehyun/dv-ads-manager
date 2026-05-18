@@ -68,3 +68,29 @@ export interface CurrentBidSnapshot {
   /** DOM에서 읽어낸 시각 (ISO date string) */
   read_at: string;
 }
+
+/**
+ * F001 — 키워드별 특정 입찰가에서의 예상 성과 지표.
+ * chrome.storage.local 키: `performance_cache:<keyword>:<bid>`
+ *
+ * 데이터 소스: `POST /estimate/performance-bulk` (네이버 검색광고 API).
+ * 키워드 도구 "선택한 키워드" 표의 4지표 — 노출/클릭/CPC/광고비.
+ *
+ * 캐시 키에 bid가 포함되므로 사용자가 광고관리자에서 입찰가를 변경하면 자동 cache miss.
+ */
+export interface KeywordPerformanceCache {
+  /** 정규화된 키워드 */
+  keyword: string;
+  /** 호출 시 보낸 입찰가 (원화 정수) — 같은 키워드라도 bid가 다르면 결과가 다름 */
+  bid: number;
+  /** 예상 노출수 */
+  impressions: number;
+  /** 예상 클릭수 */
+  clicks: number;
+  /** 예상 평균 CPC (원, VAT 제외) */
+  cpc: number;
+  /** 예상 광고비 (원) */
+  salesAmt: number;
+  /** 캐시 적재 시각 (ISO date string) */
+  fetched_at: string;
+}

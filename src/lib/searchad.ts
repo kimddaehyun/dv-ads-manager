@@ -251,9 +251,9 @@ export interface PositionBidsItem {
 }
 
 /**
- * Spike C — 응답 schema는 첫 실호출로 확정. 알려진 후보 wrapper(`estimate`/`result`/`items`)와
- * 필드명(`key`/`keyword`/`position`/`rank`/`bid`)을 defensive하게 모두 시도하고,
- * raw 응답은 콘솔에 1회 출력해 사용자가 비교·보정할 수 있게 한다.
+ * Spike C — 응답 schema 확정 (2026-05-18): `{device: "PC", estimate: [{key, position, bid}, ...]}`.
+ * 50 items/batch = 5 keywords × 10 positions. parser는 `extractItemsArray`의 `estimate` 키로 잡혀
+ * 정상 동작 확인. 만약 네이버가 향후 wrapper/필드명을 바꿔도 defensive fallback이 흡수.
  */
 interface RawPositionBidItem {
   key?: string;
@@ -388,6 +388,181 @@ function extractItemsArray(json: unknown): RawPositionBidItem[] {
     if (Array.isArray(v)) return v as RawPositionBidItem[];
   }
   return [];
+}
+
+// ---- F001 — 키워드 × 입찰가 → 예상 성과(노출/클릭/CPC/광고비) ----
+
+import type { KeywordPerformanceCache } from "@/types/storage";
+
+const PERFORMANCE_ENDPOINT = "/estimate/performance-bulk";
+const PERFORMANCE_BATCH_SIZE = 200; // 한 요청당 최대 {keyword, bid} 조합
+
+interface RawPerformanceItem {
+  key?: string;
+  keyword?: string;
+  bid?: number | string;
+  impressions?: number | string;
+  impression?: number | string;
+  impCnt?: number | string;
+  clicks?: number | string;
+  click?: number | string;
+  clkCnt?: number | string;
+  cpc?: number | string;
+  avgCpc?: number | string;
+  cost?: number | string; // 서버가 광고비를 cost로 반환 (2026-05-18 확인)
+  salesAmt?: number | string;
+  salesAmount?: number | string;
+}
+
+let perfSpikeLogged = false;
+
+/**
+ * Spike (Phase 1) — 응답 schema 확정 후 parser 좁히기.
+ * 후보 wrapper(`estimate`/`performance`/`result`/`items`/`data`)와
+ * 필드명 변형(`impressions`/`impCnt`, `clicks`/`clkCnt`, `cpc`/`avgCpc`, `salesAmt`/`salesAmount`)을
+ * defensive하게 모두 시도. raw 응답은 1회 콘솔 출력.
+ */
+export async function fetchPerformance(
+  items: Array<{ keyword: string; bid: number }>,
+  cred: SearchadCredentials,
+): Promise<KeywordPerformanceCache[]> {
+  const cleaned = items
+    .map((q) => ({ keyword: q.keyword.trim(), bid: q.bid }))
+    .filter((q) => q.keyword && Number.isFinite(q.bid) && q.bid > 0);
+  if (cleaned.length === 0) return [];
+
+  const results: KeywordPerformanceCache[] = [];
+  for (let i = 0; i < cleaned.length; i += PERFORMANCE_BATCH_SIZE) {
+    const batch = cleaned.slice(i, i + PERFORMANCE_BATCH_SIZE);
+    let part: KeywordPerformanceCache[];
+    try {
+      part = await callPerformance(batch, cred);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("429")) {
+        await sleep(1500);
+        try {
+          part = await callPerformance(batch, cred);
+        } catch (e2) {
+          const m2 = e2 instanceof Error ? e2.message : String(e2);
+          if (m2.includes("400")) {
+            console.warn("[searchad] performance batch 400 after 429 retry, skipping", batch.length, "items");
+            part = [];
+          } else {
+            throw e2;
+          }
+        }
+      } else if (msg.includes("400")) {
+        console.warn("[searchad] performance batch 400, skipping", batch.length, "items");
+        part = [];
+      } else {
+        throw e;
+      }
+    }
+    results.push(...part);
+    if (i + PERFORMANCE_BATCH_SIZE < cleaned.length) await sleep(300);
+  }
+  return results;
+}
+
+async function callPerformance(
+  items: Array<{ keyword: string; bid: number }>,
+  cred: SearchadCredentials,
+): Promise<KeywordPerformanceCache[]> {
+  const timestamp = Date.now().toString();
+  const method = "POST";
+  const signature = await sign(timestamp, method, PERFORMANCE_ENDPOINT, cred.secretKey);
+
+  // 서버 POJO `KeyAndBidPerformance` 필드명: keyword / bid / device (per-item).
+  // 2026-05-18 400 에러 분석으로 확정 — `key` 보내면 keyword=null로 파싱돼 "keyword is empty" 400.
+  // hintKeywords와 동일 — searchad API는 공백 포함 키워드 거부
+  const apiItems = items.map((q) => ({
+    keyword: q.keyword.replace(/\s+/g, ""),
+    bid: q.bid,
+    device: "PC",
+  }));
+  const body = JSON.stringify({ items: apiItems });
+
+  const res = await fetch(BASE_URL + PERFORMANCE_ENDPOINT, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      "X-Timestamp": timestamp,
+      "X-API-KEY": cred.accessLicense,
+      "X-Customer": cred.customerId,
+      "X-Signature": signature,
+    },
+    body,
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.warn(`[searchad] performance API ${res.status}`, text);
+    throw new Error(`검색광고 API ${res.status}`);
+  }
+
+  const json = (await res.json()) as unknown;
+  if (!perfSpikeLogged) {
+    perfSpikeLogged = true;
+    console.log("[searchad] performance raw response (Spike 1회 보정용)", json);
+  }
+  return parsePerformanceResponse(json, items);
+}
+
+function parsePerformanceResponse(
+  json: unknown,
+  requested: Array<{ keyword: string; bid: number }>,
+): KeywordPerformanceCache[] {
+  const arr = extractPerfArray(json);
+  const now = new Date().toISOString();
+  const byKey = new Map<string, KeywordPerformanceCache>();
+  for (const raw of arr) {
+    const kw = (raw.key ?? raw.keyword)?.toString();
+    if (!kw) continue;
+    const bid = numField(raw.bid);
+    if (bid == null) continue;
+    const impressions = numField(raw.impressions ?? raw.impression ?? raw.impCnt) ?? 0;
+    const clicks = numField(raw.clicks ?? raw.click ?? raw.clkCnt) ?? 0;
+    const cpc = numField(raw.cpc ?? raw.avgCpc) ?? 0;
+    // 서버 응답 광고비 필드 = cost (2026-05-18 확인). salesAmt/salesAmount는 fallback.
+    const salesAmt = numField(raw.cost ?? raw.salesAmt ?? raw.salesAmount) ?? 0;
+    byKey.set(`${kw}:${bid}`, {
+      keyword: kw,
+      bid,
+      impressions,
+      clicks,
+      cpc,
+      salesAmt,
+      fetched_at: now,
+    });
+  }
+  // 요청 순서로 정렬 + 응답에 없는 항목은 skip. 키워드는 원본(공백 포함 가능)으로 복원.
+  const out: KeywordPerformanceCache[] = [];
+  for (const q of requested) {
+    const entry = byKey.get(`${q.keyword.replace(/\s+/g, "")}:${q.bid}`);
+    if (entry) out.push({ ...entry, keyword: q.keyword });
+  }
+  return out;
+}
+
+function extractPerfArray(json: unknown): RawPerformanceItem[] {
+  if (Array.isArray(json)) return json as RawPerformanceItem[];
+  if (!json || typeof json !== "object") return [];
+  const obj = json as Record<string, unknown>;
+  for (const k of ["performance", "estimate", "result", "items", "data", "keywordList"]) {
+    const v = obj[k];
+    if (Array.isArray(v)) return v as RawPerformanceItem[];
+  }
+  return [];
+}
+
+function numField(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string") {
+    const n = parseFloat(v.replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 const CRED_KEY = "searchadCredentials";
