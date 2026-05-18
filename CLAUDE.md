@@ -25,7 +25,9 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 
 ## Architecture
 
-- `src/content/index.ts` — `ads.naver.com` 페이지 주입 콘텐츠 스크립트. 광고 키워드 옆 입찰가·순위 오버레이 렌더.
+- `src/content/index.ts` — `ads.naver.com` 페이지 주입 콘텐츠 스크립트. 광고 키워드 옆 입찰가·순위 오버레이 렌더 + 팝오버 행 클릭으로 입찰가 자동 변경.
+- `src/content/dom-bid.ts` — ads.naver.com 입찰가 변경 UI 자동화 격리. 페이지 입찰가 셀 클릭 → React 호환 input 값 주입 → 변경 버튼 클릭 → 셀 갱신 대기. 페이지 DOM 셀렉터는 전부 이 파일.
+- `src/content/confirm-dialog.ts` / `toast.ts` — 오버레이 다이얼로그·토스트(+5초 Undo). React 미사용, native DOM.
 - `src/background/index.ts` — MV3 Service Worker. 검색광고 API(GET_BID_ESTIMATE) fetch 위임.
 - `src/popup/` — React 19 팝업 (옵션 진입점)
 - `src/options/` — 검색광고 API 자격증명(`customerId`/`accessLicense`/`secretKey`) 입력
@@ -39,12 +41,12 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 
 모든 시각 결정(색·간격·타이포·컴포넌트)의 **단일 진실의 원천**은 [`docs/DESIGN.md`](./docs/DESIGN.md). UI를 작성/수정할 때는 반드시 이 문서를 먼저 확인한다. 핵심:
 
-- **카드 v5 flat** — 보더·그림자 없이 페이지 배경(#fafafa)과 흰 카드(#fff)의 1% 명도차로만 구분.
-- **버튼 Vercel strict** — sm 28 / md 32 / lg 40, radius 6px, weight 500, `box-shadow` 절대 금지.
-- **버튼 역할** — default(검정 워밍 잉크 #1F1714) 95% 케이스 / **brand(DV 주황 #E6783B) 화면당 단 1개** / secondary(연회색).
-- **DV 주황 사용 면적 ~3% 이내** — 로고 + 1차 CTA + F001 "현재 N위 ▾" 배지 + focus ring. 페이지 배경·본문 텍스트·카드 보더·default 버튼 등에는 절대 X.
-- **Pretendard 1순위**, 3-weight(400/500/600) 시스템. 700 bold 금지.
+- **카드** — 옵션/팝업은 `rounded-2xl + shadow-card` (보더 없음). 오버레이는 호스트 페이지와 시각 분리를 위해 `1.5px #E6783B` 보더 + 10px radius.
+- **버튼** — radius 8px, weight 500, height 32px (오버레이 공통 `.dvads-btn`). **Primary는 항상 DV 주황 `#E6783B`** (검정 default 패턴은 폐기, DESIGN.md Decisions Log 2026-05-18). 화면당 primary 1~2개 제한.
+- **DV 주황 사용 면적 ~3% 이내** — primary 버튼 + F001 "현재 N위 ▾" 배지 + focus ring + 다이얼로그 차액(+) 강조. 페이지 배경·본문 텍스트·카드 보더 등에는 X.
+- **Pretendard 1순위**, 3-weight(400/500/600) 시스템. 700 bold는 옵션 페이지 h1에만.
 - **콘텐츠 오버레이는 `dvads-` prefix로 격리** — `ads.naver.com` 호스트 CSS와 충돌 방지.
+- **em dash(`—`) / minus sign(`−` U+2212) 금지** — 모든 짝대기는 일반 하이픈 `-` (U+002D)만 사용. 음수 표시(`(-230)`)도 동일.
 
 새 패턴이 필요하면 코드에 즉흥 도입하지 말고 `docs/DESIGN.md`를 먼저 갱신한 뒤 반영.
 
@@ -58,6 +60,10 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `chrome.storage.local`은 확장별 격리 — 다른 확장에 등록된 검색광고 자격증명을 자동으로 못 읽으므로 사용자가 본 확장 옵션에 별도 입력해야 한다.
 - 사용자 데이터(광고 키워드·예산·소재 등) 외부 전송 0건이어야 한다.
 - 버전은 `package.json`의 `version` 필드가 단일 소스 — `manifest.config.ts`에서 자동 import.
+- **콘텐츠 스크립트에서 페이지의 React `<input>`에 값 자동 주입** 시 `input.value = "X"`는 React state 우회되어 저장 시 원래값으로 복구. `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(input, v)` + bubbling `input`/`change` 이벤트 dispatch 필수 (`src/content/dom-bid.ts` `setReactInputValue` 참고).
+- **ads.naver.com DOM 셀렉터는 `src/content/dom-bid.ts`에 격리.** 클래스명이 갈리면 그 파일만 수정. 다음 페이지 자동화도 같은 파일에 추가.
+- **콘텐츠 스크립트의 `document` 외부 클릭 리스너(팝오버 자동 닫기 등)는 우리가 `element.click()`으로 발생시킨 이벤트도 받는다.** 페이지 자동화 동안 `suppressPopoverClose(ms)` 토큰 패턴(`src/content/index.ts`)으로 일시 차단. 토큰 카운터는 연속 작업 시 먼저 발행된 timer가 늦은 작업 중간에 풀어버리는 race 방지.
+- **페이지가 띄우는 자체 모달 검출**은 `[role="dialog"]`에 의존하지 말 것 — naver 컴포넌트가 role을 안 쓸 수 있음. `document.body.textContent.includes("...")` + `requestAnimationFrame` throttle이 안정적 (`watchPageConfirmModal` 참고). 페이지 모달이 떠있는 동안 우리 팝오버는 `.dvads-recede`로 hide, 토스트(Undo)는 hide 대상 제외.
 
 ## gstack
 

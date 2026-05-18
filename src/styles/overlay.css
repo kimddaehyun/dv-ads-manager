@@ -24,6 +24,13 @@
 }
 .dvads *, .dvads *::before, .dvads *::after { box-sizing: border-box; }
 
+/* 페이지 자체 확정 모달이 떠있는 동안 우리 팝오버/토스트를 잠깐 뒤로 보낸다 —
+   사용자가 페이지 모달의 닫기 버튼에 직접 접근할 수 있도록 길을 비워주는 용도.
+   visibility로 처리해 레이아웃·rAF 위치 추적은 그대로 유지. */
+.dvads-recede {
+  visibility: hidden !important;
+}
+
 /* ─── 페이지 banner (페이지 상단 고정 안내) ─── */
 .dvads-page-banner {
   display: flex;
@@ -234,6 +241,13 @@
 .dvads-bid-table tbody tr:hover td {
   background: #fafafa;
 }
+/* 클릭 가능한 행 (입찰가 변경 가능) — 현재 행은 비활성이라 이 클래스 없음 */
+.dvads-bid-table tbody tr.dvads-clickable {
+  cursor: pointer;
+}
+.dvads-bid-table tbody tr.dvads-clickable:hover td {
+  background: #f5f5f5;
+}
 /* 현재 추정 순위 행 강조 — 배경 tint만(weight는 안 건드림 → 입찰가 컬럼만 600). */
 .dvads-bid-table tr.current td {
   background: rgba(230, 120, 59, 0.10);
@@ -248,8 +262,8 @@
 
 /* ─── F001 — 면책 푸터 ─── */
 .dvads-disclaimer {
-  margin-top: 10px;
-  padding-top: 8px;
+  margin-top: 6px;
+  padding-top: 0;
   font-size: 12px;
   color: #a3a3a3;
   line-height: 1.5;
@@ -272,17 +286,52 @@
   box-sizing: border-box;
 }
 .dvads-popover-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 8px;
 }
+.dvads-popover-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: #a3a3a3;
+  font-size: 18px;
+  font-family: inherit;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-popover-close:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
 .dvads-popover-hdr .kw {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: #171717;
   /* 키워드 mid-character 줄바꿈 방지 — 한글 단어 분해 차단 */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: block;
+  display: inline-block;
+  max-width: 100%;
+  /* <a>로 변경됨 — 호스트 페이지 a 스타일 무력화 + 호버 시 underline */
+  text-decoration: none;
+  cursor: pointer;
+}
+.dvads-popover-hdr a.kw:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: #E6783B;
+  text-decoration-thickness: 1.5px;
 }
 
 /* ─── F002 — 쇼핑 그룹 토글 버튼 ─── */
@@ -342,3 +391,269 @@
   font-family: "Pretendard Variable", system-ui, sans-serif;
 }
 .dvads-shop-table tr.miss td { color: #a3a3a3; }
+
+/* ─── 공통 버튼 (다이얼로그/토스트용 — overlay 컨텍스트 전용) ─── */
+.dvads-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 120ms ease, filter 120ms ease, opacity 120ms ease;
+  user-select: none;
+  white-space: nowrap;
+}
+.dvads-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.dvads-btn-primary {
+  background: #E6783B;
+  color: #ffffff;
+}
+.dvads-btn-primary:hover:enabled {
+  filter: brightness(0.95);
+}
+.dvads-btn-secondary {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-btn-secondary:hover:enabled {
+  background: #E5E7EB;
+}
+.dvads-btn-loading::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+
+/* ─── 입찰가 변경 확인 다이얼로그 ─── */
+.dvads-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.dvads-confirm-card {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 20px 22px 18px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  width: min(420px, calc(100vw - 32px));
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-feature-settings: "tnum";
+  color: #171717;
+  line-height: 1.5;
+}
+.dvads-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.dvads-confirm-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #171717;
+}
+/* popover close와 동일 톤 — 은은한 회색 ×, 호버 시만 진해짐 */
+.dvads-confirm-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: #a3a3a3;
+  font-size: 18px;
+  font-family: inherit;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-confirm-close:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+/* 변경 적용 중에는 닫기/취소 클릭이 무시되므로 시각적으로도 비활성 표시 */
+.dvads-confirm-busy .dvads-confirm-close {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.dvads-confirm-busy .dvads-confirm-close:hover {
+  background: transparent;
+  color: #a3a3a3;
+}
+.dvads-confirm-body {
+  font-size: 14px;
+  color: #333333;
+  margin-bottom: 18px;
+  /* 한글은 어절 단위로만 줄바꿈 — 단어 중간에서 깨지지 않도록 */
+  word-break: keep-all;
+}
+.dvads-confirm-line {
+  /* 2줄 본문 — 라인1 "<키워드> 입찰가를", 라인2 "<현재>원 → <목표>원(±차액)..." */
+}
+.dvads-confirm-line + .dvads-confirm-line {
+  margin-top: 2px;
+}
+.dvads-confirm-body b {
+  font-weight: 600;
+  color: #171717;
+  /* 키워드와 "1,700원 → 2,990원" 화살표는 한 덩어리로 유지 — 절대 중간 분절 X */
+  white-space: nowrap;
+}
+/* 차액 부호 — 한국 컨벤션(주식 시세): 인상=빨강 / 인하=파랑 */
+.dvads-confirm-delta-up {
+  color: #DC2626;
+  font-weight: 600;
+  margin-left: 2px;
+}
+.dvads-confirm-delta-down {
+  color: #0072f5;
+  font-weight: 600;
+  margin-left: 2px;
+}
+.dvads-confirm-arrow {
+  color: #E6783B;
+}
+.dvads-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ─── 토스트 (우하단 stack, 자동 닫힘 + Undo) ─── */
+.dvads-toast-root {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+.dvads-toast {
+  pointer-events: auto;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  min-width: 280px;
+  max-width: 420px;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-feature-settings: "tnum";
+  color: #171717;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.dvads-toast.dvads-toast-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+.dvads-toast.dvads-toast-out {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.dvads-toast-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.dvads-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  color: #ffffff;
+}
+.dvads-toast-success .dvads-toast-icon {
+  background: #16a34a;
+}
+.dvads-toast-error .dvads-toast-icon {
+  background: #DC2626;
+}
+.dvads-toast-msg {
+  flex: 1 1 auto;
+  word-break: keep-all;
+}
+.dvads-toast-undo {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #E6783B;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 120ms ease;
+}
+.dvads-toast-undo:hover {
+  background: rgba(230, 120, 59, 0.10);
+}
+.dvads-toast-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: #a3a3a3;
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-toast-close:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-toast-bar {
+  height: 2px;
+  background: #ECEEF0;
+  overflow: hidden;
+}
+.dvads-toast-bar-fill {
+  height: 100%;
+  background: #a3a3a3;
+  transform-origin: left center;
+  animation: dvads-toast-bar linear forwards;
+}
+@keyframes dvads-toast-bar {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}

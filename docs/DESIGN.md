@@ -74,9 +74,14 @@
 | 팝업 | 섹션 제목 | text-xs (12px) | medium (500) | Row label |
 | 팝업 | 약관 링크 | text-[11px] | - | 푸터 |
 | 오버레이 | 카드 제목 (배지) | 12px | 600 | `.dvads-rank-badge` |
-| 오버레이 | 테이블 헤더 | 10px | 500 | `.dvads-bid-table th` |
-| 오버레이 | 테이블 셀 | 12px | 400 / 600(현재 행) | `.dvads-bid-table td` |
-| 오버레이 | 면책 푸터 | 10px | 400 | `.dvads-disclaimer` |
+| 오버레이 | 팝오버 키워드 헤더 | 16px | 600 | `.dvads-popover-hdr .kw` |
+| 오버레이 | 입찰가 표 헤더 | 14px | 500 | `.dvads-bid-table th` |
+| 오버레이 | 입찰가 표 셀 | 14px | 400 (입찰가 컬럼만 600) | `.dvads-bid-table td` |
+| 오버레이 | 다이얼로그 제목 | 16px | 600 | `.dvads-confirm-title` |
+| 오버레이 | 다이얼로그 본문 | 14px | 400 (`<b>`는 600) | `.dvads-confirm-body` |
+| 오버레이 | 버튼 라벨 | 13px | 500 | `.dvads-btn` |
+| 오버레이 | 토스트 본문 | 13px | 400 | `.dvads-toast-body` |
+| 오버레이 | 면책 푸터 | 12px | 400 | `.dvads-disclaimer` |
 | 오버레이 | 토글 버튼 | 11px | 500 | `.dvads-toggle-btn` |
 | 오버레이 | 페이지 배너 | 12px | 400 | `.dvads-page-banner` |
 
@@ -220,7 +225,7 @@ F001 "현재 N위" 배지 / 펼침 표의 현재 행 / popover 헤더 등 사용
 
 - 배지: `0 8px`, height 22px
 - 펼침 패널: `14px 16px`
-- Popover: `14px 16px`, width 520px
+- Popover: `14px 20px`, width 620px (5컬럼 한글 헤더 줄바꿈 방지 실측치)
 - 페이지 배너: `8px 14px`
 - 테이블 셀: `6px 8px`
 
@@ -231,7 +236,7 @@ F001 "현재 N위" 배지 / 펼침 표의 현재 행 / popover 헤더 등 사용
 | 옵션 페이지 | `max-w-6xl` (1152px) |
 | 인증 카드 (로그인/회원가입) | `max-w-md` (448px) — 향후 활성화용 |
 | 팝업 | 340px 고정 |
-| 오버레이 popover | 520px |
+| 오버레이 popover | 620px |
 | 오버레이 배너 | 100% (호스트 페이지 폭) |
 
 ---
@@ -483,24 +488,166 @@ z-index: 2147483647;
 
 variants: 기본(brand 톤) / `.warn` (앰버) / `.lock` (회색).
 
-### Bid Table (오버레이 — 입찰가 / 노출수 / 클릭수 / 평균CPC / 총비용)
+### Bid Table (오버레이 — 순위 / 입찰가 / 예상 노출수 / 예상 클릭수 / 예상 광고비)
 
 ```css
 .dvads-bid-table th {
-  font: 500 10px Pretendard;
+  font: 500 14px "Pretendard Variable";
   color: #666666;
+  padding: 7px 16px;
   border-bottom: 1px solid #ECEEF0;
 }
 .dvads-bid-table td {
-  padding: 6px 8px;
-  font: 400 12px ui-monospace;
+  font: 400 14px "Pretendard Variable";
+  font-feature-settings: "tnum";
+  padding: 7px 16px;
   text-align: right;
   color: #171717;
 }
+.dvads-bid-table td:nth-child(2) { font-weight: 600; } /* 입찰가 컬럼은 항상 강조 */
 .dvads-bid-table tr.current td {
   background: rgba(230, 120, 59, 0.10);
-  color: #E6783B;
-  font-weight: 600;
+  color: #171717;          /* 텍스트는 일반 ink — 배경 tint만으로 부드럽게 강조 */
+}
+.dvads-bid-table tbody tr.dvads-clickable {
+  cursor: pointer;          /* 입찰가 변경 가능 행 (현재 행은 비활성) */
+}
+.dvads-bid-table tbody tr.dvads-clickable:hover td {
+  background: #f5f5f5;
+}
+```
+
+### Popover Header (오버레이 — 입찰가 표 상단)
+
+```css
+.dvads-popover-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.dvads-popover-hdr .kw {
+  font: 600 16px "Pretendard Variable";
+  color: #171717;
+  text-decoration: none;     /* <a>지만 호버에만 underline */
+  cursor: pointer;
+}
+.dvads-popover-hdr a.kw:hover {
+  text-decoration: underline;
+  text-decoration-color: #E6783B;
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1.5px;
+}
+.dvads-popover-close {
+  background: transparent;
+  border: 0;
+  color: #a3a3a3;            /* 은은하게 — 호버에만 진해짐 */
+  font-size: 18px;
+  width: 24px; height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.dvads-popover-close:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+```
+
+키워드명은 `<a>`로 렌더되어 클릭 시 네이버 광고 검색결과
+(`ad.search.naver.com/search.naver?where=ad&query=<키워드>`)를 새 탭으로 연다.
+
+### Confirm Dialog (오버레이 — 입찰가 변경 확인)
+
+호스트 페이지 위 fixed backdrop + 카드. 카드 내부 클릭/ESC가 부모 popover로 전파되지
+않도록 backdrop·card·버튼에 `stopPropagation()` 적용.
+
+```css
+.dvads-confirm-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex; align-items: center; justify-content: center;
+}
+.dvads-confirm-card {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px 22px 18px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.05);
+  width: min(420px, calc(100vw - 32px));      /* 본문 2줄 구성 — 짧은 키워드도 안 휑함 */
+}
+.dvads-confirm-header { display: flex; justify-content: space-between; align-items: center;
+                          margin-bottom: 8px; }
+.dvads-confirm-title { font: 600 16px Pretendard; }
+.dvads-confirm-close { background: transparent; border: 0; color: #a3a3a3; font-size: 18px;
+                        width: 24px; height: 24px; border-radius: 4px; cursor: pointer; }
+.dvads-confirm-close:hover { background: #F3F4F6; color: #666666; }
+.dvads-confirm-body  { font: 400 14px Pretendard; color: #333; margin-bottom: 18px;
+                        word-break: keep-all; }              /* 어절 단위 줄바꿈 */
+.dvads-confirm-line + .dvads-confirm-line { margin-top: 2px; } /* 2줄 본문 간격 */
+.dvads-confirm-body b { font-weight: 600; color: #171717;
+                         white-space: nowrap; }              /* 키워드/가격 한 덩어리 */
+.dvads-confirm-arrow  { color: #E6783B; }     /* "1,000원 → 440원" 강조 */
+.dvads-confirm-delta-up   { color: #DC2626; font-weight: 600; } /* 인상 — 한국 시세 컨벤션 */
+.dvads-confirm-delta-down { color: #0072f5; font-weight: 600; } /* 인하 */
+.dvads-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
+```
+
+같은 폰트 토큰(제목 16px/600, 본문 14px/400)을 모든 다이얼로그류 팝업에 일관 적용.
+
+본문은 2줄 구성 — 라인1 `<키워드> 입찰가를`, 라인2 `<현재>원 → <목표>원(±차액)으로
+변경하시겠습니까?`. 차액 부호는 한국 주식 시세 컨벤션을 따라 **인상=빨강(#DC2626)**,
+**인하=파랑(#0072f5)**. 차액이 0이면 부호 자체를 표시하지 않음.
+
+### Toast (오버레이 — 우하단 stack, Undo 지원)
+
+```css
+.dvads-toast-root {
+  position: fixed; right: 20px; bottom: 20px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 2147483647;
+}
+.dvads-toast {
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.05);
+  min-width: 280px; max-width: 420px;
+  overflow: hidden;
+}
+.dvads-toast-body { display: flex; align-items: center; gap: 10px;
+                     padding: 12px 14px; font: 400 13px Pretendard; }
+.dvads-toast-icon { width: 20px; height: 20px; border-radius: 50%;
+                     color: #fff; font: 600 12px Pretendard; }
+.dvads-toast-success .dvads-toast-icon { background: #16a34a; }
+.dvads-toast-error   .dvads-toast-icon { background: #DC2626; }
+.dvads-toast-undo { color: #E6783B; background: transparent; border: 0;
+                     padding: 4px 8px; border-radius: 6px; font-weight: 500; }
+.dvads-toast-bar      { height: 2px; background: #ECEEF0; }
+.dvads-toast-bar-fill { height: 100%; background: #a3a3a3;
+                         animation: dvads-toast-bar linear forwards; }
+```
+
+진행바(`scaleX(1)` → `scaleX(0)`)로 Undo 잔여 시간(기본 5000ms)을 시각화.
+큐 최대 3개, 초과 시 가장 오래된 것부터 제거.
+
+### Common Button (오버레이 — 다이얼로그/토스트용)
+
+```css
+.dvads-btn {
+  height: 32px;
+  padding: 0 14px;
+  font: 500 13px Pretendard;
+  border: 0; border-radius: 8px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  cursor: pointer;
+}
+.dvads-btn-primary   { background: #E6783B; color: #fff; }
+.dvads-btn-primary:hover:enabled   { filter: brightness(0.95); }
+.dvads-btn-secondary { background: #F3F4F6; color: #171717; }
+.dvads-btn-secondary:hover:enabled { background: #E5E7EB; }
+.dvads-btn-loading::before {
+  content: ""; width: 12px; height: 12px; border-radius: 50%;
+  border: 1.5px solid currentColor; border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
 }
 ```
 
@@ -508,7 +655,8 @@ variants: 기본(brand 톤) / `.warn` (앰버) / `.lock` (회색).
 
 ## Conventions
 
-- **em dash 사용 금지** — 일반 하이픈 `-`만 사용. 코드/UI/주석 모두 통일.
+- **em dash(`—`) / minus sign(`−`, U+2212) 사용 금지** — 모든 짝대기는 일반 하이픈
+  `-` (U+002D)만 사용. 코드/UI/주석 모두 통일. 음수 표시(`(-230)`)도 동일.
 - **한글 응답 원칙** — 사용자 노출 텍스트·UI·주석은 모두 한글. 코드, 명령어, 파일 경로,
   변수명, 영문 고유명사는 원문 그대로. CLAUDE.md 참조.
 - **오버레이 클래스는 `dvads-` prefix로 격리** — `ads.naver.com` 호스트 CSS와 충돌 방지.
@@ -550,3 +698,5 @@ variants: 기본(brand 톤) / `.warn` (앰버) / `.lock` (회색).
 |------|----------|-----------|
 | 2026-05-18 | 자매 프로젝트(디브이 SEO 매니저)와 디자인 시스템 통일 — Card v5 flat 폐기, `rounded-2xl + shadow` 패턴 채택. 페이지 배경 `#fafafa`→`#f4f5f7`. Input bg `#fff`→`#f4f5f7`. Primary 버튼 검정→주황 통일. | 같은 셀러가 두 확장을 함께 쓰는데 시각 톤이 다르면 브랜드 분열. dvmkt가 먼저 출시되어 실사용자 학습이 있으므로 dvads를 dvmkt 톤에 맞춤. 오버레이는 dvads 고유(광고 테이블 inline)이므로 호스트 페이지와의 영역 정체성을 위해 1.5px 주황 보더 패턴(dvmkt 패널과 동일 철학)을 채택. |
 | 2026-05-18 | 로그인/회원가입/비밀번호 찾기 UI 골격을 미리 작성하되 옵션 페이지에는 마운트하지 않음 (라이선스 없이 사용 가능). | 향후 라이선스 재도입 시 곧바로 활성화 가능하도록. 핸들러는 stub. dvmkt 디자인을 1:1로 옮겨 두 확장의 인증 UX를 통일. |
+| 2026-05-18 | F001 팝오버에 행 클릭 → 입찰가 자동 변경 기능 추가. 페이지 UI 자동화(DOM 조작) 방식 — 검색광고 PUT API 미사용. 신규 컴포넌트: 확인 다이얼로그, 토스트(+Undo), 팝오버 닫기 버튼. | 사용자가 "추정 → 적용" 사이 컨텍스트 스위칭을 없애기 위함. DOM 자동화는 사용자가 직접 수정하는 것과 동일한 경로라 즉시 반영·권한 동일·`nccKeywordId` 추출 부담 회피. 깨질 위험은 `src/content/dom-bid.ts` 한 파일에 격리 — ads.naver.com이 클래스명을 갈면 여기만 수정. |
+| 2026-05-18 | Typography Scale 문서를 실제 코드 기준으로 동기화. 오버레이 입찰가 표(10→14px), 면책 푸터(10→12px) 등 outdated 값 갱신. 다이얼로그 폰트 토큰 확정 — 제목 16px/600, 본문 14px/400. 신규 다이얼로그류 팝업은 동일 토큰 적용. | 코드와 문서가 어긋나면 신규 작업 시 잘못된 사이즈로 가는 사고가 반복. 입찰가 표는 정보 밀도보다 가독성이 더 중요해 14px로 갱신된 상태였음. |
