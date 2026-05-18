@@ -26,14 +26,14 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 ## Architecture
 
 - `src/content/index.ts` — `ads.naver.com` 페이지 주입 콘텐츠 스크립트. 광고 키워드 옆 입찰가·순위 오버레이 렌더.
-- `src/background/index.ts` — MV3 Service Worker. 검색광고 API(GET_VOLUMES) 및 스마트스토어 상품 경쟁지표(GET_SEARCH_POPULAR) fetch 위임. 향후 GET_BID_ESTIMATE 추가 예정.
+- `src/background/index.ts` — MV3 Service Worker. 검색광고 API(GET_BID_ESTIMATE) fetch 위임.
 - `src/popup/` — React 19 팝업 (옵션 진입점)
 - `src/options/` — 검색광고 API 자격증명(`customerId`/`accessLicense`/`secretKey`) 입력
 - `src/lib/searchad.ts` — 검색광고 API HMAC 서명 + batch fetch + 429 backoff
-- `src/lib/search-popular.ts` — 스마트스토어 "상품 경쟁지표" API (키워드 → 1~100위 한방)
-- `src/lib/volume-cache.ts` + `search-popular-cache.ts` — 캐시
+- `src/lib/volume-cache.ts` + `performance-cache.ts` — 캐시
 - `src/lib/friendly-error.ts` — 사용자 친화적 에러 변환
 - `manifest.config.ts` — `@crxjs/vite-plugin`이 빌드 시 manifest.json 생성
+- F002/F003 쇼핑검색광고는 콘텐츠 스크립트에서 `ads.naver.com` 비공식 internal API 직접 호출 — `/apis/sa/api/adata/admng_exp_keyword` (자동매칭 키워드+통계), `/apis/ad-account/v2/adAccounts/{accountId}` (accountId→customerId 매핑). 상세 schema·인증·payload는 [`docs/PRD.md`](./docs/PRD.md) 와 메모리 `project_spike_b_shopping_endpoints`.
 
 ## 디자인 시스템
 
@@ -50,11 +50,12 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 
 ## Gotchas
 
-- **`host_permissions`는 정확히 3개만 — `ads.naver.com`, `api.searchad.naver.com`, `sell.smartstore.naver.com`.** 늘리면 Chrome 심사에서 사유 요구.
+- **`host_permissions`는 정확히 2개만 — `ads.naver.com`, `api.searchad.naver.com`.** 늘리면 Chrome 심사에서 사유 요구. 모든 데이터는 **광고 도메인 두 곳** 안에서만 — 검색광고 API + 광고관리자 internal API. 셀러 센터(`sell.smartstore.naver.com`) 등 비광고 도메인은 부적합.
 - 광고 대시보드 페이지 fetch는 사용자 탭 컨텍스트에서 실행하는 게 안전(쿠키·UA 우회). background에서 직접 부르면 anti-bot에 막힐 가능성.
+- `ads.naver.com` 비공식 internal API(`/apis/sa/api/adata/*`, `/apis/ad-account/v2/*`)는 CORS상 **콘텐츠 스크립트에서만 호출 가능** (background는 차단). 인증은 광고관리자 로그인 쿠키 + `x-xsrf-token` 헤더(`XSRF-TOKEN` 쿠키 더블 서밋, `decodeURIComponent` 필요). schema·path 예고 없이 변경 가능 — `friendly-error`로 graceful fallback 필수.
+- 광고관리자 URL의 `ad-accounts/{accountId}`는 광고관리자 account ID로 검색광고 API `customerId`와 별개. 매핑은 `GET ads.naver.com/apis/ad-account/v2/adAccounts/{accountId}` 응답의 `adAccount.masterCustomerId`.
 - searchad API `hintKeywords` 제약 = 한글·영문·숫자만 + 길이 ≤30 + 공백 X. 위반 시 배치(5개) 400. `fetchVolumes`(`searchad.ts`)는 400만 swallow하고 401/403/5xx/네트워크는 throw — 인증·서버 장애를 부분 결과로 가리지 않게.
 - `chrome.storage.local`은 확장별 격리 — 다른 확장에 등록된 검색광고 자격증명을 자동으로 못 읽으므로 사용자가 본 확장 옵션에 별도 입력해야 한다.
-- 스마트스토어 상품 경쟁지표는 **브랜드 스토어 계정** 로그인 필요(401/403 → 친화적 에러).
 - 사용자 데이터(광고 키워드·예산·소재 등) 외부 전송 0건이어야 한다.
 - 버전은 `package.json`의 `version` 필드가 단일 소스 — `manifest.config.ts`에서 자동 import.
 

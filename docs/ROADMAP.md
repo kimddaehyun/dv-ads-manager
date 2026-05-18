@@ -117,15 +117,21 @@
 
 ### Phase 4: 고급 기능 및 최적화
 
-- **Task 012: F002/F003 Spike B — 쇼핑검색광고 데이터 소스 확정**
-  - 후보 비교:
-    - 검색광고 API의 쇼핑 영역 endpoint 존재 여부 (공식 문서 정독)
-    - `ads.naver.com` 페이지 DOM에서 자동매칭 키워드 추출 + `search.shopping.naver.com` 재조회
-    - 내부 XHR 재호출 (host page 비공식 API 가로채기)
-  - 채택 안에 따라 자격증명 필요 여부 정의 (검색광고 API면 F011 자격증명 재사용, DOM/쿠키 기반이면 자격증명 무관)
-  - `host_permissions` 4번째 추가 필요 여부 결정
-  - 산출물: 채택 endpoint·인증 방식·캐시 키 스킴·에러 분기. Plan A(v0.2 분리) / Plan B(v0.1 일괄) 최종 결정
-  - 예상 기간: 3-7d
+- **Task 012: F002/F003 Spike B — 쇼핑검색광고 데이터 소스 확정** ✅ - 완료 (2026-05-18)
+  - ✅ **데이터 소스 정책**: `ads.naver.com` + `api.searchad.naver.com` (광고 데이터 도메인 단일 채널). 셀러 백오피스 미사용. `host_permissions` 추가 0 (현재 2개 유지).
+  - ✅ **검색광고 API 공식 sample 정찰** (`naver/searchad-apidoc`): SHOPPING 전용 estimate endpoint 없음 — `IDType` enum = `id`/`keyword` 두 가지뿐. `/estimate/average-position-bid/keyword`는 광고 타입 분기 없는 시장가(파워링크 기준).
+  - ✅ **광고관리자 네트워크 트레이스로 비공식 endpoint 2개 확정**:
+    - **`POST https://ads.naver.com/apis/sa/api/adata/admng_exp_keyword`** — 광고그룹의 자동매칭 키워드(노출 키워드) + 통계(impCnt/clkCnt/salesAmt) 한 번에 반환. 광고관리자 화면이 쓰는 그 호출. Payload `{domain, cols: {keys: [{columns: [{code: customerId|nccAdgroupId|ymd|expKeyword|...}]}]}}`. 응답 `{total, data: [{nccAdId, expKeyword, impCnt, clkCnt, salesAmt, drtCnto, customerId, nccAdgroupId}, ...]}`. CORS는 `https://ads.naver.com` 만 허용 → **콘텐츠 스크립트에서만 호출 가능**.
+    - **`GET https://ads.naver.com/apis/ad-account/v2/adAccounts/{accountId}`** — URL의 accountId 로 customerId 매핑. 응답 `adAccount.masterCustomerId` 가 검색광고 API customerId.
+  - ✅ **인증**: 둘 다 광고관리자 로그인 쿠키(NID_AUT, JSESSIONID 등) + `x-xsrf-token` 헤더(XSRF-TOKEN 쿠키 더블 서밋). HMAC 없음. F011 자격증명과 완전 분리 — 광고관리자에 로그인되어 있으면 자동 동작.
+  - ✅ **콘텐츠 스크립트 통합 흐름** (메모리 `project_spike_b_shopping_endpoints` 참조):
+    1. URL parsing → accountId · nccAdgroupId 추출
+    2. `GET /apis/ad-account/v2/adAccounts/{accountId}` → `adAccount.masterCustomerId` = customerId
+    3. `POST /apis/sa/api/adata/admng_exp_keyword` → 자동매칭 키워드 목록
+    4. background `GET_BID_ESTIMATE` (F001 인프라 재사용) → 키워드별 1~10위 시장가
+  - ✅ **Plan 결정**: **Plan B (v0.1 F001·F002·F003 일괄)** 가능. 검색광고 API에 쇼핑 전용 endpoint는 없지만 비공식 admng_exp_keyword가 안정적으로 자동매칭 키워드 + 통계 제공.
+  - 🟡 **남은 미세 보강**: `admng_exp_keyword` payload의 모든 columns 정확 목록 (impCnt/clkCnt/salesAmt 등 통계 컬럼) — 본 구현 시 첫 호출 디버깅으로 확정. 차단 요소 아님.
+  - ⚠️ **비공식 API 안정성 리스크**: schema/path 예고 없이 변경 가능 → friendly-error로 graceful fallback + console 경고 로깅 필수.
 
 - **Task 013: F002 쇼핑검색광고 그룹 inline 펼침 구현** *(Plan B 선택 시)*
   - 콘텐츠 스크립트: 쇼핑 그룹 페이지 셀렉터 + 소재 행 옆 토글 버튼 주입 (다중 동시 펼침)
@@ -150,4 +156,4 @@
 ---
 
 **📅 최종 업데이트**: 2026-05-18
-**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010 완료 ✅ (Task 011·011-1 대기). Task 010: Spike C 완료 + 현재 N위 표시 + 성과 추정(노출/클릭/CPC/광고비) popover 통합까지 마감 — 입찰가 셀렉터는 텍스트 패턴(`/[\d,]+\s*원/`) 기반 fallback으로 동작 중, 호스트 마크업 확정 시 좁힐 수 있음
+**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010 완료 ✅ (Task 011·011-1 대기) + Phase 4 Task 012 Spike B 완료 ✅. F002/F003 데이터 소스 확정 — `ads.naver.com` 비공식 internal endpoint `admng_exp_keyword`(자동매칭 키워드+통계) + `ad-account v2`(accountId→customerId 매핑) 채택. 광고관리자 쿠키 인증, host_permissions 추가 0. 본 구현(Task 013/014) 진입 가능.

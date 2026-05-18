@@ -43,11 +43,8 @@ src/
 ├── options/                  # 옵션 페이지 (라이선스 키·검색광고 자격증명 입력)
 ├── lib/
 │   ├── searchad.ts           # 네이버 검색광고 API HMAC 서명 + batch fetch + 429 backoff
-│   ├── search-popular.ts     # 스마트스토어 상품 경쟁지표 (키워드→1~100위)
-│   ├── license.ts            # Supabase RPC 라이선스 검증 (5분 TTL 캐시)
-│   ├── supabase.ts           # Supabase 클라이언트
-│   ├── volume-cache.ts       # 볼륨 결과 캐시
-│   ├── search-popular-cache.ts
+│   ├── volume-cache.ts       # 1~10위 예상 입찰가 캐시
+│   ├── performance-cache.ts  # 성과 추정 캐시
 │   └── friendly-error.ts     # 사용자 친화적 에러 메시지 변환
 ├── types/                    # 공용 타입 정의
 └── assets/
@@ -60,7 +57,7 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 - `chrome.runtime.onMessage` 라우터에서 메시지 타입별 분기.
 - 비동기 응답은 `return true`로 채널 유지 — 누락 시 응답 손실.
 - **fetch는 가능하면 사용자 탭 컨텍스트**(콘텐츠 스크립트)에서 실행해 쿠키·UA로 anti-bot 우회. background에서 직접 부르면 차단 가능성.
-- 메시지 타입 네이밍 컨벤션: `GET_VOLUMES`, `GET_SEARCH_POPULAR`, `GET_BID_ESTIMATE` (대문자 SNAKE_CASE).
+- 메시지 타입 네이밍 컨벤션: `GET_BID_ESTIMATE` (대문자 SNAKE_CASE).
 
 ### 콘텐츠 스크립트 패턴
 - `manifest.config.ts`에서 `matches: ['https://ads.naver.com/*']` 지정.
@@ -69,24 +66,20 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 - React를 콘텐츠 스크립트에서 마운트할 때는 새 `<div>`를 host body에 append하고 거기에 `createRoot`.
 
 ### Manifest & 권한 정책
-- **`host_permissions`는 정확히 4개**:
+- **`host_permissions`는 정확히 2개**:
   - `https://ads.naver.com/*`
   - `https://api.searchad.naver.com/*`
-  - `https://sell.smartstore.naver.com/*`
-  - `https://*.supabase.co/*`
-- 늘리면 Chrome 심사에서 사유 요구. 다른 도메인 fetch가 정말 필요한지부터 의심.
+- 모든 데이터는 검색광고 API 단일 채널만 사용 (2026-05-18 결정). 늘리면 Chrome 심사에서 사유 요구.
 - `web_accessible_resources`: 콘텐츠 스크립트에서 import할 정적 자산만 노출, 나머지는 빼둘 것.
 
 ### 네이버 API 호출 제약
 - **searchad `hintKeywords`**: 한글·영문·숫자만 + 길이 ≤30 + 공백 X. 위반 시 배치(5개) 통째로 400. `fetchVolumes`는 400만 swallow, 401/403/5xx/네트워크는 throw해서 인증·서버 장애를 부분 결과로 가리지 않게.
 - **HMAC 서명**: `searchad.ts`의 서명 로직은 네이버 검색광고 API 스펙을 따르므로 임의 변경 금지.
 - **429 backoff**: `searchad.ts`가 처리. 호출 측에서 추가 재시도 X — 중복 backoff 금지.
-- **스마트스토어 상품 경쟁지표**: 브랜드 스토어 계정 로그인 필수, 401/403 시 친화적 에러로 변환해 basic tier 사용자에게 기능 게이트 메시지 노출.
 
 ### 캐시 계층
-- `volume-cache.ts`, `search-popular-cache.ts`가 `chrome.storage.local` 또는 메모리에 결과 보존.
+- `volume-cache.ts`, `performance-cache.ts`가 `chrome.storage.local`에 결과 보존.
 - 캐시 키는 정규화된 키워드(공백 trim, NFC 정규화)로 — 같은 키워드 중복 호출 방지.
-- 라이선스 캐시(`license.ts`)는 5분 TTL.
 
 ### 라이선스 시스템
 - **본 확장 전용 Supabase 프로젝트** 사용 (`.env`의 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`).
@@ -109,7 +102,7 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 ### 3. 구현
 - background는 가능한 한 얇게: fetch 위임 + 에러 변환만, 비즈니스 로직은 콘텐츠 스크립트 또는 lib에.
 - 콘텐츠 스크립트는 React 마운트 비용을 의식 — 첫 로드 시점 지연(`requestIdleCallback`) 권장.
-- 코어 파일(`src/lib/{searchad,search-popular,license,supabase,friendly-error}.ts`) 수정 시 본 repo의 모든 호출자에서 깨짐 없는지 확인.
+- 코어 파일(`src/lib/{searchad,friendly-error}.ts`) 수정 시 본 repo의 모든 호출자에서 깨짐 없는지 확인.
 
 ### 4. 빌드 + 수동 검증
 - `npm run typecheck` → `npm run build` → `dist/` 갱신 확인.
@@ -117,7 +110,7 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 - 서비스 워커 로그는 `chrome://extensions` → "service worker" 링크 클릭으로 inspect.
 
 ### 5. 검토 체크리스트
-- [ ] `host_permissions` 4개 제약 유지
+- [ ] `host_permissions` 2개 제약 유지
 - [ ] 새 메시지 타입에 TS 타입 정의 + background 라우터 분기
 - [ ] 429/401/403/네트워크 에러가 친화적 메시지로 변환됨
 - [ ] 캐시 키가 정규화된 형태
@@ -139,7 +132,7 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 
 ## 절대 하지 말 것
 
-- `host_permissions`를 무심코 확장 (Chrome 심사 리스크).
+- `host_permissions`를 무심코 확장 (Chrome 심사 리스크). 새 도메인이 정말 필요한지 의심부터 — 본 확장은 검색광고 API 단일 채널만 사용.
 - background에서 anti-bot 보호된 도메인을 직접 fetch (콘텐츠 스크립트 경유 우선).
 - 코어 파일을 본 repo에서만 수정 (드리프트).
 - 사용자 광고 데이터를 외부로 전송.

@@ -37,8 +37,8 @@ color: red
 ## 항상 보존 (절대 삭제 X)
 
 - `manifest.config.ts` 와 그 의존 자산 (아이콘 경로, content_scripts.matches 등)
-- `src/lib/searchad.ts`, `search-popular.ts`, `license.ts`, `supabase.ts`, `friendly-error.ts`, `license-format.ts` — 본 확장의 핵심 인프라. 본 에이전트는 단순 정리만 수행하고 코어 로직 변경은 하지 않음.
-- `src/lib/volume-cache.ts`, `search-popular-cache.ts` — 캐시 계층
+- `src/lib/searchad.ts`, `friendly-error.ts` — 본 확장의 핵심 인프라. 본 에이전트는 단순 정리만 수행하고 코어 로직 변경은 하지 않음.
+- `src/lib/volume-cache.ts`, `performance-cache.ts` — 캐시 계층
 - `src/content/`, `src/background/`, `src/popup/`, `src/options/` 디렉토리 자체 (안의 데모 콘텐츠는 정리 대상, 진입점 파일은 골격 유지)
 - `src/types/` 공용 타입
 - Vite/TS/Tailwind 설정 파일 (`vite.config.ts`, `tsconfig*.json`, Tailwind 진입 CSS)
@@ -114,7 +114,7 @@ color: red
 ## 절대 하지 말 것
 
 - `src/lib/`의 코어 파일을 정리 단계에서 임의 수정·삭제 (수동 로직 변경은 별도 작업).
-- `manifest.config.ts`의 `host_permissions` 4개를 임의로 줄이거나 늘리기 (CLAUDE.md 정책).
+- `manifest.config.ts`의 `host_permissions` 2개를 임의로 줄이거나 늘리기 (CLAUDE.md 정책).
 - `package.json`의 `version` 임의 변경 (릴리스 워크플로우 영향).
 - `npm run build`로 검증하지 않고 정리 종료.
 - 의심스러운 파일을 "아마 안 쓰는 것 같다"는 추측으로 삭제 (반드시 grep + 빌드 검증).

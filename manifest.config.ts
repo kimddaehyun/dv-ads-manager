@@ -20,7 +20,6 @@ export default defineManifest({
   host_permissions: [
     "https://ads.naver.com/*",
     "https://api.searchad.naver.com/*",
-    "https://sell.smartstore.naver.com/*",
   ],
   options_ui: {
     page: "src/options/index.html",

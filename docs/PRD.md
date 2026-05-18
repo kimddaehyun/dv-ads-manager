@@ -7,7 +7,7 @@
 
 > 본 프로젝트는 Chrome MV3 확장으로 배포된다. 일반 웹 앱이 아니라 호스트 페이지(`ads.naver.com`)에 콘텐츠 스크립트를 주입하는 구조이며, MVP에서는 **별도의 회원 인증/라이선스 검증 없이** 검색광고 API 자격증명만 등록되면 기능이 활성된다. 검색광고 API의 입찰가/볼륨 응답은 **시장 단위 추정치**이므로 호출자 customerId와 무관하게 동일하다 — 따라서 자격증명은 **`customerId` + `accessLicense` + `secretKey` 1쌍만 등록**해 두면 사용자가 보고 있는 광고주가 누구든 동일하게 동작한다. 광고주 매칭·다중 자격증명 개념은 사용하지 않는다.
 >
-> **🟡 TBD**: 쇼핑검색광고 키워드별 순위/예상 입찰가의 **데이터 소스는 미정**(검색광고 API 쇼핑 endpoint / `ads.naver.com` DOM 추출 / 내부 XHR 재호출 등). 본 repo의 `src/lib/search-popular.ts`는 스마트스토어 셀러 백오피스 API(`sell.smartstore.naver.com`)를 호출하지만, 대행사 AE 타겟에서는 셀러 계정을 보유하지 않아 부적합. 구현 단계에서 별도 결정.
+> **데이터 소스 확정 (2026-05-18, Spike B)**: 쇼핑검색광고 자동매칭 키워드는 `POST https://ads.naver.com/apis/sa/api/adata/admng_exp_keyword` (광고관리자 비공식 internal API)로 받고, 키워드별 1~10위 시장 입찰가는 기존 F001 인프라(`POST /estimate/average-position-bid/keyword`)를 재사용. accountId→customerId 매핑은 `GET https://ads.naver.com/apis/ad-account/v2/adAccounts/{accountId}` 응답의 `adAccount.masterCustomerId`. 인증은 광고관리자 로그인 쿠키 + `x-xsrf-token` 헤더(F011 자격증명과 분리). `host_permissions` 추가 없음.
 
 ## 🚶 사용자 여정
 
@@ -210,7 +210,7 @@ Chrome 확장의 진입점 3개(콘텐츠 스크립트 / 팝업 / 옵션) 기준
 
 ### 📡 외부 API
 - **네이버 검색광고 API** (`api.searchad.naver.com`) — HMAC 서명, 키워드별 예상 입찰가/볼륨 조회. **광고주별 자격증명 필요**. F001 데이터 소스
-- **F002/F003 데이터 소스 — TBD**: 검색광고 API 쇼핑 endpoint / `ads.naver.com` DOM 추출 / 내부 XHR 재호출 등 후보. 본 repo의 `src/lib/search-popular.ts`(`sell.smartstore.naver.com` 호출)는 셀러 백오피스 API라 대행사 AE 타겟에 부적합 — 구현 단계에서 결정
+- **F002/F003 데이터 소스 — 확정 (2026-05-18, Spike B)**: ① 자동매칭 키워드 + 통계 — `POST ads.naver.com/apis/sa/api/adata/admng_exp_keyword` (비공식 internal API, 광고관리자 로그인 쿠키 + `x-xsrf-token`). ② accountId→customerId 매핑 — `GET ads.naver.com/apis/ad-account/v2/adAccounts/{accountId}` (`adAccount.masterCustomerId`). ③ 키워드별 1~10위 시장가 — F001 인프라(`POST api.searchad.naver.com/estimate/average-position-bid/keyword`) 재사용. CORS상 ①②는 콘텐츠 스크립트에서만 호출 가능. 셀러 백오피스 API는 미사용.
 
 ### 💾 저장소
 - **`chrome.storage.local`** — 자격증명, 영속 캐시. 확장별 격리
@@ -247,9 +247,8 @@ Chrome 확장의 진입점 3개(콘텐츠 스크립트 / 팝업 / 옵션) 기준
 
 ### Manifest 권한 확인 사항
 
-- 현재 `manifest.config.ts` `permissions: ["storage"]`, `host_permissions` 3개 (`ads.naver.com`, `api.searchad.naver.com`, `sell.smartstore.naver.com`).
+- 현재 `manifest.config.ts` `permissions: ["storage"]`, `host_permissions` 2개 (`ads.naver.com`, `api.searchad.naver.com`).
 - F012 활성 탭 식별: `chrome.tabs.query({active:true, currentWindow:true})`가 host_permissions만으로 활성 탭 URL을 읽을 수 있는지 구현 첫날 확인. 불가 시 `"activeTab"` 추가(심사 영향 작음).
-- `sell.smartstore.naver.com`은 F002/F003 데이터 소스 결정 후 불필요하면 제거 검토.
 
 ### Quota / Prune 정책 (MVP 후 보완)
 

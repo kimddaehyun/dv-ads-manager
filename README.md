@@ -37,7 +37,7 @@ src/
 ├── options/        # 검색광고 API 자격증명 등록 (F011)
 ├── content/        # ads.naver.com 콘텐츠 스크립트 (F001/F002/F003)
 ├── background/     # MV3 Service Worker (API 위임)
-├── lib/            # searchad / search-popular / cache
+├── lib/            # searchad / cache (volume / performance)
 ├── types/          # 공유 타입
 └── assets/         # 로고·폰트
 ```
