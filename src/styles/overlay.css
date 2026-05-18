@@ -7,6 +7,10 @@
  * 토큰 값은 DESIGN.md (src/styles/theme.css)와 일치시켜 유지.
  * 한 쪽 변경 시 양쪽 동시 갱신.
  *
+ * 디자인 톤: 자매 프로젝트(디브이 SEO 매니저) 패널과 통일된 영역 정체성 패턴
+ * (1.5px 주황 보더 + 10px radius). 호스트 광고 테이블 안에서 "이 영역은 우리
+ * 확장이 그렸다"는 시각 신호.
+ *
  * 사용처: src/demo/ (시안 검증), src/content/ (Phase 3에서 inline import).
  */
 
@@ -50,7 +54,6 @@
   width: 16px; height: 16px; border-radius: 3px;
 }
 .dvads-page-banner .right {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 11px;
   opacity: 0.8;
 }
@@ -72,7 +75,6 @@
   color: #E6783B;
   border: 1px solid transparent;
   border-radius: 6px;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 12px;
   font-weight: 600;
   line-height: 1;
@@ -80,6 +82,7 @@
   flex-shrink: 0;
   transition: background 120ms ease;
   user-select: none;
+  font-feature-settings: "tnum";
 }
 /* 키워드 셀(<td>)에 직접 absolute 마운트해 우측 끝 정렬.
    "적은검색량" 같은 가변 태그 줄바꿈에 영향 받지 않게. */
@@ -140,8 +143,9 @@
 .dvads-expand-panel {
   margin: 10px 12px 14px;
   background: #ffffff;
-  border-radius: 8px;
-  padding: 14px 16px;
+  border-radius: 10px;
+  padding: 12px 18px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
 }
 .dvads-expand-hdr {
   display: flex;
@@ -150,7 +154,6 @@
   margin-bottom: 10px;
 }
 .dvads-expand-hdr .meta {
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
   font-size: 11px;
   color: #666666;
 }
@@ -172,66 +175,99 @@
   color: #171717;
 }
 
-/* 통합 테이블 — 순위 | 입찰가 | 노출수 | 클릭수 | 평균CPC | 총비용 × 10행 */
+/* 통합 테이블 — 순위 | 입찰가 | 노출수 | 클릭수 | 평균CPC | 총비용 × 10행.
+   호스트 광고관리자 표와 시각적으로 잘 어우러지도록 컴팩트(padding 5px) +
+   매 행 옅은 구분선 + hover 옅은 회색. 현재 행 강조는 배경 tint만으로
+   부드럽게(텍스트는 일반 ink + weight 600). */
 .dvads-bid-table {
   width: 100%;
   border-collapse: collapse;
+  border: 1px solid #ECEEF0;     /* 표 외곽 테두리 */
+  /* 폰트는 헤더·셀 통일: 한글 라벨이 있는 헤더와 숫자 셀이 같은 톤으로 흐르도록
+     모두 Pretendard. 숫자 정렬은 tabular-nums(font-feature-settings)로 해결. */
+  font-family: "Pretendard Variable", Pretendard, system-ui, sans-serif;
+  font-feature-settings: "tnum";
+}
+/* 입찰가(2번째) 컬럼 오른쪽 세로선 — 입찰가 그룹과 실적 예측 그룹의 시각적 분리 */
+.dvads-bid-table th:nth-child(2),
+.dvads-bid-table td:nth-child(2) {
+  border-right: 1px solid #ECEEF0;
 }
 .dvads-bid-table th, .dvads-bid-table td {
-  padding: 6px 8px;
-  font-size: 12px;
+  padding: 7px 16px;
+  font-size: 14px;
   line-height: 1.4;
   text-align: right;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-feature-settings: "tnum";
+  white-space: nowrap;          /* 헤더 한글 라벨 줄바꿈 방지 */
+}
+.dvads-bid-table thead tr {
+  background: #fafafa;          /* 호스트 표 톤의 옅은 헤더 배경 */
 }
 .dvads-bid-table th {
   color: #666666;
   font-weight: 500;
-  font-size: 10px;
+  font-size: 14px;
   border-bottom: 1px solid #ECEEF0;
   padding-bottom: 6px;
-  font-family: "Pretendard Variable", system-ui, sans-serif;
+}
+/* 입찰가 컬럼(2번째)은 핵심 지표라 항상 강조 — weight 600 */
+.dvads-bid-table td:nth-child(2) {
+  font-weight: 600;
 }
 .dvads-bid-table td:first-child,
 .dvads-bid-table th:first-child {
   text-align: left;
   color: #808080;
-  font-family: "Pretendard Variable", system-ui, sans-serif;
   width: 48px;
 }
 .dvads-bid-table td {
   color: #171717;
 }
-/* 현재 추정 순위 행 강조 */
+/* 매 행 옅은 구분선 — 호스트 광고관리자 표 패턴 */
+.dvads-bid-table tbody tr {
+  border-bottom: 1px solid #f3f4f6;
+}
+.dvads-bid-table tbody tr:last-child {
+  border-bottom: 0;
+}
+/* 행 hover (현재 행은 별도 처리 — 아래) */
+.dvads-bid-table tbody tr:hover td {
+  background: #fafafa;
+}
+/* 현재 추정 순위 행 강조 — 배경 tint만(weight는 안 건드림 → 입찰가 컬럼만 600). */
 .dvads-bid-table tr.current td {
   background: rgba(230, 120, 59, 0.10);
-  color: #E6783B;
-  font-weight: 600;
+  color: #171717;
 }
 .dvads-bid-table tr.current td:first-child {
-  color: #E6783B;
+  color: #666666;
+}
+.dvads-bid-table tbody tr.current:hover td {
+  background: rgba(230, 120, 59, 0.14);
 }
 
 /* ─── F001 — 면책 푸터 ─── */
 .dvads-disclaimer {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid #ECEEF0;
-  font-size: 10px;
+  font-size: 12px;
   color: #a3a3a3;
   line-height: 1.5;
   font-family: "Pretendard Variable", system-ui, sans-serif;
+  white-space: pre-line;          /* "\n" 줄바꿈 인식 */
+  text-align: right;
 }
 
 /* ─── F001 — 부유 popover (가상화 테이블에 행 삽입 X, 배지 아래 anchored) ─── */
 .dvads-popover {
+  /* Popover는 floating이라 그림자(2-layer)만으로 호스트 페이지와 분리.
+     6컬럼 한글 헤더(예상 노출수 / 예상 클릭수 / 예상 입찰가 / 예상 광고비) 줄바꿈
+     없이 한 줄로 수용되도록 width 620px. */
   background: #ffffff;
-  border-radius: 8px;
-  padding: 14px 16px;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.05);
-  /* 6컬럼 통합 테이블 수용 폭 */
-  width: 520px;
+  border-radius: 10px;
+  padding: 14px 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  width: 620px;
   max-width: calc(100vw - 32px);
   box-sizing: border-box;
 }
@@ -277,8 +313,9 @@
 .dvads-shop-panel {
   margin: 10px 12px 14px;
   background: #ffffff;
-  border-radius: 8px;
-  padding: 14px 16px;
+  border-radius: 10px;
+  padding: 12px 18px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
 }
 .dvads-shop-hdr {
   display: flex;
@@ -295,7 +332,7 @@
 .dvads-shop-table th, .dvads-shop-table td {
   padding: 6px 8px;
   text-align: right;
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-feature-settings: "tnum";
 }
 .dvads-shop-table th { color: #666666; font-weight: 500; font-size: 10px; }
 .dvads-shop-table td { color: #171717; }

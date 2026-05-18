@@ -1,20 +1,20 @@
 /**
  * F011 — 검색광고 API 자격증명 등록·관리 UI.
  *
- * 3가지 상태:
- *   - empty       : 미등록 → 폼 렌더
- *   - registered  : 등록됨 → 마스킹 요약 + 수정·삭제 액션 리스트
- *   - error       : 등록 실패 → 폼 + 에러 메시지 (재시도 의도)
+ * 디자인은 자매 프로젝트(디브이 SEO 매니저)의 옵션 패턴 1:1 적용:
+ *   - 항상 동일한 폼 (등록/수정 분기 없음). 저장된 값이 있으면 미리 채움.
+ *   - 액션: [저장] [테스트] (저장된 값이 있으면) [삭제]
+ *   - 하단: API 키 발급 방법 안내 박스 (옅은 주황 배경)
+ *
+ * 자세한 가이드: docs/DESIGN.md §Component Catalog.
  */
 
 import { useState } from "react";
 import { Button } from "@/components/Button";
-import { Card } from "@/components/Card";
 import { Field } from "@/components/Field";
 import { Input } from "@/components/Input";
-import { ActionRow } from "@/components/ActionRow";
-import { Badge } from "@/components/Badge";
-import { PlusIcon, XIcon, EyeIcon, EyeOffIcon, EditIcon, TrashIcon } from "@/icons";
+import { fetchVolumes } from "@/lib/searchad";
+import { friendlyApiError } from "@/lib/friendly-error";
 
 export type CredentialsState = "empty" | "registered" | "error";
 
@@ -34,153 +34,202 @@ interface CredentialsUiProps {
   onDelete?: () => void;
 }
 
+type SaveStatus =
+  | { kind: "idle" }
+  | { kind: "saving" }
+  | { kind: "saved" }
+  | { kind: "testing" }
+  | { kind: "test-ok" }
+  | { kind: "test-fail"; message: string };
+
 export function CredentialsUi({
   state,
   initial,
   errorMessage,
   onSubmit,
-  onCancel,
-  onEdit,
   onDelete,
 }: CredentialsUiProps) {
-  if (state === "registered" && initial) {
-    return (
-      <div>
-        <div className="flex items-center gap-2 mb-3 px-1">
-          <SectionLabel className="!mb-0 !px-0">검색광고 API</SectionLabel>
-          <Badge variant="success">등록됨</Badge>
-        </div>
-        <Card padding="none">
-          <div className="p-6">
-            <div className="space-y-3.5">
-              <SummaryRow label="customerId" value={initial.customerId} />
-              <SummaryRow label="accessLicense" value={maskTail(initial.accessLicense, 4)} />
-              <SummaryRow label="secretKey" value="••••••••••••" />
-            </div>
-          </div>
-          <div className="border-t border-card-border p-2">
-            <ActionRow icon={<EditIcon />} label="수정" onClick={onEdit} />
-            <ActionRow icon={<TrashIcon />} label="삭제" variant="danger" onClick={onDelete} />
-          </div>
-        </Card>
-      </div>
-    );
-  }
+  const hasExisting = state === "registered";
 
-  // empty | error
-  return (
-    <div>
-      <div className="flex items-center gap-2 mb-3 px-1">
-        <SectionLabel className="!mb-0 !px-0">검색광고 API</SectionLabel>
-        {state === "error" && <Badge variant="error">등록 실패</Badge>}
-      </div>
-      <Card>
-        <CredentialsForm
-          initial={initial}
-          errorMessage={errorMessage}
-          showCancel={state === "error"}
-          onSubmit={onSubmit}
-          onCancel={onCancel}
-        />
-      </Card>
-    </div>
-  );
-}
-
-function CredentialsForm({
-  initial,
-  errorMessage,
-  showCancel,
-  onSubmit,
-  onCancel,
-}: {
-  initial?: CredentialsValue;
-  errorMessage?: string;
-  showCancel?: boolean;
-  onSubmit?: (v: CredentialsValue) => void;
-  onCancel?: () => void;
-}) {
   const [customerId, setCustomerId] = useState(initial?.customerId ?? "");
   const [accessLicense, setAccessLicense] = useState(initial?.accessLicense ?? "");
-  const [secretKey, setSecretKey] = useState("");
+  const [secretKey, setSecretKey] = useState(initial?.secretKey ?? "");
   const [showSecret, setShowSecret] = useState(false);
   const [errors, setErrors] = useState<{ customerId?: string; accessLicense?: string; secretKey?: string }>({});
+  const [status, setStatus] = useState<SaveStatus>({ kind: "idle" });
 
-  function submit() {
+  function valid(): boolean {
+    return Boolean(customerId.trim() && accessLicense.trim() && secretKey.trim());
+  }
+
+  function makeCred(): CredentialsValue {
+    return {
+      customerId: customerId.trim(),
+      accessLicense: accessLicense.trim(),
+      secretKey: secretKey.trim(),
+    };
+  }
+
+  function handleSave() {
     const next: typeof errors = {};
     if (!/^\d+$/.test(customerId.trim())) next.customerId = "숫자만 입력해주세요.";
     if (!accessLicense.trim()) next.accessLicense = "필수 입력값이에요.";
     if (!secretKey.trim()) next.secretKey = "필수 입력값이에요.";
     setErrors(next);
     if (Object.keys(next).length > 0) return;
-    onSubmit?.({ customerId: customerId.trim(), accessLicense: accessLicense.trim(), secretKey: secretKey.trim() });
+    setStatus({ kind: "saving" });
+    try {
+      onSubmit?.(makeCred());
+      setStatus({ kind: "saved" });
+      setTimeout(() => setStatus({ kind: "idle" }), 2000);
+    } catch {
+      setStatus({ kind: "idle" });
+    }
+  }
+
+  async function handleTest() {
+    if (!valid()) return;
+    setStatus({ kind: "testing" });
+    try {
+      await fetchVolumes(["사과"], makeCred());
+      setStatus({ kind: "test-ok" });
+    } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      console.warn("[credentials-ui] test failed", e);
+      setStatus({ kind: "test-fail", message: friendlyApiError(raw, "test") });
+    }
   }
 
   return (
-    <div className="space-y-3.5">
-      <div className="grid grid-cols-2 gap-3.5">
-        <Field label="customerId" error={errors.customerId}>
-          <Input mono placeholder="12345" value={customerId} onChange={(e) => setCustomerId(e.target.value)} invalid={!!errors.customerId} />
-        </Field>
-        <Field label="accessLicense" error={errors.accessLicense}>
-          <Input mono placeholder="0100000000abcdef..." value={accessLicense} onChange={(e) => setAccessLicense(e.target.value)} invalid={!!errors.accessLicense} />
-        </Field>
+    <div className="space-y-6">
+      <div className="flex items-baseline justify-between mb-5">
+        <h2 className="text-base font-semibold text-gray-900">API키</h2>
       </div>
-      <Field label="secretKey" error={errors.secretKey ?? errorMessage}>
-        <div className="flex gap-2 items-stretch">
-          <Input
-            mono
-            type={showSecret ? "text" : "password"}
-            placeholder="••••••••"
-            value={secretKey}
-            onChange={(e) => setSecretKey(e.target.value)}
-            invalid={!!errors.secretKey || !!errorMessage}
-            className="flex-1"
-          />
+
+      <Field
+        label="CUSTOMER_ID"
+        error={errors.customerId}
+      >
+        <Input
+placeholder="1234567"
+          value={customerId}
+          onChange={(e) => setCustomerId(e.target.value)}
+          invalid={!!errors.customerId}
+        />
+      </Field>
+
+      <Field
+        label="ACCESS_LICENSE"
+        error={errors.accessLicense}
+      >
+        <Input
+placeholder="0100000000abcdef..."
+          value={accessLicense}
+          onChange={(e) => setAccessLicense(e.target.value)}
+          invalid={!!errors.accessLicense}
+        />
+      </Field>
+
+      <Field
+        label="SECRET_KEY"
+        error={errors.secretKey ?? errorMessage}
+        rightSlot={
           <button
             type="button"
             onClick={() => setShowSecret((v) => !v)}
-            className="h-8 px-3 text-xs font-medium bg-button-light text-gray-600 rounded-lg cursor-pointer transition-colors hover:bg-button-light-hover inline-flex items-center gap-1.5 border-0"
-            aria-label={showSecret ? "비밀값 숨기기" : "비밀값 보기"}
+            className="text-xs text-gray-500 hover:text-gray-700"
           >
-            {showSecret ? <EyeOffIcon className="w-3 h-3" /> : <EyeIcon className="w-3 h-3" />}
-            {showSecret ? "숨김" : "표시"}
+            {showSecret ? "숨기기" : "보기"}
           </button>
-        </div>
+        }
+      >
+        <Input
+type={showSecret ? "text" : "password"}
+          placeholder="비밀키"
+          value={secretKey}
+          onChange={(e) => setSecretKey(e.target.value)}
+          invalid={!!errors.secretKey || !!errorMessage}
+        />
       </Field>
-      <div className="flex justify-end gap-2 pt-1">
-        {showCancel && (
-          <Button variant="secondary" onClick={onCancel}>
-            <XIcon className="w-3.5 h-3.5" /> 취소
+
+      <div className="flex gap-2 pt-2">
+        <Button
+          variant="brand"
+          onClick={handleSave}
+          disabled={!valid() || status.kind === "saving"}
+        >
+          {status.kind === "saving"
+            ? "저장 중…"
+            : status.kind === "saved"
+            ? "✓ 저장됨"
+            : "저장"}
+        </Button>
+        <Button
+          variant="secondary"
+          onClick={handleTest}
+          disabled={!valid() || status.kind === "testing"}
+        >
+          {status.kind === "testing" ? "테스트 중…" : "테스트"}
+        </Button>
+        {hasExisting && (
+          <Button
+            variant="destructive"
+            onClick={onDelete}
+            className="ml-auto"
+          >
+            삭제
           </Button>
         )}
-        <Button variant="brand" onClick={submit}>
-          <PlusIcon className="w-3.5 h-3.5" /> 등록
-        </Button>
+      </div>
+
+      {status.kind === "test-ok" && (
+        <div className="text-sm bg-green-50 text-green-700 rounded-lg px-3 py-2 flex items-center gap-2">
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 20 20"
+            fill="currentColor"
+            aria-hidden="true"
+            className="flex-shrink-0"
+          >
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+            />
+          </svg>
+          <span className="font-medium">연결 성공</span>
+        </div>
+      )}
+      {status.kind === "test-fail" && (
+        <div className="text-sm bg-red-50 text-red-700 rounded-lg px-3 py-2 whitespace-pre-line break-keep">
+          ✗ 연결 실패 - {status.message}
+        </div>
+      )}
+
+      <div className="mt-2 p-4 rounded-xl bg-[#fdf6f2] text-sm text-gray-700 space-y-3">
+        <h3 className="font-semibold text-gray-900">API키 발급 방법</h3>
+        <ol className="list-decimal pl-5 space-y-1">
+          <li>
+            <a
+              href="https://ads.naver.com/"
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-brand"
+            >
+              https://ads.naver.com/
+            </a>{" "}
+            접속 → 광고관리자 로그인
+          </li>
+          <li>사이드바 [도구] → "API 사용 관리"</li>
+          <li>[네이버 검색광고 API 서비스 신청] 클릭</li>
+        </ol>
+        <p className="text-xs text-gray-500 pt-1">
+          요청 한도: 일 1,000회 (1회 요청에 키워드 5개 처리 → 하루 약 5,000개 조회 가능)
+          <br />
+          API키는 브라우저에만 저장되며 외부로 전송되지 않습니다.
+        </p>
       </div>
     </div>
   );
-}
-
-function SummaryRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-baseline gap-3">
-      <span className="text-xs text-gray-500 w-28 shrink-0">{label}</span>
-      <span className="text-sm font-mono text-ink break-all">{value}</span>
-    </div>
-  );
-}
-
-function SectionLabel({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <h3 className={`text-xs font-medium text-gray-500 mb-3 px-1 ${className}`}>
-      {children}
-    </h3>
-  );
-}
-
-function maskTail(s: string, keepLast: number): string {
-  if (s.length <= keepLast) return "•".repeat(s.length);
-  const visible = s.slice(0, s.length - keepLast);
-  return visible + "•".repeat(keepLast);
 }

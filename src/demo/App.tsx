@@ -46,11 +46,11 @@ export default function App() {
           />
         </DemoSection>
 
-        <DemoSection title="팝업 F012 · 정상" description="API 등록됨 — brand 버튼 0개">
+        <DemoSection title="팝업 F012 · 정상" description="API 등록됨 — 상태 카드 + 새로고침">
           <PopupView state="ok" />
         </DemoSection>
 
-        <DemoSection title="팝업 F012 · API 미등록" description="brand 1개 (옵션 열기)">
+        <DemoSection title="팝업 F012 · API 미등록" description="brand CTA (설정 페이지 열기)">
           <PopupView state="no-cred" />
         </DemoSection>
 

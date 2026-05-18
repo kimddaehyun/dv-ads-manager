@@ -1,1 +1,6 @@
 @import "../styles/theme.css";
+
+/* 팝업은 옵션과 살짝 다른 배경 톤 — 좁은 창에서 카드와의 대비를 명확히 */
+body {
+  background: var(--color-bg-popup);
+}

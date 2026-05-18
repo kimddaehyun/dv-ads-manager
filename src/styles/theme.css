@@ -12,19 +12,22 @@
 @import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 
 @theme {
-  /* Brand — DV 주황. 사용 면적 ~3% 이내 (DESIGN.md §1.1). */
+  /* Brand — DV 주황. 사용 면적 ~3% 이내 (DESIGN.md §Color). */
   --color-brand: #E6783B;
   --color-brand-hover: #F08A4F;
+  --color-brand-press: #C66024;
 
   /* Ink & Neutral */
   --color-ink: #171717;
-  --color-ink-warm: #1F1714;
-  --color-ink-warm-hover: #2A1F1A;
 
   /* Surfaces */
-  --color-bg-soft: #fafafa;
-  --color-card-border: #ECEEF0;
-  --color-button-light: #F3F4F6;
+  --color-bg-soft: #f4f5f7;             /* 페이지 배경 (옵션) — dvmkt 톤 통일 */
+  --color-bg-popup: #fafafa;             /* 팝업 배경만 살짝 다른 톤 */
+  --color-input: #f4f5f7;                /* input 대기 상태 fill */
+  --color-input-hover: #eef0f3;          /* input/secondary radio 카드 hover */
+  --color-divider: #eef0f3;              /* 카드 내 구분선 */
+  --color-card-border: #ECEEF0;          /* 호환 — 일부 호스트 인근 보더 */
+  --color-button-light: #F3F4F6;         /* secondary 버튼 배경 (호환) */
   --color-button-light-hover: #E5E7EB;
 
   /* State */
@@ -38,7 +41,10 @@
   --font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
 
-  /* Shadow (popover만 — 카드는 평면) */
+  /* Shadows */
+  --shadow-card:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 1px 2px rgba(15, 23, 42, 0.03);
   --shadow-popover:
     0 2px 4px rgba(0, 0, 0, 0.04),
     0 12px 24px rgba(0, 0, 0, 0.08),

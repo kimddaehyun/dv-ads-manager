@@ -296,12 +296,12 @@ function buildBidTable(
   hdr.append(kw);
   wrap.appendChild(hdr);
 
-  // 통합 테이블: 순위 | 입찰가 | 노출수 | 클릭수 | 평균CPC | 총비용 × 10행
+  // 통합 테이블: 순위 | 입찰가 | 예상 노출수 | 예상 클릭수 | 예상 광고비 × 10행
   const table = document.createElement("table");
   table.className = "dvads-bid-table";
   const thead = document.createElement("thead");
   const trHead = document.createElement("tr");
-  for (const label of ["순위", "입찰가", "노출수", "클릭수", "평균CPC", "총비용"]) {
+  for (const label of ["순위", "입찰가", "예상 노출수", "예상 클릭수", "예상 광고비"]) {
     trHead.appendChild(createCell("th", label));
   }
   thead.appendChild(trHead);
@@ -319,9 +319,6 @@ function buildBidTable(
     tr.appendChild(createCell("td", perf ? perf.impressions.toLocaleString() : "—"));
     tr.appendChild(createCell("td", perf ? perf.clicks.toLocaleString() : "—"));
     tr.appendChild(
-      createCell("td", perf ? `${Math.round(perf.cpc).toLocaleString()}원` : "—"),
-    );
-    tr.appendChild(
       createCell("td", perf ? `${Math.round(perf.salesAmt).toLocaleString()}원` : "—"),
     );
     tbody.appendChild(tr);
@@ -333,7 +330,7 @@ function buildBidTable(
   const footer = document.createElement("div");
   footer.className = "dvads-disclaimer";
   footer.textContent =
-    "모든 예상 실적은 과거 데이터를 기반으로 예측한 값으로, 제공되는 데이터는 참고 용도로 사용하시기 바립니다.";
+    "모든 예상 실적은 과거 데이터를 기반으로 예측한 값입니다. (30일 기준 데이터)";
   wrap.appendChild(footer);
 
   return wrap;

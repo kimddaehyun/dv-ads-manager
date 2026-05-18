@@ -1,8 +1,12 @@
 import iconUrl from "@/assets/icon-128.png";
 import DataDisclosure from "./data-disclosure";
 import { CredentialsUi, type CredentialsState, type CredentialsValue } from "./credentials-ui";
+import { Card } from "@/components/Card";
 import { useEffect, useState } from "react";
 import { loadCredentials, saveCredentials, clearCredentials } from "@/lib/searchad";
+
+const APP_VERSION = "v" + (chrome?.runtime?.getManifest?.()?.version ?? "0.0.0");
+const SUGGEST_MAILTO = "mailto:dvcompany.dev@gmail.com?subject=%5B%EB%94%94%EB%B8%8C%EC%9D%B4%20%EC%95%A0%EB%93%9C%20%EB%A7%A4%EB%8B%88%EC%A0%80%5D%20%EA%B8%B0%EB%8A%A5%20%EC%A0%9C%EC%95%88";
 
 export default function Options() {
   const [credState, setCredState] = useState<CredentialsState>("empty");
@@ -57,20 +61,34 @@ export default function Options() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-8">
-      <header className="flex items-center gap-3 pt-6 mb-2">
-        <img src={iconUrl} alt="디브이 애드 매니저" className="w-10 h-10 rounded-lg flex-shrink-0" />
+    <div className="max-w-6xl mx-auto p-10">
+      <header className="flex items-center gap-3 pt-6 mb-3">
+        <img
+          src={iconUrl}
+          alt="디브이 애드 매니저"
+          className="w-10 h-10 rounded-lg flex-shrink-0"
+        />
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-ink">디브이 애드 매니저</h1>
-          <p className="text-sm text-gray-500 mt-0.5">네이버 광고 대시보드 보조</p>
+          <h1 className="text-xl font-bold text-gray-900">
+            디브이 애드 매니저 {APP_VERSION}
+          </h1>
         </div>
       </header>
 
-      <p className="pt-3 mb-6 pl-1 text-sm text-gray-500 leading-relaxed">
-        본 확장 프로그램은 <a href="https://ads.naver.com/" target="_blank" rel="noreferrer" className="underline text-brand">네이버 광고관리자</a>에 로그인된 상태에서 동작하며, 검색광고 API 키가 등록된 경우에만 입찰가/순위 오버레이가 활성화됩니다.
+      <p className="pt-2 mb-6 pl-2 text-sm text-gray-600">
+        본 확장 프로그램은{" "}
+        <a
+          href="https://ads.naver.com/"
+          target="_blank"
+          rel="noreferrer"
+          className="underline text-brand"
+        >
+          네이버 광고관리자
+        </a>
+        에 로그인된 상태에서만 사용 가능하며, 검색광고 API 키가 등록된 경우에만 입찰가/순위 오버레이가 활성화됩니다.
       </p>
 
-      <div className="space-y-5">
+      <Card className="mb-6">
         {loaded && (
           <CredentialsUi
             state={credState}
@@ -85,11 +103,25 @@ export default function Options() {
             onDelete={handleDelete}
           />
         )}
-      </div>
+      </Card>
 
-      <div className="mt-8">
-        <DataDisclosure />
-      </div>
+      <DataDisclosure />
+
+      <section className="mt-6 px-8 py-[37px] text-center rounded-2xl bg-brand">
+        <h2 className="text-xl font-bold text-white">
+          필요한 기능이 있으신가요?
+        </h2>
+        <p className="mt-2 text-sm text-white/85">
+          원하는 기능, 개선이 필요한 부분 - 무엇이든 알려주세요.
+        </p>
+        <a
+          href={SUGGEST_MAILTO}
+          className="mt-5 inline-flex items-center gap-1.5 h-10 px-5 rounded-lg bg-white text-sm font-medium text-brand hover:bg-white/95 transition"
+        >
+          디브이팀에게 제안하기
+          <span aria-hidden="true">→</span>
+        </a>
+      </section>
     </div>
   );
 }

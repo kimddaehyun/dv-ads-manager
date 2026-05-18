@@ -1,5 +1,6 @@
+import { Card } from "@/components/Card";
+
 const PRIVACY_URL = "https://kimddaehyun.github.io/dv-ads-legal/";
-const ORANGE = "#E6783B";
 
 interface Row {
   data: string;
@@ -11,7 +12,7 @@ const COLLECTED: Row[] = [
   {
     data: "네이버 검색광고 API 자격증명 (Customer ID / Access License / Secret Key)",
     use: "사용자가 등록한 광고주의 검색광고 API 호출 (키워드별 순위·예상 입찰가 조회)",
-    destination: "사용자 PC만 (`chrome.storage.local`) - 외부 전송 없음",
+    destination: "사용자 PC만 (chrome.storage.local) - 외부 전송 없음",
   },
   {
     data: "광고관리자 페이지의 키워드·입찰가·소재 정보",
@@ -28,7 +29,7 @@ const NOT_COLLECTED = [
 
 export default function DataDisclosure() {
   return (
-    <section className="bg-white border rounded-lg p-6 mb-6">
+    <Card>
       <div className="flex items-center justify-between mb-3">
         <h2 className="text-base font-semibold text-gray-900">
           데이터 처리 요약
@@ -37,25 +38,24 @@ export default function DataDisclosure() {
           href={PRIVACY_URL}
           target="_blank"
           rel="noreferrer"
-          className="text-xs underline"
-          style={{ color: ORANGE }}
+          className="text-xs underline text-brand"
         >
           전체 개인정보처리방침 보기 ↗
         </a>
       </div>
 
-      <div className="overflow-hidden rounded border border-gray-200 mt-4">
+      <div className="overflow-hidden rounded-lg bg-input mt-4">
         <table className="w-full text-xs">
-          <thead className="bg-gray-50 text-gray-700">
+          <thead className="text-gray-700">
             <tr>
               <th className="text-left px-3 py-2 font-medium w-1/3">수집 항목</th>
               <th className="text-left px-3 py-2 font-medium w-1/3">사용 목적</th>
               <th className="text-left px-3 py-2 font-medium w-1/3">전달처 / 저장 위치</th>
             </tr>
           </thead>
-          <tbody className="text-gray-700">
+          <tbody className="text-gray-700 bg-white">
             {COLLECTED.map((r, i) => (
-              <tr key={i} className="border-t border-gray-100 align-top">
+              <tr key={i} className="border-t border-divider align-top">
                 <td className="px-3 py-2">{r.data}</td>
                 <td className="px-3 py-2">{r.use}</td>
                 <td className="px-3 py-2">{r.destination}</td>
@@ -73,7 +73,6 @@ export default function DataDisclosure() {
           ))}
         </ul>
       </div>
-
-    </section>
+    </Card>
   );
 }
