@@ -145,16 +145,23 @@
 
 - ~~**Task 014: F003 쇼핑검색광고 소재 상세 풀 패널 구현**~~ — **보류** (2026-05-19, Task 013 사유 동일)
 
-- **Task 016: F001 PC/모바일 디바이스 분리 (모바일 default + PC lazy 토글)** ✅ - 완료 (2026-05-19)
-  - ✅ `src/types/device.ts` 신규: `AdDevice = "PC" | "MOBILE"`, `DEFAULT_DEVICE = "MOBILE"`
+- **Task 016: F001 PC/모바일 디바이스 분리 (PC default + 모바일 lazy 토글)** ✅ - 완료 (2026-05-19)
+  - ✅ `src/types/device.ts` 신규: `AdDevice = "PC" | "MOBILE"`, **`DEFAULT_DEVICE = "PC"`** (초안은 MOBILE이었으나 사용자 피드백으로 PC로 전환 — 배지 "10위+" 라벨이 MOBILE 5위 상한과 안 맞고, PC가 캐시 hit이라 popover 첫 표시가 즉시)
   - ✅ 캐시 키 스킴 갱신: `volume_cache:<device>:<keyword>`, `performance_cache:<device>:<keyword>:<bid>` — `storage-keys.ts`의 `keyForVolumeCache(keyword, device)`/`keyForPerformanceCache(keyword, bid, device)` 시그니처에 device 추가. `KeywordVolumeCache`/`KeywordPerformanceCache` 타입에 `device` 필드 필수화
   - ✅ `searchad.ts` `fetchPositionBids`/`fetchPerformance`의 `device: "PC"` 하드코딩 제거 → `device: AdDevice` 파라미터로 외부에서 주입. POST body에 그대로 전달
   - ✅ `volume-cache.ts`/`performance-cache.ts` get/put에 device 인자 추가. `invalidate*`는 새 키 형식(`<prefix>:<device>:<keyword>[:<bid>]`)에서 device를 건너뛰고 키워드 매칭으로 storage 전체 스캔
   - ✅ `messages.ts` `GetBidEstimateRequest.device: AdDevice` 필수 필드 추가, `GetBidEstimateResponse.device` echo. background `handleGetBidEstimate`가 device 전파
-  - ✅ `content/index.ts`: in-memory `dataCache`/`perfCache` 키에 device 포함, `poll()`은 항상 `DEFAULT_DEVICE`(모바일) 기준 호출. popover 헤더에 `[모바일 | PC]` segmented control(`buildPopoverBody`) 마운트. 배지·면책 푸터는 표시 중 디바이스 라벨 반영
-  - ✅ **PC lazy fetch + race guard**: `selectDevice(target)` — cache hit 즉시 re-render, miss면 `.dvads-popover-loading` skeleton + 1회 `GET_BID_ESTIMATE { device: "PC" }` 호출. 응답 도착 시 popover가 같은 mount + 같은 device 상태일 때만 re-render(빠른 토글 연타 race 방지). `inflightDevice` 토큰
+  - ✅ `content/index.ts`: in-memory `dataCache`/`perfCache` 키에 device 포함, `poll()`은 항상 `DEFAULT_DEVICE`(PC) 기준 호출. popover 헤더에 `[PC | 모바일]` segmented control(`buildPopoverBody`)을 X 닫기 버튼 자리에 마운트(X 버튼 제거, 닫기는 외부 클릭/ESC/배지 재클릭으로). 면책 푸터는 기존 "모든 예상 실적은 과거 데이터를 기반으로 예측한 값입니다. (30일 기준 데이터)" 유지
+  - ✅ **모바일 lazy fetch + race guard**: `selectDevice(target)` — cache hit 즉시 re-render, miss면 `.dvads-popover-loading` skeleton + 1회 `GET_BID_ESTIMATE { device: "MOBILE" }` 호출. 응답 도착 시 popover가 같은 mount + 같은 device 상태일 때만 re-render(빠른 토글 연타 race 방지). `inflightDevice` 토큰. **inflightDevice null 처리는 re-render 전에** 해야 새 토글에 `.is-loading` 클래스 잔존 X
   - ✅ `overlay.css` `.dvads-device-toggle`/`.dvads-device-seg`/`.dvads-popover-loading` 추가. **DV 주황 안 씀** — 보조 UI는 중성 회색(`#F3F4F6` 트랙 + 흰 카드 선택), 주황 면적 ~3% 규칙 보존
+  - ✅ **MOBILE position 1~5 cap fix**: `MAX_POSITION_BY_DEVICE = { PC: 10, MOBILE: 5 }` (`types/storage.ts`) — Naver `/estimate/position-bid` API가 device별로 상한 다름(PC 10 / MOBILE 5). batch에 cap 초과 position 1개라도 섞이면 400 거부 → silent-empty → "응답없음" 배지. `callPositionBid` + `handleGetBidEstimate` perf query + `buildPopoverBody` 행 수에 모두 적용. **MOBILE은 1~5위만 렌더**
+  - ✅ **popover 위치 jitter freeze**: device 토글로 표 크기 바뀔 때 popover 위치가 흔들리는 jitter 차단 — togglePopover에서 popover 열릴 때 첫 PC 높이를 `openPopoverFlipHeight`로 측정·고정. reposition rAF의 flip(아래→위) 결정은 freeze된 값으로, 실제 위치는 pr.height로 (위로 flip 시 bottom 엣지 안정성)
+  - ✅ **사용자 노출 에러 메시지 한글화**: 배지 ⚠ 툴팁 3개를 영문 기술용어 없이 다듬음. "확장 응답 없음 (reload 후 페이지 새로고침 필요)" → "확장 프로그램이 업데이트됐어요. 페이지를 새로고침해 주세요". "백그라운드 응답 없음" / "응답없음"도 동일 톤
+  - ✅ **popover UX 애니메이션 3종**: ① 첫 열기 entrance(`.dvads-popover-content-enter` — opacity + translateY(-4px) 220ms `cubic-bezier(0.16,1,0.3,1)`) ② 닫기 fade-out 120ms ③ device 토글 시 crossfade + height morph(`animatePopoverBody`) — 옛 wrap을 `position:absolute`로 띄워 새 wrap이 같은 자리에 normal flow로 들어가게 + opacity 1→0 / 0→1, popover container는 height 200ms morph. **race guard**: `bodyAnimToken` — 토글 + lazy fetch 응답이 ~200ms 간격으로 연달아 와도 옛 cleanup이 새 transition을 끊지 않고, 매 호출이 popover의 *모든* 기존 children을 swap-out 처리해 누적 wrap 방지
+  - ✅ **다른 키워드 배지 1클릭 전환**: togglePopover가 다른 mount 클릭 시 `closePopoverImmediate()`(fade-out 생략)로 옛 popover 즉시 제거 후 새 popover 마운트. fade-out 140ms 동안 두 popover 겹침 race 차단. 추가 안전망 2겹: (1) 새 popover 만들기 직전 `document.querySelectorAll(".dvads-popover").remove()` (2) reposition rAF에서 매 프레임 잔존 popover 강제 정리
+  - ✅ **CSS `overflow:hidden` + `position:relative` 보존 필수**: crossfade의 swap-out absolute wrap이 popover 박스 밖으로 튀어나가 "두 popover처럼" 보이는 시각 버그 방지. 린터가 되돌릴 수 있어 코멘트로 의도 명시
   - ✅ **캐시 마이그레이션**: 기존 device 없는 키는 새 빌드에서 자동 cache miss → 다음 fetch 때 새 키로 자연 재구축. 별도 마이그레이션 코드 불필요(TTL 4h 만료 후 prune이 청소)
+  - 🟡 **수동 검증 대기**: chrome reload + ads.naver.com hard refresh 후 (1) PC↔모바일 토글 시 popover 위치·크기 jitter 없는지 (2) 모바일 토글 시 로딩 스피너가 응답 후 사라지는지 (3) 다른 키워드 배지 1클릭 전환 시 옛 popover 즉시 사라지는지
 
 - **Task 018: F-PoP — 데이터 비교 popover (Period-over-Period)** 🟡 - 진행 중 (2026-05-19, SA·전체 캠페인·대시보드·GFA에서 정상 동작 확인, 일부 매체별 잔존 한계 보강 대기)
   - ✅ **6개 매체 페이지 우측 상단 날짜 picker 옆 아이콘 버튼 주입** (`period-compare.ts`): bar chart 비교 아이콘(32×32 정사각, hover 시 DV 주황). 클릭 시 popover. 매체 사전 식별 없이 날짜 picker가 발견되는 광고관리자 페이지면 어디든 mount. SPA 라우팅 대응 MutationObserver
@@ -192,4 +199,10 @@
 ---
 
 **📅 최종 업데이트**: 2026-05-19
-**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010·011 완료 ✅ (Task 011-1 통합 검증 대기) + Phase 4 Task 012 Spike B 완료 ✅ + Task 015 캐시 prune 완료 ✅ + Task 016 device 토글 완료 ✅ + Task 017 F-AssetBulk v1 진행 중 🟡 + Task 018 F-PoP 데이터 비교 popover 진행 중 🟡 (SA·전체 캠페인·대시보드·GFA 정상 동작 확인, 일부 매체별 잔존 한계 보강 대기). F001 파워링크 라인 완성 — 1~10위 시장가 + 현재 순위 + 성과 추정 + **팝오버 행 클릭으로 입찰가 자동 변경(다이얼로그 → 페이지 DOM 자동화 → 5초 Undo 토스트)** + **PC/모바일 디바이스 토글(lazy fetch)** 까지. F012 팝업 새로고침이 실제 동작. 캐시 prune 자동화로 5MB quota 보호. F-AssetBulk로 확장소재 일괄 등록(이미지·추가제목·추가설명 + 노출 위치 슬롯별 지정 + 중복 사전 안내) 추가. F-PoP로 6개 매체 페이지 데이터 비교 popover(8지표·shape 기반 자동 캡처·날짜 매칭 필터·깊이 walk 집계) 추가. **Task 013/014 F002·F003 보류** (2026-05-19). v0.1은 **F001 + F011 + F012 + F-AssetBulk + F-PoP**로 ship, Task 011-1 통합 검증 + Task 015 잔여(아이콘·스토어 자료·릴리스) 마무리 후 출시.
+**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010·011 완료 ✅ (Task 011-1 통합 검증 대기) + Phase 4 Task 012 Spike B 완료 ✅ + Task 015 캐시 prune 완료 ✅ + Task 016 device 토글 완료 ✅ (수동 검증 대기 🟡) + Task 017 F-AssetBulk v1 진행 중 🟡 + Task 018 F-PoP 데이터 비교 popover 진행 중 🟡 (SA·전체 캠페인·대시보드·GFA 정상 동작 확인, 일부 매체별 잔존 한계 보강 대기). F001 파워링크 라인 완성 — 1~10위 시장가 + 현재 순위 + 성과 추정 + **팝오버 행 클릭으로 입찰가 자동 변경(다이얼로그 → 페이지 DOM 자동화 → 5초 Undo 토스트)** + **PC/모바일 디바이스 토글(PC default + 모바일 lazy, MOBILE 1~5위 cap 보강, crossfade·height morph 애니메이션, 1-click 키워드 전환, 한글 친화 에러 메시지)** 까지. F012 팝업 새로고침이 실제 동작. 캐시 prune 자동화로 5MB quota 보호. F-AssetBulk로 확장소재 일괄 등록(이미지·추가제목·추가설명 + 노출 위치 슬롯별 지정 + 중복 사전 안내) 추가. F-PoP로 6개 매체 페이지 데이터 비교 popover(8지표·shape 기반 자동 캡처·날짜 매칭 필터·깊이 walk 집계) 추가. **Task 013/014 F002·F003 보류** (2026-05-19). v0.1은 **F001 + F011 + F012 + F-AssetBulk + F-PoP**로 ship, Task 011-1 통합 검증 + Task 015 잔여(아이콘·스토어 자료·릴리스) 마무리 후 출시.
+
+**다음 세션 작업 (내일):**
+- Task 016 수동 검증 — chrome reload + hard refresh 후 popover 토글·전환·애니메이션 동작 확인 (이슈 있으면 추가 fix)
+- Task 017 F-AssetBulk 잔여 — 중복 슬롯 실시간 경고 + 드롭다운 깜빡임 재검증
+- Task 018 F-PoP 잔여 — GFA weekly bucket 매치 / paginated stats 보강
+- (선택) Task 015 잔여 — 아이콘 분리, 스토어 자료, v0.1.0 릴리스
