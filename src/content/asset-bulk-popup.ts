@@ -19,9 +19,22 @@ export interface ImageSlotInput {
   url?: string;
 }
 
+/**
+ * 추가제목 노출 위치 — 페이지 모달의 "노출 가능 위치 지정" dropdown과 1:1 매핑.
+ *   "all" → "모든 위치에 노출 가능"  (default)
+ *   "p1"  → "위치 1에만 노출 가능"
+ *   "p2"  → "위치 2에만 노출 가능"
+ */
+export type HeadlinePosition = "all" | "p1" | "p2";
+
+export interface HeadlineSlotInput {
+  text: string;
+  position: HeadlinePosition;
+}
+
 export interface AssetBulkInput {
   images: ImageSlotInput[];
-  headlines: string[];
+  headlines: HeadlineSlotInput[];
   descriptions: string[];
 }
 
@@ -32,6 +45,10 @@ export interface AssetBulkPopupOptions {
    */
   onSubmit: (data: AssetBulkInput) => Promise<void>;
   onCancel?: () => void;
+  /** 페이지에 이미 등록된 추가제목 텍스트 — 슬롯에 실시간 중복 경고 표시. */
+  existingHeadlines?: Set<string>;
+  /** 페이지에 이미 등록된 추가설명 텍스트 — 슬롯에 실시간 중복 경고 표시. */
+  existingDescriptions?: Set<string>;
 }
 
 // 추가제목/추가설명 maxlength — 페이지의 maxlength 속성 실측. 갈리면 여기만 고치면 됨.
@@ -81,22 +98,23 @@ export function openAssetBulkPopup(opts: AssetBulkPopupOptions): void {
 
   const state: AssetBulkInput = {
     images: [{ mode: null }],
-    headlines: [""],
+    headlines: [{ text: "", position: "all" }],
     descriptions: [""],
   };
 
   body.appendChild(buildImageSection(state, IMAGE_SLOT_LIMIT).root);
 
   body.appendChild(
-    buildTextSection({
+    buildHeadlineSection({
       label: "추가제목",
-      hint: `각 ${HEADLINE_MAX}자 이내. 입력한 칸 수만큼 순차 등록됩니다.`,
+      hint: `각 ${HEADLINE_MAX}자 이내. 슬롯별로 노출 위치를 지정할 수 있습니다.`,
       getValues: () => state.headlines,
       setValues: (next) => {
         state.headlines = next;
       },
       maxLength: HEADLINE_MAX,
       slotLimit: HEADLINE_SLOT_LIMIT,
+      existingTexts: opts.existingHeadlines ?? new Set<string>(),
     }).root,
   );
 
@@ -110,6 +128,7 @@ export function openAssetBulkPopup(opts: AssetBulkPopupOptions): void {
       },
       maxLength: DESCRIPTION_MAX,
       slotLimit: DESCRIPTION_SLOT_LIMIT,
+      existingTexts: opts.existingDescriptions ?? new Set<string>(),
     }).root,
   );
 
@@ -327,7 +346,132 @@ function buildImageSection(
   }
 }
 
-// ─── 텍스트 섹션 (추가제목 / 추가설명 공용) ───
+// ─── 추가제목 섹션 (텍스트 + 노출 위치 dropdown) ───
+
+interface HeadlineSectionOpts {
+  label: string;
+  hint: string;
+  getValues: () => HeadlineSlotInput[];
+  setValues: (next: HeadlineSlotInput[]) => void;
+  maxLength: number;
+  slotLimit: number;
+  existingTexts: Set<string>;
+}
+
+const HEADLINE_POSITION_LABELS: Record<HeadlinePosition, string> = {
+  all: "모든 위치",
+  p1: "위치 1만",
+  p2: "위치 2만",
+};
+
+function buildHeadlineSection(opts: HeadlineSectionOpts): { root: HTMLElement } {
+  const root = document.createElement("section");
+  root.className = "dvads-asset-bulk-section";
+
+  const head = document.createElement("div");
+  head.className = "dvads-asset-bulk-section-head";
+  const title = document.createElement("h3");
+  title.className = "dvads-asset-bulk-section-title";
+  title.textContent = opts.label;
+  head.appendChild(title);
+  const hint = document.createElement("span");
+  hint.className = "dvads-asset-bulk-section-hint";
+  hint.textContent = opts.hint;
+  head.appendChild(hint);
+  root.appendChild(head);
+
+  const list = document.createElement("div");
+  list.className = "dvads-asset-bulk-slots";
+  root.appendChild(list);
+
+  const addBtn = document.createElement("button");
+  addBtn.type = "button";
+  addBtn.className = "dvads-asset-bulk-add";
+  addBtn.textContent = `+ ${opts.label} 슬롯 추가`;
+  addBtn.addEventListener("click", () => {
+    const values = opts.getValues();
+    if (values.length >= opts.slotLimit) return;
+    opts.setValues([...values, { text: "", position: "all" }]);
+    renderSlots();
+  });
+  root.appendChild(addBtn);
+
+  renderSlots();
+  return { root };
+
+  function renderSlots(): void {
+    list.replaceChildren();
+    const values = opts.getValues();
+    values.forEach((slot, idx) => {
+      const row = document.createElement("div");
+      row.className = "dvads-asset-bulk-text-row dvads-asset-bulk-headline-row";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.maxLength = opts.maxLength;
+      input.value = slot.text;
+      input.className = "dvads-asset-bulk-text-input";
+      input.placeholder = `${opts.label} ${idx + 1}`;
+      const counter = document.createElement("span");
+      counter.className = "dvads-asset-bulk-text-counter";
+      counter.textContent = `${slot.text.length}/${opts.maxLength}`;
+      const dupWarn = document.createElement("span");
+      dupWarn.className = "dvads-asset-bulk-dup-warn";
+      dupWarn.textContent = "이미 등록됨 - 자동 skip";
+      const applyDupState = (text: string): void => {
+        const isDup = text.trim().length > 0 && opts.existingTexts.has(text.trim());
+        row.classList.toggle("dvads-asset-bulk-dup", isDup);
+      };
+      applyDupState(slot.text);
+      input.addEventListener("input", () => {
+        const cur = opts.getValues();
+        cur[idx] = { ...cur[idx], text: input.value };
+        counter.textContent = `${input.value.length}/${opts.maxLength}`;
+        applyDupState(input.value);
+        opts.setValues(cur);
+      });
+      row.append(input, counter, dupWarn);
+
+      // 노출 위치 select — 페이지 모달의 dropdown과 1:1 매핑.
+      const positionSelect = document.createElement("select");
+      positionSelect.className = "dvads-asset-bulk-position";
+      positionSelect.setAttribute("aria-label", "노출 위치");
+      (["all", "p1", "p2"] as HeadlinePosition[]).forEach((p) => {
+        const opt = document.createElement("option");
+        opt.value = p;
+        opt.textContent = HEADLINE_POSITION_LABELS[p];
+        if (slot.position === p) opt.selected = true;
+        positionSelect.appendChild(opt);
+      });
+      positionSelect.addEventListener("change", () => {
+        const cur = opts.getValues();
+        cur[idx] = { ...cur[idx], position: positionSelect.value as HeadlinePosition };
+        opts.setValues(cur);
+      });
+      row.appendChild(positionSelect);
+
+      const removeBtn = document.createElement("button");
+      removeBtn.type = "button";
+      removeBtn.className = "dvads-asset-bulk-remove";
+      removeBtn.setAttribute("aria-label", "슬롯 삭제");
+      removeBtn.textContent = "×";
+      removeBtn.disabled = values.length <= 1;
+      removeBtn.addEventListener("click", () => {
+        const cur = opts.getValues();
+        if (cur.length <= 1) return;
+        cur.splice(idx, 1);
+        opts.setValues(cur);
+        renderSlots();
+      });
+      row.appendChild(removeBtn);
+
+      list.appendChild(row);
+    });
+    addBtn.disabled = opts.getValues().length >= opts.slotLimit;
+  }
+}
+
+// ─── 텍스트 섹션 (추가설명 전용) ───
 
 interface TextSectionOpts {
   label: string;
@@ -336,6 +480,7 @@ interface TextSectionOpts {
   setValues: (next: string[]) => void;
   maxLength: number;
   slotLimit: number;
+  existingTexts: Set<string>;
 }
 
 function buildTextSection(opts: TextSectionOpts): { root: HTMLElement } {
@@ -390,13 +535,22 @@ function buildTextSection(opts: TextSectionOpts): { root: HTMLElement } {
       const counter = document.createElement("span");
       counter.className = "dvads-asset-bulk-text-counter";
       counter.textContent = `${value.length}/${opts.maxLength}`;
+      const dupWarn = document.createElement("span");
+      dupWarn.className = "dvads-asset-bulk-dup-warn";
+      dupWarn.textContent = "이미 등록됨 - 자동 skip";
+      const applyDupState = (text: string): void => {
+        const isDup = text.trim().length > 0 && opts.existingTexts.has(text.trim());
+        row.classList.toggle("dvads-asset-bulk-dup", isDup);
+      };
+      applyDupState(value);
       input.addEventListener("input", () => {
         const cur = opts.getValues();
         cur[idx] = input.value;
         counter.textContent = `${input.value.length}/${opts.maxLength}`;
+        applyDupState(input.value);
         opts.setValues(cur);
       });
-      row.append(input, counter);
+      row.append(input, counter, dupWarn);
 
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
