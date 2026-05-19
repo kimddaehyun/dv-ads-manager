@@ -12,6 +12,7 @@ import type {
   ExtensionMessage,
   GetBidEstimateRequest,
   GetBidEstimateResponse,
+  RefreshActiveTabResponse,
 } from "@/types/messages";
 import type {
   KeywordPerformanceCache,
@@ -29,9 +30,14 @@ import {
   putPerformance,
 } from "@/lib/performance-cache";
 import { friendlyApiError } from "@/lib/friendly-error";
+import { maybePrune, pruneExpiredCache } from "@/lib/cache-prune";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[dv-ads] service worker installed");
+  // 설치/업데이트 직후 한 번 전체 스캔 — 이전 버전에서 남은 expired 엔트리 일괄 정리
+  void pruneExpiredCache().catch((e) =>
+    console.warn("[dv-ads] initial prune failed", e),
+  );
 });
 
 chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendResponse) => {
@@ -41,6 +47,8 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     return false;
   }
   if (msg?.type === "GET_BID_ESTIMATE") {
+    // hot path 진입 시 fire-and-forget으로 throttled prune. 1h 안 됐으면 즉시 return.
+    void maybePrune();
     handleGetBidEstimate(msg.keywords)
       .then(sendResponse)
       .catch((e) => {
@@ -54,8 +62,48 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
       });
     return true; // 비동기 응답
   }
+  if (msg?.type === "REFRESH_ACTIVE_TAB") {
+    handleRefreshActiveTab()
+      .then(sendResponse)
+      .catch((e) => {
+        const raw = e instanceof Error ? e.message : String(e);
+        console.warn("[bg] REFRESH_ACTIVE_TAB crashed", e);
+        sendResponse({ ok: false, error: raw });
+      });
+    return true; // 비동기 응답
+  }
   return false;
 });
+
+// ─── F012 — 팝업 → 활성 탭 캐시 강제 갱신 ───
+// 책임 분리: background는 forward만, 실제 캐시 무효화/재조회는 콘텐츠 스크립트가
+// 자기 mount 상태를 보고 결정 (어떤 키워드가 화면에 보이는지 모르는 background가
+// 추측하면 quota 낭비).
+async function handleRefreshActiveTab(): Promise<RefreshActiveTabResponse> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    return { ok: false, error: "활성 탭을 찾지 못했습니다" };
+  }
+  if (!tab.url || !/^https?:\/\/([^/]+\.)?ads\.naver\.com/.test(tab.url)) {
+    return {
+      ok: false,
+      error: "네이버 광고관리자 탭에서만 갱신할 수 있습니다",
+    };
+  }
+  try {
+    const res = (await chrome.tabs.sendMessage(tab.id, {
+      type: "REFRESH_ACTIVE_TAB",
+    })) as RefreshActiveTabResponse | undefined;
+    return res ?? { ok: false, error: "콘텐츠 스크립트 응답 없음" };
+  } catch (e) {
+    // 콘텐츠 스크립트 미주입(키워드 페이지 외) 또는 통신 실패
+    const raw = e instanceof Error ? e.message : String(e);
+    return {
+      ok: false,
+      error: `콘텐츠 스크립트 응답 없음 (페이지 새로고침 후 재시도): ${raw}`,
+    };
+  }
+}
 
 async function handleGetBidEstimate(
   keywords: GetBidEstimateRequest["keywords"],

@@ -14,6 +14,12 @@ const MAX_STACK = 3;
 export interface ShowToastOptions {
   message: string;
   variant: "success" | "error";
+  /**
+   * 메시지 안에서 강조 처리할 키워드. message 안의 첫 등장 위치만
+   * `<strong class="dvads-toast-keyword">` 노드로 감싸 굵게 표시.
+   * 텍스트 노드로만 다루므로 XSS 안전.
+   */
+  keyword?: string;
   /** Undo 버튼. 클릭 시 토스트 즉시 닫고 onClick. */
   undo?: {
     label: string;
@@ -58,7 +64,7 @@ export function showToast(opts: ShowToastOptions): void {
 
   const msg = document.createElement("span");
   msg.className = "dvads-toast-msg";
-  msg.textContent = opts.message;
+  fillToastMessage(msg, opts.message, opts.keyword);
   body.appendChild(msg);
 
   if (opts.undo) {
@@ -109,4 +115,25 @@ export function showToast(opts: ShowToastOptions): void {
     card.classList.add("dvads-toast-out");
     window.setTimeout(() => card.remove(), 180);
   }
+}
+
+function fillToastMessage(
+  target: HTMLElement,
+  message: string,
+  keyword: string | undefined,
+): void {
+  if (!keyword || keyword.length === 0 || !message.includes(keyword)) {
+    target.textContent = message;
+    return;
+  }
+  const idx = message.indexOf(keyword);
+  if (idx > 0) {
+    target.appendChild(document.createTextNode(message.slice(0, idx)));
+  }
+  const strong = document.createElement("strong");
+  strong.className = "dvads-toast-keyword";
+  strong.textContent = keyword;
+  target.appendChild(strong);
+  const tail = message.slice(idx + keyword.length);
+  if (tail) target.appendChild(document.createTextNode(tail));
 }

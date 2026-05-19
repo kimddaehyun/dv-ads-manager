@@ -20,6 +20,7 @@ import "@/styles/overlay.css";
 import type {
   GetBidEstimateRequest,
   GetBidEstimateResponse,
+  RefreshActiveTabResponse,
 } from "@/types/messages";
 import {
   MAX_POSITION,
@@ -31,9 +32,22 @@ import { estimateRank, type EstimatedRank } from "@/lib/rank";
 import { applyBidToRow, describeFailure } from "@/content/dom-bid";
 import { openConfirmDialog } from "@/content/confirm-dialog";
 import { showToast } from "@/content/toast";
+import { invalidateBids } from "@/lib/volume-cache";
+import { invalidatePerformance } from "@/lib/performance-cache";
+import { initPeriodCompare } from "@/content/period-compare";
+import { initAssetBulk } from "@/content/asset-bulk";
 
 declare const __APP_VERSION__: string;
 console.log(`[dv-ads] content script loaded · v${__APP_VERSION__}`);
+
+// F-PoP — 전후 비교 모듈. 6개 매체 페이지에서 우측 상단 날짜 picker 옆에
+// 버튼 주입 + 캡처된 stats fetch replay. F001과 독립적으로 동작.
+initPeriodCompare();
+
+// F-AssetBulk — 파워링크 확장소재 일괄 등록. ads.naver.com 광고그룹 페이지의
+// "+ 새 확장 소재" 드롭다운에 "일괄 등록" 항목 주입. F001과 같은 URL 패턴이라
+// 독립 init하면서 자체 MutationObserver로 메뉴 mount를 따라간다.
+initAssetBulk();
 
 const KEYWORD_CELL_SELECTOR = "td.ad-cms-table-cell-fix-start";
 const KEYWORD_SPAN_SELECTOR = "span.keyword";
@@ -178,6 +192,9 @@ function renderBadge(m: BadgeMount) {
   m.badge.replaceChildren();
   // 상태 모디파이어만 갈아끼우고 cell-anchor(absolute 위치 클래스)는 보존
   m.badge.className = "dvads dvads-rank-badge cell-anchor";
+  // 이전 상태의 tooltip 핸들러 초기화 — 분기에서 필요하면 다시 attach
+  m.badge.onmouseenter = null;
+  m.badge.onmouseleave = null;
 
   if (credentialState === "missing") {
     m.badge.classList.add("warn");
@@ -192,14 +209,20 @@ function renderBadge(m: BadgeMount) {
   const data = dataCache.get(m.keyword);
   if (!data) {
     if (lastError) {
-      m.badge.classList.add("warn");
-      m.badge.textContent = lastError;
-      m.badge.title = "콘솔 로그(서비스 워커)를 확인해 주세요";
+      // 에러 상태는 ⚠ 아이콘만 표시 — 풀 문구는 hover 시 custom tooltip으로.
+      // native title 속성은 ads.naver.com의 자체 hover 처리에 가려져 안 뜨는 케이스가
+      // 확인됨(2026-05-19) — 우리가 직접 floating element로 띄운다.
+      m.badge.classList.add("warn", "icon");
+      m.badge.textContent = "⚠";
+      m.badge.title = lastError; // fallback (a11y/지원 도구)
+      attachTooltip(m.badge, lastError);
       m.badge.onclick = null;
     } else {
       // 로딩 상태는 스피너만 — 텍스트 없음 (CSS ::before가 스피너 렌더)
       m.badge.classList.add("loading");
       m.badge.textContent = "";
+      m.badge.onmouseenter = null;
+      m.badge.onmouseleave = null;
       m.badge.onclick = null;
     }
     return;
@@ -214,8 +237,8 @@ function renderBadge(m: BadgeMount) {
   if (rank === null) {
     label = "시세";
   } else if (rank === "out") {
-    label = "순위권 밖";
-    m.badge.classList.add("warn");
+    label = "10위+";
+    m.badge.classList.add("muted");
   } else {
     label = `${rank}위`;
   }
@@ -470,6 +493,7 @@ async function performBidApply(
       showToast({
         message: `${mount.keyword}: ${describeFailure(result.reason)}`,
         variant: "error",
+        keyword: mount.keyword,
       });
       return;
     }
@@ -484,6 +508,7 @@ async function performBidApply(
     showToast({
       message: `${mount.keyword} 입찰가를 ${targetBid.toLocaleString()}원으로 변경했습니다`,
       variant: "success",
+      keyword: mount.keyword,
       undo:
         prev != null && prev !== targetBid
           ? {
@@ -540,6 +565,7 @@ async function undoBidApply(mount: BadgeMount, previousBid: number): Promise<voi
     showToast({
       message: `${mount.keyword} 입찰가를 ${previousBid.toLocaleString()}원으로 되돌렸습니다`,
       variant: "success",
+      keyword: mount.keyword,
     });
   } finally {
     inflightMounts.delete(mount);
@@ -719,6 +745,110 @@ async function poll() {
   }
 
   for (const m of mounts.values()) renderBadge(m);
+}
+
+// ─── custom tooltip ───
+// ads.naver.com이 자체 hover 처리(row highlight 등)로 native `title` 속성이
+// 안 뜨는 케이스가 확인되어 자체 구현. 단일 글로벌 element를 재사용.
+
+let tooltipEl: HTMLElement | null = null;
+
+function ensureTooltipEl(): HTMLElement {
+  if (tooltipEl) return tooltipEl;
+  const el = document.createElement("div");
+  el.className = "dvads dvads-tooltip";
+  document.body.appendChild(el);
+  tooltipEl = el;
+  return el;
+}
+
+function showTooltip(anchor: HTMLElement, text: string): void {
+  const el = ensureTooltipEl();
+  el.textContent = text;
+  el.style.display = "block";
+  // 한 프레임 양보해서 측정 — display:block 직후엔 rect가 0일 수 있음
+  requestAnimationFrame(() => {
+    if (!tooltipEl || tooltipEl.style.display === "none") return;
+    if (!anchor.isConnected) {
+      hideTooltip();
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const tt = el.getBoundingClientRect();
+    // 가로: 배지 중앙에 정렬, viewport 좌우 8px 안쪽으로 clamp
+    let left = rect.left + rect.width / 2 - tt.width / 2;
+    left = Math.max(8, Math.min(left, window.innerWidth - tt.width - 8));
+    // 세로: 기본 배지 아래. 공간 부족하면 배지 위로 flip.
+    let top = rect.bottom + 6;
+    if (top + tt.height > window.innerHeight - 8) {
+      top = Math.max(8, rect.top - tt.height - 6);
+    }
+    el.style.left = `${left}px`;
+    el.style.top = `${top}px`;
+  });
+}
+
+function hideTooltip(): void {
+  if (tooltipEl) tooltipEl.style.display = "none";
+}
+
+function attachTooltip(badge: HTMLElement, text: string): void {
+  badge.onmouseenter = () => showTooltip(badge, text);
+  badge.onmouseleave = hideTooltip;
+}
+
+// ─── F012 — 팝업 새로고침 트리거 ───
+// 화면에 mount된 키워드의 storage + in-memory 캐시만 무효화. 전체 캐시는 건드리지 않음
+// (ROADMAP §"전체 캐시 클리어 X"). 응답 후 즉시 poll로 재조회.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.type === "REFRESH_ACTIVE_TAB") {
+    handleRefreshActiveTab()
+      .then(sendResponse)
+      .catch((e) => {
+        const raw = e instanceof Error ? e.message : String(e);
+        console.warn("[dv-ads] REFRESH_ACTIVE_TAB failed", e);
+        sendResponse({ ok: false, error: raw });
+      });
+    return true; // 비동기 응답
+  }
+  return false;
+});
+
+async function handleRefreshActiveTab(): Promise<RefreshActiveTabResponse> {
+  // 현재 mount된 키워드들 — 같은 키워드가 여러 셀에 mount될 수 있으므로 dedupe
+  const keywords = Array.from(
+    new Set(Array.from(mounts.values()).map((m) => m.keyword)),
+  );
+  if (keywords.length === 0) {
+    return { ok: true, count: 0 };
+  }
+
+  // storage 캐시 무효화 (volume + performance)
+  await Promise.all([invalidateBids(keywords), invalidatePerformance(keywords)]);
+
+  // in-memory 캐시도 비워야 poll이 miss로 판단해 재요청
+  for (const k of keywords) dataCache.delete(k);
+  for (const k of Array.from(perfCache.keys())) {
+    const colon = k.lastIndexOf(":");
+    if (colon < 0) continue;
+    const kw = k.slice(0, colon);
+    if (keywords.includes(kw)) perfCache.delete(k);
+  }
+
+  // 이전 에러 표시 초기화 — 재조회로 회복 가능
+  lastError = null;
+
+  // 배지를 즉시 loading 상태로 — 사용자가 변화를 본다
+  for (const m of mounts.values()) renderBadge(m);
+
+  // pending debounce가 있으면 취소하고 즉시 poll
+  if (pollTimer !== null) {
+    window.clearTimeout(pollTimer);
+    pollTimer = null;
+  }
+  await poll();
+
+  return { ok: true, count: keywords.length };
 }
 
 // ─── teardown ───

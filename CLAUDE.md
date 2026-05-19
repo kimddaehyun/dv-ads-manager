@@ -1,6 +1,6 @@
 # dv-ads (디브이 애드 매니저)
 
-네이버 광고 대시보드(`ads.naver.com`)에 주입되는 Chrome MV3 확장. 키워드별 **파워링크 예상 입찰가**, **쇼핑검색 순위**, **다른 순위의 예상 입찰가**를 광고 화면 옆에 실시간 표시.
+네이버 광고 대시보드(`ads.naver.com`)에 주입되는 Chrome MV3 확장. 파워링크 키워드 옆에 **현재 추정 순위 + 1~10위 예상 입찰가 + 성과 추정**을 띄우고 **팝오버 행 클릭으로 입찰가를 자동 변경**한다. (쇼핑검색광고 F002/F003은 2026-05-19 보류 — `docs/ROADMAP.md`·`docs/PRD.md` 참조)
 
 React 19 + TypeScript 5.7 + TailwindCSS v4 + Vite 6 + `@crxjs/vite-plugin`.
 
@@ -35,7 +35,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `src/lib/volume-cache.ts` + `performance-cache.ts` — 캐시
 - `src/lib/friendly-error.ts` — 사용자 친화적 에러 변환
 - `manifest.config.ts` — `@crxjs/vite-plugin`이 빌드 시 manifest.json 생성
-- F002/F003 쇼핑검색광고는 콘텐츠 스크립트에서 `ads.naver.com` 비공식 internal API 직접 호출 — `/apis/sa/api/adata/admng_exp_keyword` (자동매칭 키워드+통계), `/apis/ad-account/v2/adAccounts/{accountId}` (accountId→customerId 매핑). 상세 schema·인증·payload는 [`docs/PRD.md`](./docs/PRD.md) 와 메모리 `project_spike_b_shopping_endpoints`.
+- ~~F002/F003 쇼핑검색광고~~ — ⏸️ 보류 (2026-05-19). Spike B 정찰 결과(`admng_exp_keyword` + `ad-account v2`)는 메모리 `project_spike_b_shopping_endpoints`에 보존 — 추후 다른 기능에서 재사용 가능. 보류 사유는 `docs/ROADMAP.md` Task 013/014 항목 참조.
 
 ## 디자인 시스템
 

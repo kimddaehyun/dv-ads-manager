@@ -120,8 +120,8 @@ function Badge({ kw, expanded, onClick }: { kw: DemoKeyword; expanded: boolean; 
   }
   if (kw.rank === "out") {
     return (
-      <span className="dvads dvads-rank-badge warn" onClick={onClick}>
-        순위권 밖 <span className="chev">▾</span>
+      <span className="dvads dvads-rank-badge muted" onClick={onClick}>
+        10위+ <span className="chev">▾</span>
       </span>
     );
   }

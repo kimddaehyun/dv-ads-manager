@@ -57,11 +57,9 @@ export const keyForPerformanceCache = (keyword: string, bid: number): string =>
   `${PERFORMANCE_CACHE_PREFIX}${normalizeKeyword(keyword)}:${bid}`;
 
 /**
- * TODO (MVP 이후 백로그): chrome.storage.local quota prune 정책.
+ * 캐시 prune 구현은 `src/lib/cache-prune.ts` 참조.
  *
- * 5MB 한계 근접 시 VOLUME_CACHE_PREFIX·SHOPPING_CACHE_PREFIX·CURRENT_BID_PREFIX의
- * 키를 fetched_at/read_at 기준 LRU 또는 TTL prune. background.alarms로 주기 실행.
- *
- * 본 함수는 자리만 표시 — 실제 구현은 ROADMAP Task 015.
+ * VOLUME_CACHE_PREFIX·PERFORMANCE_CACHE_PREFIX·SHOPPING_CACHE_PREFIX·CURRENT_BID_PREFIX
+ * 4개 prefix의 fetched_at/read_at 기준 TTL(4h) 만료 항목을 적극 삭제한다.
+ * 트리거: background onInstalled에서 1회 + GET_BID_ESTIMATE hot path에서 1h throttle.
  */
-export const PRUNE_HOOK_PLACEHOLDER = true;

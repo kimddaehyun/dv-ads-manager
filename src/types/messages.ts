@@ -81,6 +81,9 @@ export interface RefreshActiveTabRequest {
 
 export interface RefreshActiveTabResponse {
   ok: boolean;
+  /** 재조회 트리거된 키워드 수 (성공 시) */
+  count?: number;
+  error?: string;
 }
 
 /** 모든 in-bound 메시지 유니온 */

@@ -72,7 +72,7 @@ function clickBidCell(cell: HTMLElement): boolean {
  * MutationObserver 기반 등장 대기. timeout 초과 시 null.
  * predicate가 즉시 true면 즉시 반환.
  */
-function waitFor<T>(
+export function waitFor<T>(
   predicate: () => T | null | undefined,
   timeoutMs: number,
 ): Promise<T | null> {
@@ -106,7 +106,7 @@ function waitFor<T>(
  * 단순 `input.value = "X"`는 React state를 우회하지 못해 저장 시 원래값으로 복구됨.
  * nativeInputValueSetter + bubbling input/change 이벤트가 필수.
  */
-function setReactInputValue(input: HTMLInputElement, value: string): void {
+export function setReactInputValue(input: HTMLInputElement, value: string): void {
   const proto = Object.getPrototypeOf(input);
   const desc = Object.getOwnPropertyDescriptor(proto, "value");
   const setter = desc?.set;
