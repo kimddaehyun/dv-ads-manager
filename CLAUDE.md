@@ -25,8 +25,9 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 
 ## Architecture
 
-- `src/content/index.ts` — `ads.naver.com` 페이지 주입 콘텐츠 스크립트. 광고 키워드 옆 입찰가·순위 오버레이 렌더 + 팝오버 행 클릭으로 입찰가 자동 변경.
-- `src/content/dom-bid.ts` — ads.naver.com 입찰가 변경 UI 자동화 격리. 페이지 입찰가 셀 클릭 → React 호환 input 값 주입 → 변경 버튼 클릭 → 셀 갱신 대기. 페이지 DOM 셀렉터는 전부 이 파일.
+- `src/content/index.ts` — `ads.naver.com` 페이지 주입 콘텐츠 스크립트. 광고 키워드 옆 입찰가·순위 오버레이 렌더 + 팝오버 행 클릭으로 입찰가 자동 변경. popover에 PC/모바일 디바이스 토글(PC default eager 호출, MOBILE은 토글 시 lazy 호출). in-memory + storage 캐시 키에 device 포함(`<prefix>:<device>:<keyword>[:<bid>]`). 토글 시 popover 높이 morph(FLIP 패턴) + flip 결정 freeze(`openPopoverFlipHeight`)로 위치 jitter 방지.
+- `src/content/dom-bid.ts` — ads.naver.com 입찰가 변경 UI 자동화 격리. 페이지 입찰가 셀 클릭 → React 호환 input 값 주입 → 변경 버튼 클릭 → 셀 갱신 대기. `waitFor` / `setReactInputValue` 헬퍼는 다른 자동화 모듈에서도 import해서 사용.
+- `src/content/asset-bulk.ts` + `asset-bulk-popup.ts` + `dom-asset.ts` — F-AssetBulk 파워링크 확장소재 일괄 등록. "+ 새 확장 소재" 드롭다운에 "일괄 등록" li 주입 → native DOM 팝업으로 이미지/추가제목/추가설명 입력 → 페이지 모달 자동화로 순차 등록. 확장소재 페이지 DOM 셀렉터는 `dom-asset.ts`에 격리.
 - `src/content/confirm-dialog.ts` / `toast.ts` — 오버레이 다이얼로그·토스트(+5초 Undo). React 미사용, native DOM.
 - `src/background/index.ts` — MV3 Service Worker. 검색광고 API(GET_BID_ESTIMATE) fetch 위임.
 - `src/popup/` — React 19 팝업 (옵션 진입점)
@@ -34,7 +35,10 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `src/lib/searchad.ts` — 검색광고 API HMAC 서명 + batch fetch + 429 backoff
 - `src/lib/volume-cache.ts` + `performance-cache.ts` — 캐시
 - `src/lib/friendly-error.ts` — 사용자 친화적 에러 변환
-- `manifest.config.ts` — `@crxjs/vite-plugin`이 빌드 시 manifest.json 생성
+- `manifest.config.ts` — `@crxjs/vite-plugin`이 빌드 시 manifest.json 생성. content_scripts 2개 (ISOLATED `index.ts` + MAIN-world `fetch-patch-main.ts`, 둘 다 `all_frames:true`).
+- `src/content/fetch-patch-main.ts` — MAIN-world에서 페이지 `fetch`/`XHR`을 패치해 stats 요청을 캡처. `CustomEvent`로 ISOLATED 콘텐츠 스크립트에 전달 (`dvads:fetch-capture`).
+- `src/content/period-compare.ts` — F-PoP 전후 비교 popover. 6개 매체 페이지 우측 상단 날짜 picker 옆 버튼 + 캡처된 stats를 직전 동일 기간 날짜로 replay.
+- `src/lib/period-compare-adapters.ts` — 매체별 응답 schema → 6지표 정규화 + URL/body 날짜 shift.
 - ~~F002/F003 쇼핑검색광고~~ — ⏸️ 보류 (2026-05-19). Spike B 정찰 결과(`admng_exp_keyword` + `ad-account v2`)는 메모리 `project_spike_b_shopping_endpoints`에 보존 — 추후 다른 기능에서 재사용 가능. 보류 사유는 `docs/ROADMAP.md` Task 013/014 항목 참조.
 
 ## 디자인 시스템
@@ -64,6 +68,15 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - **ads.naver.com DOM 셀렉터는 `src/content/dom-bid.ts`에 격리.** 클래스명이 갈리면 그 파일만 수정. 다음 페이지 자동화도 같은 파일에 추가.
 - **콘텐츠 스크립트의 `document` 외부 클릭 리스너(팝오버 자동 닫기 등)는 우리가 `element.click()`으로 발생시킨 이벤트도 받는다.** 페이지 자동화 동안 `suppressPopoverClose(ms)` 토큰 패턴(`src/content/index.ts`)으로 일시 차단. 토큰 카운터는 연속 작업 시 먼저 발행된 timer가 늦은 작업 중간에 풀어버리는 race 방지.
 - **페이지가 띄우는 자체 모달 검출**은 `[role="dialog"]`에 의존하지 말 것 — naver 컴포넌트가 role을 안 쓸 수 있음. `document.body.textContent.includes("...")` + `requestAnimationFrame` throttle이 안정적 (`watchPageConfirmModal` 참고). 페이지 모달이 떠있는 동안 우리 팝오버는 `.dvads-recede`로 hide, 토스트(Undo)는 hide 대상 제외.
+- **ads.naver.com SA stats endpoint** — `POST /apis/sa/api/stats`. body `{fields:[], timeIncrement:"allDays", timeRange:{since:"YYYY-MM-DD", until:"YYYY-MM-DD"}, ids:"id1,id2,..."}`. 응답 `{summary, data, compTm, cycleBaseTm}` — `summary`가 총계, `data`가 row별. `*Micros` suffix는 마이크로 단위(÷1,000,000=원). 6지표 키 매핑: `impCnt`(노출)/`clkCnt`(클릭)/`cpc`/`salesAmtMicros`(=광고비, **매출 아님**)/`purchaseConvAmtMicros`(=구매완료 전환매출)/`purchaseCcnt`(=구매완료 전환수). 같은 endpoint를 캠페인/광고그룹/키워드별로 여러 번 호출 — 빈 응답(summary null + data empty) 섞이니 의미있는 것만 사용.
+- **MAIN-world fetch/XHR 가로채기 패턴** — `manifest.config.ts`에 `world:"MAIN"` + `run_at:"document_start"` + `all_frames:true`로 별도 content_script 등록 (페이지가 iframe·다른 frame에서 호출하는 경우 cover). MAIN→ISOLATED 통신은 `window.dispatchEvent(new CustomEvent("dvads:fetch-capture", {detail}))`. **detail의 response 객체는 반드시 `JSON.stringify` 후 string으로 전달** — Apollo/React reactive 객체를 그대로 넣으면 구조화 클론에서 throw돼 ISOLATED listener에 못 도착. ISOLATED는 parse + 새 객체로 복사 (CustomEvent.detail은 frozen 가능). `src/content/fetch-patch-main.ts` 참조.
+- **XHR `readystatechange` 단독 의존 금지** — `lib-sentry` 등 third-party가 XHR wrap을 덧씌우면 우리 listener가 무력화됨. `load`/`loadend`/`error`/`abort`도 같이 listen + `dispatched` flag로 멱등성 보장.
+- **광고관리자 SPA URL 패턴**: `/manage/ad-accounts/{adAccountNo}/sa/campaigns-by/{TYPE}` (매체 리스트, TYPE=`WEB_SITE`(파워링크)/`SHOPPING_NS`(쇼핑)/`BRAND`(브랜드)/`POWER_CONTENTS`/`PLACE`), `/manage/ad-accounts/{adAccountNo}/sa/adgroups/{adgroupId}` (광고그룹 상세). `adAccountNo`는 광고관리자 URL ID — 검색광고 API `customerId`와 별개.
+- **`.dvads-bid-table` 재사용 시 CSS specificity 주의** — 베이스 `.dvads-bid-table td { color: #171717 }`(specificity 0,1,1)가 셀 색 클래스(`.dvads-period-delta-up` 0,1,0)를 덮어씀. 행·셀 색 override는 `td.dvads-X` 또는 `.dvads-bid-table td.dvads-X`(0,2,1) 형태로 specificity 맞춤.
+- **`/estimate/average-position-bid/keyword` position 상한은 device별로 다름** — PC 1~10, **MOBILE 1~5만 허용** (400 `position(N) must be lower than 5`). batch에 cap 초과 1개라도 섞이면 전체 400 거부 → silent-empty → "응답없음" 배지. `MAX_POSITION_BY_DEVICE` 상수(`src/types/storage.ts`)로 가드. 다른 estimate endpoint도 device-specific 제약 가능성 — 새 device 호출 도입 시 raw 응답 1회 검증 필수.
+- **배지 ⚠ "응답없음" 디버깅 1순위 = SW Console raw 로그** (`[searchad] ... raw response` 또는 `API 4xx`). silent-empty = "응답은 받았는데 데이터 0개" 상태. spike 로그는 모듈당 1회만 찍히니 확장 reload 후 재호출하면 다시 찍힘. 400 에러 메시지의 `fields:` 가 결정적 단서.
+- **`tsc -b` incremental cache(`.tsbuildinfo`)에 stale 에러가 남을 수 있음** — `rm -f tsconfig.*.tsbuildinfo && npm run typecheck`로 클린 재실행.
+- **사용자 노출 한글 메시지에 영문 기술용어 금지** (`reload`/`fetch`/`background`/`백그라운드`/`sendMessage` 등). `friendly-error.ts` 패턴 따라 "페이지를 새로고침해 주세요" 같은 일상 한글로. 배지 툴팁(`lastError`), 토스트, 다이얼로그 모두 동일.
 
 ## gstack
 

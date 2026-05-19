@@ -21,16 +21,19 @@ import type {
 import {
   detectMedia,
   extractMetricsFromResponse,
+  isStatsLikeCapture,
   shiftDateParams,
 } from "@/lib/period-compare-adapters";
 import { friendlyApiError } from "@/lib/friendly-error";
 
 // ─── 캡처 store ───
-// 페이지의 stats fetch가 들어올 때마다 lastCapture에 가장 최근 1건을 보존.
-// 매체별로 페이지 URL이 다르고 우리가 모든 매체의 pathname을 정확히 못 잡으므로,
-// "현재 페이지에서 마지막으로 호출된 stats-like fetch" 한 건만 잡아 그대로 replay.
-// SPA 라우팅으로 페이지 이동 시 lastCapture는 비워서 다른 매체 endpoint를 잘못 replay하지 않게 한다.
-let lastCapture: PeriodCompareCapture | null = null;
+// 페이지가 같은 endpoint를 여러 번 호출하거나(필터/페이지네이션) 동시에 여러 endpoint를 호출
+// (account-level overview + paginated list + lifetime range fetch 등)하기 때문에, 최근 N건을
+// 모두 보관한다. 팝오버 열 때 사용자 선택 날짜가 URL/body에 포함된 capture만 후보로 추려서
+// impressions이 가장 많은 것을 선택 (lifetime range나 wrong-date capture 자동 배제).
+// SPA 라우팅 시 모두 비움.
+const recentCaptures: PeriodCompareCapture[] = [];
+const MAX_RECENT_CAPTURES = 20;
 const DEBUG_CAPTURE = true; // 첫 출시까지 켜두고, 안정화 후 false.
 
 declare global {
@@ -39,22 +42,12 @@ declare global {
   }
 }
 
-// 진짜 stats endpoint만 lastCapture에 저장 — 캠페인/그룹/사용자 정보 등 false positive 차단.
-// 매체별 stats endpoint:
-//   파워링크/쇼핑/브랜드/파워컨텐츠: POST /apis/sa/api/stats (확인됨)
-//   GFA: 추후 spike에서 확정 (예: /apis/gfa/.../stats)
-//   플레이스: 추후 spike (예: /apis/place/.../stats)
-const STATS_URL_PATTERNS: RegExp[] = [
-  /\/apis\/sa\/api\/stats(\?|$|\/)/i,
-  /\/apis\/gfa\/.*\/(stats|report)/i,
-  /\/apis\/place\/.*\/(stats|report)/i,
-  /\/apis\/da\/.*\/(stats|report)/i,
-  // dashboard endpoint는 fallback (캠페인 개수 등 메타정보라 stats가 아닐 가능성 큼 — 1차 후보)
-];
-
-function isStatsEndpoint(url: string): boolean {
-  return STATS_URL_PATTERNS.some((p) => p.test(url));
-}
+// 매체별 stats endpoint는 너무 다양하다 — `/apis/sa/api/stats`(파워링크 캠페인 리스트)
+// 외에도 전체 캠페인 대시보드, 검색광고 대시보드, 디스플레이(GFA), 플레이스 등 각각
+// 다른 경로를 쓰며 path 패턴 추정으로는 모든 매체를 cover하기 어렵다.
+// 대신 응답 shape 기반(`isStatsLikeCapture` — 응답 안에 `impCnt`/`clkCnt`/`cost`/`cpc`
+// 같은 stats hint key가 2개 이상)으로 stats 응답을 인식한다. 매체별 endpoint 정찰 없이
+// 동작하고, 캠페인 리스트처럼 row별 stats가 담긴 응답도 자동 cover된다.
 
 window.addEventListener("dvads:fetch-capture", (e) => {
   const raw = e.detail;
@@ -81,44 +74,117 @@ window.addEventListener("dvads:fetch-capture", (e) => {
     ts: raw.ts ?? Date.now(),
   };
 
-  const isStats = isStatsEndpoint(cap.url);
+  const isStats = isStatsLikeCapture(cap);
+  if (!isStats) {
+    if (DEBUG_CAPTURE) {
+      const media = detectMedia(cap.url, location.pathname);
+      console.log(`[dv-ads/PoP] skip non-stats m=${media ?? "?"} ${cap.method} ${cap.url}`);
+    }
+    return;
+  }
 
-  // 응답에 의미있는 stats 데이터가 있는지 판별
-  const resp = cap.response as Record<string, unknown> | null;
-  const hasSummary =
-    resp != null && typeof resp.summary === "object" && resp.summary != null;
-  const hasData = resp != null && Array.isArray(resp.data) && resp.data.length > 0;
-  const isMeaningful = hasSummary || hasData;
+  // 페이지가 같은 endpoint를 여러 번 호출(필터/페이지네이션 등)하면 빈 응답이 마지막에 와서
+  // 실제 데이터 응답을 덮어쓸 수 있다. 캡처 즉시 metrics 추출해서 유의미한 값(impressions/
+  // clicks/cost 중 하나라도 null 아닌 실수)이 있을 때만 recentCaptures에 채택.
+  // 매체는 capture URL로 추정 — 매체 미식별 페이지(전체 캠페인/대시보드)는 powerlink 키 fallback.
+  const guessMedia = detectMedia(cap.url, location.pathname) ?? "powerlink";
+  const m = extractMetricsFromResponse(guessMedia, cap.response);
+  const isReal =
+    m.impressions != null ||
+    m.clicks != null ||
+    m.cost != null ||
+    m.conversions != null ||
+    m.revenue != null;
 
   if (DEBUG_CAPTURE) {
-    if (isStats) {
-      const summary = hasSummary
-        ? Object.keys(resp!.summary as object).slice(0, 24)
-        : null;
-      const data =
-        hasData && typeof (resp!.data as unknown[])[0] === "object"
-          ? Object.keys((resp!.data as unknown[])[0] as object).slice(0, 24)
-          : null;
+    const resp = cap.response as Record<string, unknown> | null;
+    const topKeys = resp ? Object.keys(resp).slice(0, 30) : null;
+    if (isReal) {
+      // KEEP 케이스도 응답 sample 같이 — 단위 이상(예: cost in 1/100,000원)
+      // 진단/패턴 별칭 추가 시 활용.
+      let sample = "";
+      try {
+        sample = JSON.stringify(resp).slice(0, 1500);
+      } catch {
+        sample = "(stringify failed)";
+      }
       console.log(
-        `[dv-ads/PoP] STATS!!${isMeaningful ? "" : "·EMPTY"} ${cap.method} ${cap.url}\n  body=${cap.body}\n  summary keys=`,
-        summary,
-        "\n  data[0] keys=",
-        data,
+        `[dv-ads/PoP] STATS KEEP ${cap.method} ${cap.url}`,
+        "\n  body=", cap.body,
+        "\n  metrics=", m,
+        "\n  top-level keys=", topKeys,
+        "\n  response sample=", sample,
       );
     } else {
-      const media = detectMedia(cap.url, location.pathname);
+      // 빈 추출은 응답 sample을 함께 찍어 사용자가 구조 파악 가능하도록 (구글 검색용)
+      let sample = "";
+      try {
+        sample = JSON.stringify(resp).slice(0, 1500);
+      } catch {
+        sample = "(stringify failed)";
+      }
       console.log(
-        `[dv-ads/PoP] cap m=${media ?? "?"} ${cap.method} ${cap.url}`,
+        `[dv-ads/PoP] STATS skip-empty ${cap.method} ${cap.url}`,
+        "\n  body=", cap.body,
+        "\n  top-level keys=", topKeys,
+        "\n  response sample=", sample,
       );
     }
   }
 
-  if (!isStats) return;
-  // 빈 stats(summary null + data 비어있음)는 무시 — 페이지가 같은 endpoint를 여러 번 호출하는데
-  // 그 중 일부만 실제 데이터를 담고 있음. 마지막에 호출된 빈 응답이 lastCapture를 덮어쓰지 않게 한다.
-  if (!isMeaningful) return;
-  lastCapture = cap;
+  if (!isReal) return;
+
+  // 모든 의미있는 capture 보관. 선택은 팝오버 열 때 pickBestCapture가 사용자 선택 날짜 기준으로.
+  recentCaptures.push(cap);
+  if (recentCaptures.length > MAX_RECENT_CAPTURES) recentCaptures.shift();
 });
+
+/**
+ * 사용자가 현재 선택한 날짜 범위(curStart~curEnd)와 일치하는 capture 중 impressions이 가장 큰
+ * 것을 선택. 날짜가 URL/body 어디에도 안 들어있는 capture(예: lifetime range fetch)는 자동 배제.
+ * 매칭 capture 없으면 가장 최근 것 fallback.
+ */
+function pickBestCapture(
+  candidates: PeriodCompareCapture[],
+  curStart: Date,
+  curEnd: Date,
+): PeriodCompareCapture | null {
+  if (candidates.length === 0) return null;
+
+  // YYYY-MM-DD, YYYY.MM.DD, YYYY/MM/DD, YYYYMMDD 4가지 포맷
+  const seps = ["-", ".", "/", ""];
+  const startStrs = seps.map((s) => formatDateYMD(curStart, s));
+  const endStrs = seps.map((s) => formatDateYMD(curEnd, s));
+
+  const matched: Array<{ cap: PeriodCompareCapture; imps: number }> = [];
+  for (const c of candidates) {
+    const blob = c.url + " " + (c.body ?? "");
+    const hasStart = startStrs.some((s) => blob.includes(s));
+    const hasEnd = endStrs.some((s) => blob.includes(s));
+    if (!hasStart || !hasEnd) continue;
+    const media = detectMedia(c.url, location.pathname) ?? "powerlink";
+    const m = extractMetricsFromResponse(media, c.response);
+    matched.push({ cap: c, imps: m.impressions ?? 0 });
+  }
+
+  if (matched.length > 0) {
+    matched.sort((a, b) => b.imps - a.imps);
+    if (DEBUG_CAPTURE) {
+      console.log(
+        `[dv-ads/PoP] picked best ${matched[0].cap.method} ${matched[0].cap.url} (imps=${matched[0].imps}, ${matched.length} date-matched candidates)`,
+      );
+    }
+    return matched[0].cap;
+  }
+
+  // 날짜 매칭 capture 없음 → 가장 최근 fallback (잘못된 데이터일 수 있지만 일단 표시)
+  if (DEBUG_CAPTURE) {
+    console.log(
+      `[dv-ads/PoP] no date-matched capture, fallback to latest (${candidates.length} total)`,
+    );
+  }
+  return candidates[candidates.length - 1];
+}
 
 // ─── 날짜 picker 감지 + 현재 기간 추출 ───
 //
@@ -195,6 +261,12 @@ function previousPeriod(start: Date, end: Date): { start: Date; end: Date } {
   return { start: prevStart, end: prevEnd };
 }
 
+function daysBetweenInclusive(start: Date, end: Date): number {
+  // inclusive 일수 (start·end 양끝 포함). 음수 방어를 위해 abs.
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.max(1, Math.round(Math.abs(end.getTime() - start.getTime()) / dayMs) + 1);
+}
+
 function formatDateYMD(d: Date, sep: string): string {
   const yyyy = d.getUTCFullYear();
   const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
@@ -242,8 +314,13 @@ function mountButton(): void {
   btn.className = "dvads dvads-period-btn";
   btn.type = "button";
   btn.setAttribute(BTN_MARK, "1");
-  btn.textContent = "전후 비교";
-  btn.title = "직전 동일 기간과 비교";
+  btn.setAttribute("aria-label", "데이터 비교");
+  btn.title = "데이터 비교 (직전 동일 기간과 비교)";
+  btn.innerHTML =
+    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<rect x="2.5" y="7" width="3.5" height="6" rx="0.6"/>' +
+    '<rect x="10" y="3" width="3.5" height="10" rx="0.6"/>' +
+    "</svg>";
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
     void openPopover(btn);
@@ -285,8 +362,9 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
   const dateInfo = findDateRangeContainer();
   if (!dateInfo) return;
 
-  // 매체는 캡처된 fetch URL을 기반으로 결정 — pathname보다 신뢰성 높음.
-  const cap = lastCapture;
+  // 사용자가 선택한 날짜 범위와 매치되는 capture 중 impressions이 가장 큰 것을 선택.
+  // lifetime range fetch나 sub-period chart fetch처럼 사용자 picker와 다른 날짜의 capture는 배제.
+  const cap = pickBestCapture(recentCaptures, dateInfo.start, dateInfo.end);
   const media: PeriodCompareMedia | null = cap
     ? detectMedia(cap.url, location.pathname)
     : detectMedia(null, location.pathname);
@@ -298,10 +376,14 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
   document.body.appendChild(popover);
   openPopoverEl = popover;
 
+  // 직전 기간은 fetch 결과와 무관하게 즉시 계산 가능 — 로딩 중에도 기간 줄 완성된 상태로 표시.
+  const initialPrev = previousPeriod(dateInfo.start, dateInfo.end);
+
   // 헤더 + 스켈레톤 즉시 렌더
   renderPopover(popover, {
     media,
     currentRange: { start: dateInfo.start, end: dateInfo.end },
+    previousRange: initialPrev,
     state: "loading",
   });
 
@@ -363,10 +445,13 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
   // 데이터 로드
   try {
     if (!cap) {
+      // 캡처 못한 페이지(아직 stats fetch 미발생 등)는 "학습 중" 안내 대신
+      // 빈 metrics(전부 null → 0/0원/0.0%) 그대로 표 렌더. 사용자에게는 자연스럽게 "0건"으로 보임.
       renderPopover(popover, {
         media,
         currentRange: { start: dateInfo.start, end: dateInfo.end },
-        state: "no-capture",
+        previousRange: initialPrev,
+        state: "ok",
       });
       return;
     }
@@ -479,6 +564,7 @@ function readCookie(name: string): string | null {
 interface NormalizedMetrics {
   impressions: number | null;
   clicks: number | null;
+  ctr: number | null;
   cpc: number | null;
   cost: number | null;
   revenue: number | null;
@@ -492,7 +578,7 @@ interface PopoverState {
   previousRange?: { start: Date; end: Date };
   current?: NormalizedMetrics;
   previous?: NormalizedMetrics;
-  state: "loading" | "ok" | "no-capture" | "error";
+  state: "loading" | "ok" | "error";
   errorMessage?: string;
 }
 
@@ -503,7 +589,7 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
   hdr.className = "dvads-popover-hdr";
   const title = document.createElement("div");
   title.className = "kw";
-  title.textContent = "전후 비교";
+  title.textContent = "데이터 비교";
   hdr.append(title);
   const closeBtn = document.createElement("button");
   closeBtn.type = "button";
@@ -517,24 +603,21 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
   hdr.append(closeBtn);
   root.append(hdr);
 
-  // 기간 라벨
+  // 기간 라벨 — 끝에 "(N일)" 일수 뱃지 추가해 비교 단위 명시
   const rangeLine = document.createElement("div");
   rangeLine.className = "dvads-period-range";
+  const dayCount = daysBetweenInclusive(st.currentRange.start, st.currentRange.end);
   if (st.previousRange) {
     rangeLine.textContent = `${formatRangeLabel(st.previousRange.start, st.previousRange.end)}  →  ${formatRangeLabel(st.currentRange.start, st.currentRange.end)}`;
   } else {
     rangeLine.textContent = `${formatRangeLabel(st.currentRange.start, st.currentRange.end)}`;
   }
+  const daysBadge = document.createElement("span");
+  daysBadge.className = "dvads-period-days";
+  daysBadge.textContent = ` (${dayCount}일)`;
+  rangeLine.append(daysBadge);
   root.append(rangeLine);
 
-  if (st.state === "no-capture") {
-    const msg = document.createElement("div");
-    msg.className = "dvads-period-empty";
-    msg.textContent =
-      "페이지 데이터를 아직 학습 중입니다. 페이지를 새로고침하거나 날짜를 한 번 변경한 뒤 다시 눌러 주세요.";
-    root.append(msg);
-    return;
-  }
   if (st.state === "error") {
     const msg = document.createElement("div");
     msg.className = "dvads-period-error";
@@ -548,7 +631,7 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
   table.className = "dvads-bid-table dvads-period-table";
   const thead = document.createElement("thead");
   const trh = document.createElement("tr");
-  for (const label of ["지표", "이전", "현재", "증감"]) {
+  for (const label of ["지표", "이전 기간", "선택 기간", "증감"]) {
     const th = document.createElement("th");
     th.textContent = label;
     trh.appendChild(th);
@@ -567,6 +650,7 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
   }> = [
     { key: "impressions", label: "노출수", fmt: "int" },
     { key: "clicks", label: "클릭수", fmt: "int" },
+    { key: "ctr", label: "클릭률", fmt: "percent" },
     { key: "cpc", label: "CPC", fmt: "krw-int", invertColor: true },
     { key: "cost", label: "총비용", fmt: "krw-int", invertColor: true },
     { key: "revenue", label: "매출", fmt: "krw-int" },
@@ -574,23 +658,29 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
     { key: "roas", label: "ROAS", fmt: "percent" },
   ];
 
-  let missingAny = false;
   for (const { key, label, fmt, invertColor } of rows) {
     const tr = document.createElement("tr");
     const tdLabel = document.createElement("td");
     tdLabel.textContent = label;
     tr.append(tdLabel);
 
+    if (st.state === "loading") {
+      // shimmer 스켈레톤 — 셀당 1개 bar. 너비는 fmt별로 자연스럽게 다르게.
+      const skelW: Record<MetricFmt, string> = {
+        int: "44px",
+        krw: "56px",
+        "krw-int": "56px",
+        percent: "44px",
+      };
+      tr.append(skelCell(skelW[fmt]));
+      tr.append(skelCell(skelW[fmt]));
+      tr.append(skelCell("48px"));
+      tbody.append(tr);
+      continue;
+    }
+
     const prevVal = st.previous?.[key] ?? null;
     const curVal = st.current?.[key] ?? null;
-    // revenue/conversions만 missingAny 트리거 (cpc/roas는 계산 fallback이라 제외)
-    if (
-      st.state === "ok" &&
-      (key === "revenue" || key === "conversions") &&
-      (prevVal == null || curVal == null)
-    ) {
-      missingAny = true;
-    }
 
     tr.append(cell(formatMetric(prevVal, fmt, st.state)));
     tr.append(cell(formatMetric(curVal, fmt, st.state)));
@@ -599,14 +689,6 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
   }
   table.append(tbody);
   root.append(table);
-
-  if (missingAny && st.state === "ok") {
-    const note = document.createElement("div");
-    note.className = "dvads-disclaimer";
-    note.textContent =
-      "일부 지표가 비어 있습니다. 페이지 상단 [열 맞춤 설정]에서 매출·전환수 컬럼을 켜면 비교에 표시됩니다.";
-    root.append(note);
-  }
 }
 
 function cell(html: { text: string; cls?: string }): HTMLElement {
@@ -616,22 +698,31 @@ function cell(html: { text: string; cls?: string }): HTMLElement {
   return td;
 }
 
+function skelCell(width: string): HTMLElement {
+  const td = document.createElement("td");
+  const bar = document.createElement("span");
+  bar.className = "dvads-period-skel";
+  bar.style.width = width;
+  td.append(bar);
+  return td;
+}
+
 function formatMetric(
   v: number | null,
   fmt: "int" | "krw" | "krw-int" | "percent",
   state: PopoverState["state"],
 ): { text: string } {
   if (state === "loading") return { text: "..." };
-  if (v == null) return { text: "-" };
-  if (fmt === "int") return { text: Math.round(v).toLocaleString() };
+  // 빈 값(null)은 대시 대신 0으로 통일 — "0과 - 혼재" 노이즈 제거.
+  const n = v ?? 0;
+  if (fmt === "int") return { text: Math.round(n).toLocaleString() };
   if (fmt === "krw" || fmt === "krw-int") {
-    return { text: `${Math.round(v).toLocaleString()}원` };
+    return { text: `${Math.round(n).toLocaleString()}원` };
   }
   if (fmt === "percent") {
-    // ROAS — 정수 % 표시. 1자리 소수가 필요하면 toFixed(1) 사용 검토.
-    return { text: `${Math.round(v).toLocaleString()}%` };
+    return { text: `${n.toFixed(1)}%` };
   }
-  return { text: String(v) };
+  return { text: String(n) };
 }
 
 /**
@@ -649,12 +740,15 @@ function formatDelta(
   _invertColor: boolean,
 ): { text: string; cls?: string } {
   if (state === "loading") return { text: "" };
-  if (prev == null || cur == null) return { text: "-" };
-  if (prev === 0) {
-    if (cur === 0) return { text: "0%" };
-    return { text: "신규", cls: "dvads-period-delta-up" };
+  // null도 0으로 처리 — 값 셀과 증감 셀 모두 같은 컨벤션.
+  const p = prev ?? 0;
+  const c = cur ?? 0;
+  if (p === 0) {
+    if (c === 0) return { text: "0.0%" };
+    // 이전 0 → 선택 N(>0): 증감률이 ∞라 계산 불가. 결측 표기와 통일해서 "-".
+    return { text: "-" };
   }
-  const pct = ((cur - prev) / Math.abs(prev)) * 100;
+  const pct = ((c - p) / Math.abs(p)) * 100;
   const sign = pct > 0 ? "+" : pct < 0 ? "-" : "";
   const cls =
     pct > 0
@@ -690,7 +784,7 @@ export function initPeriodCompare(): void {
       lastUrl = location.href;
       unmountButton();
       // 페이지 이동 시 캡처 비움 — 다른 매체 endpoint를 잘못 replay하지 않게
-      lastCapture = null;
+      recentCaptures.length = 0;
       scheduleMount();
     }
   }).observe(document, { childList: true, subtree: true });

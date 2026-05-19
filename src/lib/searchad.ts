@@ -239,7 +239,8 @@ function sleep(ms: number): Promise<void> {
 
 // ---- F001 — 키워드별 1~10위 예상 입찰가 ----
 
-import { MAX_POSITION, type RankPosition } from "@/types/storage";
+import { MAX_POSITION, MAX_POSITION_BY_DEVICE, type RankPosition } from "@/types/storage";
+import type { AdDevice } from "@/types/device";
 
 const POSITION_BID_ENDPOINT = "/estimate/average-position-bid/keyword";
 const POSITION_BID_BATCH_KEYWORDS = 5; // 한 요청에 키워드 최대 5개 (각 1~10위 = 50 items)
@@ -268,6 +269,7 @@ let spikeLogged = false;
 export async function fetchPositionBids(
   keywords: string[],
   cred: SearchadCredentials,
+  device: AdDevice,
 ): Promise<PositionBidsItem[]> {
   const cleaned = Array.from(
     new Set(keywords.map((k) => k.trim()).filter(Boolean)),
@@ -279,13 +281,13 @@ export async function fetchPositionBids(
     const batch = cleaned.slice(i, i + POSITION_BID_BATCH_KEYWORDS);
     let part: PositionBidsItem[];
     try {
-      part = await callPositionBid(batch, cred);
+      part = await callPositionBid(batch, cred, device);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("429")) {
         await sleep(1500);
         try {
-          part = await callPositionBid(batch, cred);
+          part = await callPositionBid(batch, cred, device);
         } catch (e2) {
           const m2 = e2 instanceof Error ? e2.message : String(e2);
           if (m2.includes("400")) {
@@ -311,15 +313,18 @@ export async function fetchPositionBids(
 async function callPositionBid(
   keywords: string[],
   cred: SearchadCredentials,
+  device: AdDevice,
 ): Promise<PositionBidsItem[]> {
   const timestamp = Date.now().toString();
   const method = "POST";
   const signature = await sign(timestamp, method, POSITION_BID_ENDPOINT, cred.secretKey);
 
+  // device별 position 상한 — PC: 1~10, MOBILE: 1~5. 초과 시 batch 전체가 400으로 거부됨.
+  const maxPos = MAX_POSITION_BY_DEVICE[device];
   const items = keywords.flatMap((k) =>
-    Array.from({ length: MAX_POSITION }, (_, i) => ({ key: k, position: i + 1 })),
+    Array.from({ length: maxPos }, (_, i) => ({ key: k, position: i + 1 })),
   );
-  const body = JSON.stringify({ device: "PC", items });
+  const body = JSON.stringify({ device, items });
 
   const res = await fetch(BASE_URL + POSITION_BID_ENDPOINT, {
     method,
@@ -353,6 +358,8 @@ function parsePositionBidResponse(
 ): PositionBidsItem[] {
   const items = extractItemsArray(json);
   const byKeyword = new Map<string, Partial<Record<RankPosition, number>>>();
+  // MAX_POSITION(10) = PC 상한 = 전 디바이스 통틀어 최대치. 응답에 디바이스별 cap을 넘는
+  // position이 올 일 없지만 defensive로 10으로 검증.
   for (const raw of items) {
     const keyword = raw.key ?? raw.keyword;
     const position = raw.position ?? raw.rank;
@@ -425,6 +432,7 @@ let perfSpikeLogged = false;
 export async function fetchPerformance(
   items: Array<{ keyword: string; bid: number }>,
   cred: SearchadCredentials,
+  device: AdDevice,
 ): Promise<KeywordPerformanceCache[]> {
   const cleaned = items
     .map((q) => ({ keyword: q.keyword.trim(), bid: q.bid }))
@@ -436,13 +444,13 @@ export async function fetchPerformance(
     const batch = cleaned.slice(i, i + PERFORMANCE_BATCH_SIZE);
     let part: KeywordPerformanceCache[];
     try {
-      part = await callPerformance(batch, cred);
+      part = await callPerformance(batch, cred, device);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("429")) {
         await sleep(1500);
         try {
-          part = await callPerformance(batch, cred);
+          part = await callPerformance(batch, cred, device);
         } catch (e2) {
           const m2 = e2 instanceof Error ? e2.message : String(e2);
           if (m2.includes("400")) {
@@ -468,6 +476,7 @@ export async function fetchPerformance(
 async function callPerformance(
   items: Array<{ keyword: string; bid: number }>,
   cred: SearchadCredentials,
+  device: AdDevice,
 ): Promise<KeywordPerformanceCache[]> {
   const timestamp = Date.now().toString();
   const method = "POST";
@@ -479,7 +488,7 @@ async function callPerformance(
   const apiItems = items.map((q) => ({
     keyword: q.keyword.replace(/\s+/g, ""),
     bid: q.bid,
-    device: "PC",
+    device,
   }));
   const body = JSON.stringify({ items: apiItems });
 
@@ -506,12 +515,13 @@ async function callPerformance(
     perfSpikeLogged = true;
     console.log("[searchad] performance raw response (Spike 1회 보정용)", json);
   }
-  return parsePerformanceResponse(json, items);
+  return parsePerformanceResponse(json, items, device);
 }
 
 function parsePerformanceResponse(
   json: unknown,
   requested: Array<{ keyword: string; bid: number }>,
+  device: AdDevice,
 ): KeywordPerformanceCache[] {
   const arr = extractPerfArray(json);
   const now = new Date().toISOString();
@@ -528,6 +538,7 @@ function parsePerformanceResponse(
     const salesAmt = numField(raw.cost ?? raw.salesAmt ?? raw.salesAmount) ?? 0;
     byKey.set(`${kw}:${bid}`, {
       keyword: kw,
+      device,
       bid,
       impressions,
       clicks,

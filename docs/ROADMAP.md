@@ -145,6 +145,43 @@
 
 - ~~**Task 014: F003 쇼핑검색광고 소재 상세 풀 패널 구현**~~ — **보류** (2026-05-19, Task 013 사유 동일)
 
+- **Task 016: F001 PC/모바일 디바이스 분리 (모바일 default + PC lazy 토글)** ✅ - 완료 (2026-05-19)
+  - ✅ `src/types/device.ts` 신규: `AdDevice = "PC" | "MOBILE"`, `DEFAULT_DEVICE = "MOBILE"`
+  - ✅ 캐시 키 스킴 갱신: `volume_cache:<device>:<keyword>`, `performance_cache:<device>:<keyword>:<bid>` — `storage-keys.ts`의 `keyForVolumeCache(keyword, device)`/`keyForPerformanceCache(keyword, bid, device)` 시그니처에 device 추가. `KeywordVolumeCache`/`KeywordPerformanceCache` 타입에 `device` 필드 필수화
+  - ✅ `searchad.ts` `fetchPositionBids`/`fetchPerformance`의 `device: "PC"` 하드코딩 제거 → `device: AdDevice` 파라미터로 외부에서 주입. POST body에 그대로 전달
+  - ✅ `volume-cache.ts`/`performance-cache.ts` get/put에 device 인자 추가. `invalidate*`는 새 키 형식(`<prefix>:<device>:<keyword>[:<bid>]`)에서 device를 건너뛰고 키워드 매칭으로 storage 전체 스캔
+  - ✅ `messages.ts` `GetBidEstimateRequest.device: AdDevice` 필수 필드 추가, `GetBidEstimateResponse.device` echo. background `handleGetBidEstimate`가 device 전파
+  - ✅ `content/index.ts`: in-memory `dataCache`/`perfCache` 키에 device 포함, `poll()`은 항상 `DEFAULT_DEVICE`(모바일) 기준 호출. popover 헤더에 `[모바일 | PC]` segmented control(`buildPopoverBody`) 마운트. 배지·면책 푸터는 표시 중 디바이스 라벨 반영
+  - ✅ **PC lazy fetch + race guard**: `selectDevice(target)` — cache hit 즉시 re-render, miss면 `.dvads-popover-loading` skeleton + 1회 `GET_BID_ESTIMATE { device: "PC" }` 호출. 응답 도착 시 popover가 같은 mount + 같은 device 상태일 때만 re-render(빠른 토글 연타 race 방지). `inflightDevice` 토큰
+  - ✅ `overlay.css` `.dvads-device-toggle`/`.dvads-device-seg`/`.dvads-popover-loading` 추가. **DV 주황 안 씀** — 보조 UI는 중성 회색(`#F3F4F6` 트랙 + 흰 카드 선택), 주황 면적 ~3% 규칙 보존
+  - ✅ **캐시 마이그레이션**: 기존 device 없는 키는 새 빌드에서 자동 cache miss → 다음 fetch 때 새 키로 자연 재구축. 별도 마이그레이션 코드 불필요(TTL 4h 만료 후 prune이 청소)
+
+- **Task 018: F-PoP — 데이터 비교 popover (Period-over-Period)** 🟡 - 진행 중 (2026-05-19, SA·전체 캠페인·대시보드·GFA에서 정상 동작 확인, 일부 매체별 잔존 한계 보강 대기)
+  - ✅ **6개 매체 페이지 우측 상단 날짜 picker 옆 아이콘 버튼 주입** (`period-compare.ts`): bar chart 비교 아이콘(32×32 정사각, hover 시 DV 주황). 클릭 시 popover. 매체 사전 식별 없이 날짜 picker가 발견되는 광고관리자 페이지면 어디든 mount. SPA 라우팅 대응 MutationObserver
+  - ✅ **MAIN-world fetch/XHR 가로채기 패턴** (`fetch-patch-main.ts` 기존): 페이지가 호출하는 stats fetch를 우리가 직접 정찰 없이 가로채 학습 → 같은 endpoint를 직전 동일 기간 날짜로 1회 replay. `CustomEvent("dvads:fetch-capture")` 채널, response는 `JSON.stringify` 후 string으로 전달(구조화 클론 안전)
+  - ✅ **stats 응답 인식: URL 패턴 → shape 기반** (`isStatsLikeCapture`): 매체별 endpoint path 추정 대신 응답 안 `impCnt`·`clkCnt`·`cost`·`cpc`·`ctr` 같은 stats hint key 2개 이상이면 stats로 판정. 매체 사전 정찰 불필요, 캠페인 리스트처럼 row별 stats도 자동 cover
+  - ✅ **다중 capture 보관 + 사용자 선택 날짜 매칭 필터** (`recentCaptures` array + `pickBestCapture`): 같은 페이지에서 lifetime range fetch(2024-05-19 등)·paginated `/campaigns/search`·account-level `/reports/overview` 동시 호출되는 케이스 cover. URL/body에 사용자 picker 시작·종료 날짜가 모두 포함된 capture 중 impressions 최대치 선택 → lifetime/sub-period fetch 자동 배제
+  - ✅ **6지표 정규화 어댑터** (`period-compare-adapters.ts`): impressions·clicks·CTR·CPC·cost·revenue·conversions·ROAS. 응답 키 별칭 (`impCnt`/`impCount`/`impressionCount`, `salesAmtMicros`/`grossCostMicros`/`sales`(GFA), `averageCpcMicros`, `purchasedConversionsValueMicros`/`convSalesKRW`(GFA), `convCount` 등) + `*Micros` 접미사 자동 /1,000,000원 정규화
+  - ✅ **깊이 walk 집계** (`deepFindStatsNode` + `shallowMergedStats`): 임의 nested 구조에서도 stats 노드 발견. 두 패턴 cover — ① 객체 자체가 stats 노드(직접 + 1단계 nested 머지로 `row.metrics.{...}` 같은 구조 포함) ② `{id: statsRow|null}` 객체 맵(GFA `campaignStats` 패턴 — campaign value들을 합산, `conversion` 안쪽 데이터까지 1단계 머지로 포함). 두 패턴 중 stats hint key가 더 많은 쪽 채택
+  - ✅ **비율 지표 base totals 재계산**: CTR·CPC·ROAS는 응답 직접 값을 신뢰하지 않고 항상 `clicks/impressions`·`cost/clicks`·`revenue/cost`에서 재계산. day별 row 합산 시 비율도 합산되어 잘못 표시되던 버그 cover (예: 7일치 CTR row 합 = 8.27% → 실제 1.18%로 정정)
+  - ✅ **날짜 picker DOM 감지** (`findDateRangeContainer`): 텍스트 walker로 헤더 내 `YYYY.MM.DD.` 패턴 2개 인접 노드의 LCA가 picker container. 매체별 셀렉터 사전 정찰 불필요
+  - ✅ **직전 기간 날짜 shift** (`shiftDateParams`): 현재 기간 길이만큼 backward 이동. URL 쿼리·body JSON 안의 모든 string에서 4가지 포맷(`YYYY-MM-DD`/`.`/`/`/없음) 매칭 + 치환. 어떤 키 이름(`startDate`/`from`/`period.start` 등)을 쓰든 무관 동작
+  - ✅ **UI/UX 완성**: ① popover 헤더 `데이터 비교` + 우측 X ② 기간 줄 "이전 기간 ~ 종료 → 선택 기간 ~ 종료 (N일)" 즉시 렌더(fetch 무관) ③ 8지표 통합 테이블 4컬럼(지표 / 이전 기간 / 선택 기간 / 증감) ④ 로딩 중 shimmer 스켈레톤 셀(레이아웃 점프 없음) ⑤ 빈값 통일 0/0원/0.0% ⑥ 한국 주식 컨벤션 증감 색(상승=빨강 / 하강=파랑) + 1자리 소수 ⑦ 이전 기간 0 → 선택 N(>0)은 분수 ∞라 "-" 표기 통일. popover 너비 520px로 수억 원대 숫자 cover
+  - ✅ **DEBUG_CAPTURE 로그**: `STATS KEEP/skip-empty` + 추출된 metrics + 응답 sample 1500자 출력(콘솔). 매체별 응답 schema 분석/별칭 추가 시 사용
+  - 🟡 **잔존 한계**: ① GFA 페이지가 사용자 picker 8일 대신 weekly bucket 7일로 stats를 fetch하면 우리 shift가 부분 매치만 되어 replay 범위 어긋남 (capture URL의 실제 날짜를 "current"로 정정하는 로직 필요) ② GFA 일부 페이지는 paginated 10개 campaign stats만 부르고 account-level 집계는 없음 → 표가 top 10 합계만 표시
+  - 🟡 **첫 출시 후 cleanup**: `DEBUG_CAPTURE` flag false 전환 + 디버그 로그 제거
+
+- **Task 017: F-AssetBulk v1 — 파워링크 확장소재 일괄 등록** 🟡 - 진행 중 (2026-05-19, 기본 동작 검증 완료, 중복 사전 안내 + 드롭다운 깜빡임 fix 재검증 대기)
+  - ✅ **드롭다운 li 주입**: ads.naver.com 광고그룹의 확장소재 탭에서 "+ 새 확장 소재 ▾" 드롭다운 끝에 "일괄 등록" 항목을 portal MutationObserver로 주입. URL 분기 없이 메뉴 mount 시점에 자연 격리(다른 탭에서는 메뉴 자체가 안 뜸)
+  - ✅ **native DOM popup** (`asset-bulk-popup.ts`): 파워링크 이미지(파일/URL 모드 토글, 슬롯 ≤8) + 추가제목(슬롯 ≤8, 슬롯별 노출 위치 dropdown `[모든 위치 / 위치 1만 / 위치 2만]`) + 추가설명(슬롯 ≤1). dvads-confirm-card 베이스 + 자동화 중 visibility hidden으로 페이지 모달 가운데 표시 양보
+  - ✅ **DOM 자동화** (`dom-asset.ts`): "+ 새 확장 소재" 트리거 + 종류별 li click → 페이지 모달 mount 대기(`waitFor`) → input 채움(`setReactInputValue` 재사용) → 추가제목은 노출 위치 dropdown 선택(default "all"이면 no-op, "p1"/"p2"이면 트리거 click + 라벨 매칭 li click) → 저장 enabled 대기 → click → 모달 unmount 대기. 이미지는 한 모달에서 multiple files `DataTransfer`로 한 번에 업로드, 추가제목/추가설명은 각 모달 N회 사이클
+  - ✅ **이미지 URL → File**: content script 컨텍스트에서 `fetch(url, {mode:"cors"})` → blob → File. CORS 차단 호스트는 결과 토스트에 실패로 노출(V2 background fetch fallback 예정)
+  - ✅ **중복 사전 안내** (`scanExistingAssets`): popup 열 때 페이지 확장소재 테이블(`tr.ad-cms-table-row[data-row-key]`)에서 유형 셀("추가제목"/"추가설명") + 첫 `.extension-dot` 텍스트 추출. 사용자 입력값이 일치하면 슬롯에 빨간 보더 + "이미 등록됨 - 자동 skip" 메시지. 일괄 등록 시 중복 항목은 큐에 안 넣고 시작 토스트에 "중복 N건 skip" 표시
+  - ✅ **submit click race fix** (`waitForModalClosedRetry`): 첫·마지막 모달에서 페이지가 우리 click을 무시하는 race 보고됨. 모달 mount 후 80ms 양보 + 1차 800ms 대기 → 안 닫히면 input 재commit + click 1회 재시도 → 2차 대기
+  - ✅ **드롭다운 깜빡임 fix**: 사이클 사이 finally의 `closeOpenMenu` trigger click이 메뉴를 토글로 다시 여는 부작용. li click이 메뉴를 자연 close하므로 finally cleanup 제거 + `closeOpenMenu`는 ESC dispatch만 사용. orchestrator 끝에서 한 번만 명시적 호출
+  - 🟡 **재검증 대기**: 중복 슬롯 실시간 경고 표시 + 자동 skip + 드롭다운 깜빡임 종료 확인
+  - 🟡 **V2 후보** (메모리 `project_f_assetbulk_v1` 참조): 상세페이지 URL 입력 → og:image / 상품 갤러리 자동 파싱 → 이미지 슬롯 N개 자동 채우기. background fetch fallback으로 CORS 차단 URL 지원
+
 - **Task 015: 캐시 prune + 웹스토어 심사 준비** 🟡 - 진행 중 (캐시 prune 완료)
   - ✅ **캐시 prune** (2026-05-19): `src/lib/cache-prune.ts` 신규 — 4개 prefix(`volume_cache:` / `performance_cache:` / `shopping_cache:` / `current_bid:`) 스캔해 TTL 4h 만료 항목 일괄 삭제. 메타 키 `__last_prune_at`로 마지막 실행 시각 기록 후 1h 간격 throttle. background `onInstalled`에서 1회 + `GET_BID_ESTIMATE` hot path에서 fire-and-forget `maybePrune()` 호출. 형식 모를 엔트리(타임스탬프 없음)는 안전 보존. `chrome.alarms` 권한 추가 없이 service worker 자연 깨어남 사이클로 처리
   - `manifest.config.ts` icons 16/48/128 크기별 분리 (현재는 동일 icon-128.png 사용)
@@ -155,4 +192,4 @@
 ---
 
 **📅 최종 업데이트**: 2026-05-19
-**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010·011 완료 ✅ (Task 011-1 통합 검증 대기) + Phase 4 Task 012 Spike B 완료 ✅ + Task 015 캐시 prune 완료 ✅. F001 파워링크 라인 완성 — 1~10위 시장가 + 현재 순위 + 성과 추정 + **팝오버 행 클릭으로 입찰가 자동 변경(다이얼로그 → 페이지 DOM 자동화 → 5초 Undo 토스트)** 까지. F012 팝업 새로고침이 실제 동작. 캐시 prune 자동화로 5MB quota 보호. **Task 013/014 F002·F003 보류** (2026-05-19) — 광고관리자 자체 UI가 이미 충분히 잘 제공하는 영역이고 우리의 차별화가 약함. AE 카톡 보고 워크플로 분석 결과 다음 방향은 "ROI 임계값 자동 분류 + 일괄 액션" 모델로 재정의 필요. v0.1은 **F001 + F011 + F012만으로 ship** (Plan A 회귀), Task 011-1 통합 검증 + Task 015 잔여(아이콘·스토어 자료·릴리스) 마무리 후 출시.
+**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010·011 완료 ✅ (Task 011-1 통합 검증 대기) + Phase 4 Task 012 Spike B 완료 ✅ + Task 015 캐시 prune 완료 ✅ + Task 016 device 토글 완료 ✅ + Task 017 F-AssetBulk v1 진행 중 🟡 + Task 018 F-PoP 데이터 비교 popover 진행 중 🟡 (SA·전체 캠페인·대시보드·GFA 정상 동작 확인, 일부 매체별 잔존 한계 보강 대기). F001 파워링크 라인 완성 — 1~10위 시장가 + 현재 순위 + 성과 추정 + **팝오버 행 클릭으로 입찰가 자동 변경(다이얼로그 → 페이지 DOM 자동화 → 5초 Undo 토스트)** + **PC/모바일 디바이스 토글(lazy fetch)** 까지. F012 팝업 새로고침이 실제 동작. 캐시 prune 자동화로 5MB quota 보호. F-AssetBulk로 확장소재 일괄 등록(이미지·추가제목·추가설명 + 노출 위치 슬롯별 지정 + 중복 사전 안내) 추가. F-PoP로 6개 매체 페이지 데이터 비교 popover(8지표·shape 기반 자동 캡처·날짜 매칭 필터·깊이 walk 집계) 추가. **Task 013/014 F002·F003 보류** (2026-05-19). v0.1은 **F001 + F011 + F012 + F-AssetBulk + F-PoP**로 ship, Task 011-1 통합 검증 + Task 015 잔여(아이콘·스토어 자료·릴리스) 마무리 후 출시.

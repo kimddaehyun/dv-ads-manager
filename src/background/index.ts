@@ -14,10 +14,12 @@ import type {
   GetBidEstimateResponse,
   RefreshActiveTabResponse,
 } from "@/types/messages";
-import type {
-  KeywordPerformanceCache,
-  KeywordVolumeCache,
+import {
+  MAX_POSITION_BY_DEVICE,
+  type KeywordPerformanceCache,
+  type KeywordVolumeCache,
 } from "@/types/storage";
+import type { AdDevice } from "@/types/device";
 import {
   loadCredentials,
   fetchPositionBids,
@@ -49,7 +51,8 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
   if (msg?.type === "GET_BID_ESTIMATE") {
     // hot path 진입 시 fire-and-forget으로 throttled prune. 1h 안 됐으면 즉시 return.
     void maybePrune();
-    handleGetBidEstimate(msg.keywords)
+    const device = msg.device;
+    handleGetBidEstimate(msg.keywords, device)
       .then(sendResponse)
       .catch((e) => {
         const raw = e instanceof Error ? e.message : String(e);
@@ -57,6 +60,7 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
         sendResponse({
           ok: false,
           has_credential: true,
+          device,
           error: friendlyApiError(raw, "bid"),
         });
       });
@@ -107,6 +111,7 @@ async function handleRefreshActiveTab(): Promise<RefreshActiveTabResponse> {
 
 async function handleGetBidEstimate(
   keywords: GetBidEstimateRequest["keywords"],
+  device: AdDevice,
 ): Promise<GetBidEstimateResponse> {
   // 키워드 dedupe (currentBid가 다르면 다른 항목으로 취급 — 같은 키워드에 두 bid가 올 일은 거의 없지만)
   const seen = new Set<string>();
@@ -120,25 +125,26 @@ async function handleGetBidEstimate(
       return true;
     });
   if (cleaned.length === 0) {
-    return { ok: true, has_credential: true, data: [] };
+    return { ok: true, has_credential: true, device, data: [] };
   }
 
   const cred = await loadCredentials();
   if (!cred) {
-    return { ok: true, has_credential: false };
+    return { ok: true, has_credential: false, device };
   }
 
   const bidKeywords = cleaned.map((c) => c.keyword);
 
   try {
     // 1단계: bid 추정 (1~10위 시장가)
-    const bidResult = await fetchBidsWithCache(bidKeywords, cred);
+    const bidResult = await fetchBidsWithCache(bidKeywords, cred, device);
 
-    // 2단계: bid 결과를 펼쳐 perf 쿼리 생성. 키워드 × 각 순위 bid = 최대 10개/키워드
+    // 2단계: bid 결과를 펼쳐 perf 쿼리 생성. device별 순위 상한 적용 (PC 10 / MOBILE 5).
+    const maxPos = MAX_POSITION_BY_DEVICE[device];
     const perfQueries: Array<{ keyword: string; bid: number }> = [];
     for (const b of bidResult) {
       const seenBids = new Set<number>();
-      for (let r = 1; r <= 10; r++) {
+      for (let r = 1; r <= maxPos; r++) {
         const bid = b.rank_to_bid[r as 1];
         // 같은 키워드 내 중복 bid는 1회만 (예: 9위·10위가 동일 70원이면 한 번만 조회)
         if (bid != null && !seenBids.has(bid)) {
@@ -151,7 +157,7 @@ async function handleGetBidEstimate(
     // 3단계: perf 일괄 조회. 실패해도 bid 결과는 반환.
     const perfResult =
       perfQueries.length > 0
-        ? await fetchPerformanceWithCache(perfQueries, cred).catch((e) => {
+        ? await fetchPerformanceWithCache(perfQueries, cred, device).catch((e) => {
             const raw = e instanceof Error ? e.message : String(e);
             console.warn("[bg] fetchPerformance failed (bid 결과만 반환)", raw);
             return [] as KeywordPerformanceCache[];
@@ -161,6 +167,7 @@ async function handleGetBidEstimate(
     return {
       ok: true,
       has_credential: true,
+      device,
       data: bidResult,
       performance: perfResult,
     };
@@ -170,6 +177,7 @@ async function handleGetBidEstimate(
     return {
       ok: false,
       has_credential: true,
+      device,
       error: friendlyApiError(raw, "bid"),
     };
   }
@@ -178,15 +186,17 @@ async function handleGetBidEstimate(
 async function fetchBidsWithCache(
   keywords: string[],
   cred: Parameters<typeof fetchPositionBids>[1],
+  device: AdDevice,
 ): Promise<KeywordVolumeCache[]> {
-  const { hit, miss } = await getCachedBids(keywords);
+  const { hit, miss } = await getCachedBids(keywords, device);
 
   let fresh: KeywordVolumeCache[] = [];
   if (miss.length > 0) {
-    const items = await fetchPositionBids(miss, cred);
+    const items = await fetchPositionBids(miss, cred, device);
     const now = new Date().toISOString();
     fresh = items.map((item) => ({
       keyword: item.keyword,
+      device,
       rank_to_bid: item.rank_to_bid,
       fetched_at: now,
     }));
@@ -200,18 +210,19 @@ async function fetchBidsWithCache(
 async function fetchPerformanceWithCache(
   queries: Array<{ keyword: string; bid: number }>,
   cred: Parameters<typeof fetchPerformance>[1],
+  device: AdDevice,
 ): Promise<KeywordPerformanceCache[]> {
-  const { hit, miss } = await getCachedPerformance(queries);
+  const { hit, miss } = await getCachedPerformance(queries, device);
 
   let fresh: KeywordPerformanceCache[] = [];
   if (miss.length > 0) {
-    fresh = await fetchPerformance(miss, cred);
+    fresh = await fetchPerformance(miss, cred, device);
     if (fresh.length > 0) await putPerformance(fresh);
   }
   return queries
     .map(
       (q) =>
-        hit.get(perfCacheKey(q.keyword, q.bid)) ??
+        hit.get(perfCacheKey(q.keyword, q.bid, device)) ??
         fresh.find((f) => f.keyword === q.keyword && f.bid === q.bid),
     )
     .filter((x): x is KeywordPerformanceCache => !!x);

@@ -173,6 +173,8 @@ function walkForStatsKeys(node: unknown, depth: number): boolean {
 export interface NormalizedMetrics {
   impressions: number | null;
   clicks: number | null;
+  /** CTR (%) — 클릭수 / 노출수 * 100. impressions <= 0이면 null. */
+  ctr: number | null;
   cpc: number | null;
   cost: number | null;
   revenue: number | null;
@@ -191,32 +193,69 @@ type MetricKey = keyof NormalizedMetrics;
 // "salesAmt"는 네이버 컨벤션상 "광고비"(=광고주가 지불한 금액)이지 매출이 아니다.
 // "구매완료 전환매출"은 별도 키 `purchaseConvAmtMicros`.
 const METRIC_ALIASES: Record<MetricKey, string[]> = {
-  // roas는 매출/총비용 계산값. 응답 키 매핑 안 함.
+  // roas/ctr는 계산값. 응답 키 매핑은 fallback. 항상 base totals에서 재계산하므로 별칭 매칭은 그저 1차 추출.
   roas: [],
-  impressions: ["impCnt", "impCount", "impressions"],
-  clicks: ["clkCnt", "clickCnt", "clicks"],
-  cpc: ["cpc", "avgCpc", "averageCpc"],
-  // 총비용 = 광고주가 지불한 광고비 (salesAmtMicros)
-  cost: ["salesAmtMicros", "salesAmt", "crpAmt", "cost", "totalCost", "spend"],
-  // 매출 = 구매완료 전환매출 (purchaseConvAmtMicros)
+  ctr: ["ctr", "ctrPct", "clickRatio", "clickRate"],
+  // SA 검색광고 캠페인 stats는 `impCnt`/`clkCnt`. 검색광고 대시보드·GFA는
+  // 풀 네임(impressionCount/clickCount) 등 변형. case-insensitive 정확 매칭.
+  impressions: ["impCnt", "impCount", "impressionCount", "impressions", "impression", "imp"],
+  clicks: ["clkCnt", "clickCnt", "clickCount", "clicks", "click", "clk"],
+  // 검색광고 대시보드는 averageCpcMicros 우선. SA campaign stats는 `cpc` 직접 키.
+  cpc: ["cpc", "cpcMicros", "averageCpcMicros", "avgCpcMicros", "averageCpc", "avgCpc"],
+  // 총비용 — 매체별 키 이름·단위가 다양:
+  //   SA campaign stats (POST /apis/sa/api/stats): salesAmtMicros (Micros, /1M=원)
+  //   검색광고 dashboard (POST /apis/dashboard/v1/.../reports|campaigns/{overview|search}): grossCostMicros
+  //   GFA campaign stats (GET /apis/gfa/v1/.../stats/campaignStats): "sales" (원 단위) ← spend는 1/100,000원
+  //     단위라 우리는 sales 우선. spend는 fallback.
+  cost: [
+    "salesAmtMicros",
+    "salesAmt",
+    "grossCostMicros",
+    "grossCost",
+    "crpAmt",
+    "crpAmtMicros",
+    "cost",
+    "costMicros",
+    "totalCost",
+    "totalCostMicros",
+    "sales",
+    "spend",
+    "spendMicros",
+  ],
+  // 매출 = 구매완료 전환매출.
+  //   SA: purchaseConvAmtMicros
+  //   검색광고 dashboard: purchasedConversionsValueMicros(구매전환매출) > conversionsValueMicros(전체 전환매출)
+  //   GFA campaign stats: conversion.convSalesKRW (원 단위)
   revenue: [
     "purchaseConvAmtMicros",
+    "purchasedConversionsValueMicros",
+    "conversionsValueMicros",
+    "convSalesKRW",
     "convAmtMicros",
     "purchaseConvAmt",
+    "convAmt",
     "purAmt",
     "purchaseAmount",
     "revenue",
+    "revenueMicros",
     "conversionValue",
+    "conversionValueMicros",
   ],
-  // 전환수 = 구매완료 전환수 (purchaseCcnt)
+  // 전환수.
+  //   SA: purchaseCcnt
+  //   검색광고 dashboard: conversions(전체) > lastClickConversions(last-click attribution)
+  //   GFA: conversion.convCount
   conversions: [
     "purchaseCcnt",
+    "conversions",
+    "lastClickConversions",
+    "convCount",
     "purCnt",
     "ccnt",
     "convCnt",
     "cvCnt",
-    "conversions",
     "conversionCount",
+    "conversion",
   ],
 };
 
@@ -234,6 +273,7 @@ export function extractMetricsFromResponse(
   const result: NormalizedMetrics = {
     impressions: null,
     clicks: null,
+    ctr: null,
     cpc: null,
     cost: null,
     revenue: null,
@@ -247,10 +287,11 @@ export function extractMetricsFromResponse(
   if (!aggregates) return result;
 
   const overrides = METRIC_OVERRIDES[media] ?? {};
-  // roas는 계산 필드이므로 alias 매핑에서 제외
+  // roas는 항상 계산 필드. ctr은 응답에 있으면 직접 사용하고 없으면 계산.
   const aliasedKeys: MetricKey[] = [
     "impressions",
     "clicks",
+    "ctr",
     "cpc",
     "cost",
     "revenue",
@@ -262,12 +303,16 @@ export function extractMetricsFromResponse(
     if (found != null) result[key] = found;
   }
 
-  // CPC 비어있고 cost·clicks 있으면 계산
-  if (result.cpc == null && result.cost != null && result.clicks != null && result.clicks > 0) {
+  // 비율 지표(CTR/CPC/ROAS)는 base totals에서 항상 재계산.
+  // 이유: 다중 row 응답을 합산할 때 비율도 합산되면 잘못된 값이 됨
+  // (예: 7일치 CTR row 합 = 8.27%, 실제는 1.18%). base는 합산해도 정확.
+  // 응답에 비율이 직접 있어도 합산일 가능성이 있어 일관되게 재계산.
+  if (result.impressions != null && result.impressions > 0 && result.clicks != null) {
+    result.ctr = (result.clicks / result.impressions) * 100;
+  }
+  if (result.cost != null && result.clicks != null && result.clicks > 0) {
     result.cpc = result.cost / result.clicks;
   }
-
-  // ROAS 자동 계산 — 매출 / 총비용 * 100 (%)
   if (result.revenue != null && result.cost != null && result.cost > 0) {
     result.roas = (result.revenue / result.cost) * 100;
   }
@@ -277,25 +322,52 @@ export function extractMetricsFromResponse(
 
 /**
  * 응답 구조에서 "전체 집계" 숫자 묶음을 찾아 평탄화된 dict로 반환.
+ *
  * 우선순위:
- *   1. response.summary / response.total / response.totals — 총계 객체
- *   2. response.data가 array이고 마지막 원소가 "전체" 라벨 — 그 객체
- *   3. response.data array 합산
- *   4. response 자체 (단일 응답)
+ *   1. 알려진 총계 wrapper 객체 (summary/total/overview/metrics/reportData/data.summary 등)
+ *   2. wrapper가 객체이면 안쪽 직접 numeric (data.{metrics 키들})
+ *   3. data/list/items/rows array — "전체" 라벨 row 또는 sum
+ *   4. response 자체가 단일 stats 객체
+ *   5. 깊이 walk — 어떤 nested 위치에 있어도 stats 키가 2개 이상인 노드 찾음
  */
 function collectAggregates(response: unknown): Record<string, number> | null {
   if (response == null || typeof response !== "object") return null;
   const root = response as Record<string, unknown>;
 
-  for (const sumKey of ["summary", "total", "totals", "totalRow", "aggregates"]) {
+  // 1. 알려진 총계 객체 키 — SA: summary, 검색광고 대시보드(/apis/dashboard): overview·metrics·reportData 등 추정
+  const SUMMARY_KEYS = [
+    "summary", "total", "totals", "totalRow", "aggregates",
+    "overview", "metrics", "reportData", "report", "stats",
+  ];
+  for (const sumKey of SUMMARY_KEYS) {
     const v = root[sumKey];
     if (v && typeof v === "object" && !Array.isArray(v)) {
       const num = numericKeys(v as Record<string, unknown>);
-      if (Object.keys(num).length > 0) return num;
+      if (statsKeyCount(num) >= 2) return num;
     }
   }
 
-  // data/list/items/rows를 찾음
+  // 2. data/result/payload wrapper가 객체일 때 — 안쪽 직접 numeric 또는 안쪽의 summary
+  const WRAPPERS = ["data", "result", "response", "payload", "body"];
+  for (const wrapKey of WRAPPERS) {
+    const v = root[wrapKey];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const inner = v as Record<string, unknown>;
+      // 2a. wrapper 자체가 metric 객체
+      const numDirect = numericKeys(inner);
+      if (statsKeyCount(numDirect) >= 2) return numDirect;
+      // 2b. wrapper 안에 summary 키가 또 있음
+      for (const sumKey of SUMMARY_KEYS) {
+        const v2 = inner[sumKey];
+        if (v2 && typeof v2 === "object" && !Array.isArray(v2)) {
+          const num = numericKeys(v2 as Record<string, unknown>);
+          if (statsKeyCount(num) >= 2) return num;
+        }
+      }
+    }
+  }
+
+  // 3. data/list/items/rows를 찾음
   const arr = pickArray(root);
   if (arr && arr.length > 0) {
     // 마지막 원소가 합계라면 라벨 키에 "전체"/"total"/"합계" 등이 들어있음
@@ -308,11 +380,10 @@ function collectAggregates(response: unknown): Record<string, number> | null {
       );
       if (labelLike !== undefined) {
         const num = numericKeys(obj);
-        if (Object.keys(num).length > 0) return num;
+        if (statsKeyCount(num) >= 2) return num;
       }
     }
-    // 그 외에는 array의 첫 row(또는 전체 sum) 사용 — 첫 row가 페이지의 총합인 매체도 있음
-    // 안전하게 array 전체 합산.
+    // 그 외에는 array 전체 합산
     const summed: Record<string, number> = {};
     for (const row of arr) {
       if (row && typeof row === "object") {
@@ -322,13 +393,120 @@ function collectAggregates(response: unknown): Record<string, number> | null {
         }
       }
     }
-    if (Object.keys(summed).length > 0) return summed;
+    if (statsKeyCount(summed) >= 2) return summed;
   }
 
-  // 응답 자체가 단일 stats 객체
+  // 4. 응답 자체가 단일 stats 객체 (top-level에 metric 키들이 펼쳐져 있는 경우)
   const numTop = numericKeys(root);
-  if (Object.keys(numTop).length > 0) return numTop;
+  if (statsKeyCount(numTop) >= 2) return numTop;
+
+  // 5. 깊이 walk fallback — 응답이 임의 구조여도 stats 노드(또는 stats row 배열) 찾음.
+  // 대시보드/GFA처럼 wrapper 키 이름이 다르거나 더 깊이 nested 된 경우 cover.
+  return deepFindStatsNode(root, 0);
+}
+
+/**
+ * 응답 트리를 walk하면서 stats node를 찾는다. 두 가지 패턴 cover:
+ *   A. 객체 자체가 stats 노드 (직접 + 1-level nested 머지)
+ *   B. 객체가 `{id: statsRow|null}` 맵 (GFA campaignStats 패턴) — 각 value를 stats row로 보고 합산
+ * 둘 중 stats hint key가 더 많은 쪽 채택.
+ */
+function deepFindStatsNode(node: unknown, depth: number): Record<string, number> | null {
+  if (depth > 6 || node == null) return null;
+  if (Array.isArray(node)) {
+    const arrSummed = sumStatsRows(node);
+    if (arrSummed) return arrSummed;
+    // 합산 실패 → 배열 안 row 안쪽으로 재귀 (또 다른 nested 구조)
+    for (let i = 0; i < Math.min(node.length, 3); i++) {
+      const inner = deepFindStatsNode(node[i], depth + 1);
+      if (inner) return inner;
+    }
+    return null;
+  }
+  if (typeof node !== "object") return null;
+  const obj = node as Record<string, unknown>;
+
+  // Pattern A — 자체 stats 노드
+  const direct = shallowMergedStats(obj);
+  // Pattern B — 자식 value들을 stats row로 합산 (GFA의 {camp_id: campaignObj} 패턴)
+  //   extractStatsFromRow가 1-level nested 머지하므로 campaign 안쪽 conversion 데이터까지 포함.
+  const fromChildren = sumStatsRows(Object.values(obj));
+
+  const directScore = statsKeyCount(direct);
+  const childrenScore = fromChildren ? statsKeyCount(fromChildren) : 0;
+
+  // 더 풍부한 쪽 채택. 동점이면 직접(단순 케이스 보존).
+  if (childrenScore > directScore && childrenScore >= 2 && fromChildren) {
+    return fromChildren;
+  }
+  if (directScore >= 2) return direct;
+
+  // 둘 다 부족 — 자식 노드 개별 재귀 fallback
+  for (const v of Object.values(obj)) {
+    const inner = deepFindStatsNode(v, depth + 1);
+    if (inner) return inner;
+  }
   return null;
+}
+
+/**
+ * 배열 또는 객체 values 배열을 받아 stats row로 보고 합산.
+ */
+function sumStatsRows(rows: unknown[]): Record<string, number> | null {
+  const summed: Record<string, number> = {};
+  let contributed = 0;
+  for (let i = 0; i < Math.min(rows.length, 200); i++) {
+    const rowStats = extractStatsFromRow(rows[i]);
+    if (rowStats) {
+      for (const [k, v] of Object.entries(rowStats)) summed[k] = (summed[k] ?? 0) + v;
+      contributed++;
+    }
+  }
+  return contributed > 0 && statsKeyCount(summed) >= 2 ? summed : null;
+}
+
+/**
+ * 단일 row에서 stats 숫자 dict 추출.
+ * - GFA: 평탄 (impCount/cpc/sales) + nested conversion.{convCount, convSalesKRW} 머지 필요
+ * - 검색광고 dashboard: row = {segments: {day}, metrics: {impressions, ...}} — metrics가 nested
+ * 둘 다 cover하려면 직접 + 1단계 nested 모두 머지. 같은 키 충돌 시 직접 우선.
+ */
+function extractStatsFromRow(row: unknown): Record<string, number> | null {
+  if (!row || typeof row !== "object" || Array.isArray(row)) return null;
+  const merged = shallowMergedStats(row as Record<string, unknown>);
+  return statsKeyCount(merged) >= 2 ? merged : null;
+}
+
+/**
+ * 객체의 직접 numeric + 1단계 nested 객체의 numeric을 머지.
+ * 같은 키가 양쪽에 있으면 직접(상위) 값 유지.
+ */
+function shallowMergedStats(obj: Record<string, unknown>): Record<string, number> {
+  const merged: Record<string, number> = {};
+  Object.assign(merged, numericKeys(obj));
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const nested = numericKeys(v as Record<string, unknown>);
+      for (const [nk, nv] of Object.entries(nested)) {
+        if (merged[nk] === undefined) merged[nk] = nv;
+      }
+    }
+  }
+  return merged;
+}
+
+/**
+ * obj의 키들 중 stats hint key(impCnt, clkCnt, cost 등 — STATS_HINT_KEYS와 일치)에
+ * 해당하는 개수를 센다. 2개 이상이면 그 노드는 stats 응답으로 간주.
+ */
+function statsKeyCount(obj: Record<string, number>): number {
+  let n = 0;
+  for (const k of Object.keys(obj)) {
+    const lower = k.toLowerCase();
+    if (STATS_HINT_KEYS.some((h) => lower === h || lower.includes(h))) n++;
+  }
+  return n;
 }
 
 function pickArray(root: Record<string, unknown>): unknown[] | null {

@@ -84,7 +84,7 @@
   color: #E6783B;
   border: 1px solid transparent;
   border-radius: 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
@@ -115,8 +115,8 @@
   background: #F3F4F6;
   color: #6B7280;
   /* "10위+" 4글자가 min-width 42px 안에 들어가도록 좌우 padding 좁힘.
-     center 정렬이라 다른 배지와 시각적 위치 차이 없음. */
-  padding: 0 3px;
+     center 정렬이라 다른 배지와 시각적 위치 차이 없음. 폰트 12px 대응으로 0 1px까지 좁힘. */
+  padding: 0 1px;
 }
 .dvads-rank-badge.muted:hover {
   background: #E5E7EB;
@@ -329,6 +329,55 @@
   width: 620px;
   max-width: calc(100vw - 32px);
   box-sizing: border-box;
+  /* opacity 등장 페이드 — popover 자체 transform은 위치 계산용이라 손대지 않음.
+     overflow:hidden은 height morph 동안 내부 표가 잠깐 잘리는 경우 대비.
+     position:relative는 device 토글 시 옛 wrap을 absolute로 띄울 때 base. */
+  animation: dvads-popover-in 140ms cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  position: relative;
+}
+.dvads-popover.dvads-popover-exit {
+  animation: dvads-popover-out 120ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
+@keyframes dvads-popover-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes dvads-popover-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+/* 첫 mount 시 wrap 안쪽 컨텐츠가 살짝 떠오르며 등장. wrap에 적용하므로 popover의
+   reposition rAF가 매 프레임 덮어쓰는 외부 transform과 충돌하지 않음. */
+.dvads-popover-content-enter {
+  animation: dvads-popover-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes dvads-popover-content-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* device 토글 시 crossfade — 옛 wrap은 absolute로 띄워 자리를 비워주고 fade out,
+   새 wrap은 normal flow로 들어가 popover 높이를 결정하고 살짝 delay 후 fade in.
+   inset 14/20은 .dvads-popover padding 값과 동기화 필요. */
+.dvads-popover-content-swap-out {
+  position: absolute;
+  top: 14px;
+  left: 20px;
+  right: 20px;
+  pointer-events: none;
+  animation: dvads-popover-content-swap-out 160ms ease-out forwards;
+}
+.dvads-popover-content-swap-in {
+  animation: dvads-popover-content-swap-in 180ms ease-out 60ms backwards;
+}
+@keyframes dvads-popover-content-swap-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes dvads-popover-content-swap-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 .dvads-popover-hdr {
   display: flex;
@@ -595,21 +644,21 @@
 .dvads-period-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  width: 32px;
   height: 32px;
-  padding: 0 14px;
+  padding: 0;
   background: #ffffff;
-  color: #171717;
+  color: #525252;
   border: 1px solid #ECEEF0;
   border-radius: 8px;
-  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1;
   cursor: pointer;
   user-select: none;
   margin-right: 8px;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.dvads-period-btn svg {
+  display: block;
 }
 .dvads-period-btn:hover {
   background: #fafafa;
@@ -617,9 +666,10 @@
   color: #E6783B;
 }
 
-/* popover는 F001과 같은 .dvads-popover 베이스 사용. PoP 전용 너비·내부 폭 조정. */
+/* popover는 F001과 같은 .dvads-popover 베이스 사용. PoP 전용 너비·내부 폭 조정.
+   큰 숫자(수억 원대 광고비 등)도 한 줄에 들어가도록 520px. */
 .dvads-period-popover {
-  width: 460px;
+  width: 520px;
   max-width: calc(100vw - 32px);
 }
 
@@ -629,11 +679,22 @@
   margin-bottom: 10px;
   font-feature-settings: "tnum";
 }
+.dvads-period-days {
+  color: #999999;
+}
 
-/* PoP 테이블 — 지표 | 직전 | 현재 | 변화 (4컬럼) */
+/* PoP 테이블 — 지표 | 이전 기간 | 선택 기간 | 증감 (4컬럼) */
 .dvads-period-table th,
 .dvads-period-table td {
   padding: 7px 12px;
+}
+/* 입찰가 표의 2번째 컬럼 강조(font-weight:600) override —
+   비교 표에서는 2번째 컬럼이 "이전 기간"이라 특별 강조할 이유 없음.
+   선택 기간(3번째) 컬럼과 동일한 default weight으로 통일.
+   specificity를 .dvads-bid-table td:nth-child(2)(0,2,1)보다 높이기 위해
+   .dvads-bid-table.dvads-period-table td:nth-child(2)(0,3,1) 형태로. */
+.dvads-bid-table.dvads-period-table td:nth-child(2) {
+  font-weight: 400;
 }
 .dvads-period-table th:first-child,
 .dvads-period-table td:first-child {
@@ -651,7 +712,6 @@
 .dvads-period-table th:nth-child(4),
 .dvads-period-table td:nth-child(4) {
   border-left: 1px solid #ECEEF0;
-  font-weight: 600;
   font-feature-settings: "tnum";
 }
 
@@ -680,6 +740,28 @@ td.dvads-period-delta-down {
 }
 .dvads-period-error {
   color: #DC2626;
+}
+
+/* 로딩 스켈레톤 — 데이터 셀에 잠깐 떠 있는 shimmer 바.
+   `.dvads-bid-table td`의 text-align:right (값 컬럼)에 따라 우측 정렬되어
+   숫자 자리 그대로 점유하므로 데이터가 들어와도 레이아웃 점프 없음. */
+.dvads-period-skel {
+  display: inline-block;
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    #ECEEF0 0%,
+    #F5F6F7 50%,
+    #ECEEF0 100%
+  );
+  background-size: 200% 100%;
+  animation: dvads-skel-shimmer 1.2s ease-in-out infinite;
+  vertical-align: middle;
+}
+@keyframes dvads-skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 /* ─── 토스트 (우하단 stack, 자동 닫힘 + Undo) ─── */
@@ -800,4 +882,352 @@ td.dvads-period-delta-down {
 @keyframes dvads-toast-bar {
   from { transform: scaleX(1); }
   to   { transform: scaleX(0); }
+}
+
+/* ─── F-AssetBulk — 드롭다운 주입 항목 + 일괄 등록 팝업 ─── */
+
+/* 페이지 메뉴의 .ad-cms-dropdown-menu-item 클래스를 그대로 쓰되, 우리 항목임을
+   메뉴 마지막에서 살짝 분리되어 보이도록 상단 보더 + 주황 텍스트. */
+.dvads-asset-bulk-menu-item {
+  border-top: 1px solid #ECEEF0;
+  color: #E6783B !important;
+  font-weight: 500;
+}
+.dvads-asset-bulk-menu-item:hover {
+  background: rgba(230, 120, 59, 0.10) !important;
+}
+
+/* 팝업 카드 — confirm-dialog 베이스(.dvads-confirm-card) 위에 폭·내부 스크롤 추가. */
+.dvads-asset-bulk-card {
+  width: min(560px, calc(100vw - 32px));
+  padding: 20px 22px 18px;
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+}
+.dvads-asset-bulk-intro {
+  font-size: 12px;
+  color: #666666;
+  margin-bottom: 10px;
+  word-break: keep-all;
+  line-height: 1.55;
+}
+.dvads-asset-bulk-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  margin: 0 -4px 14px;
+  padding: 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.dvads-asset-bulk-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dvads-asset-bulk-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dvads-asset-bulk-section-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #171717;
+}
+.dvads-asset-bulk-section-hint {
+  font-size: 11px;
+  color: #808080;
+  line-height: 1.4;
+  word-break: keep-all;
+}
+
+.dvads-asset-bulk-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* 이미지 슬롯 — [모드 토글] [입력 영역] [×] 3컬럼 */
+.dvads-asset-bulk-image-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-asset-bulk-mode {
+  display: inline-flex;
+  border: 1px solid #ECEEF0;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.dvads-asset-bulk-mode-btn {
+  background: #ffffff;
+  border: 0;
+  font-family: inherit;
+  font-size: 12px;
+  color: #666666;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-asset-bulk-mode-btn + .dvads-asset-bulk-mode-btn {
+  border-left: 1px solid #ECEEF0;
+}
+.dvads-asset-bulk-mode-btn:hover {
+  background: #fafafa;
+  color: #171717;
+}
+.dvads-asset-bulk-mode-btn-active {
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+}
+
+.dvads-asset-bulk-image-input {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.dvads-asset-bulk-file {
+  font-family: inherit;
+  font-size: 12px;
+  color: #171717;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.dvads-asset-bulk-file-name {
+  font-size: 12px;
+  color: #666666;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dvads-asset-bulk-url {
+  flex: 1 1 auto;
+  height: 32px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 120ms ease;
+  min-width: 0;
+}
+.dvads-asset-bulk-url:focus {
+  border-color: #E6783B;
+}
+.dvads-asset-bulk-image-placeholder {
+  font-size: 12px;
+  color: #a3a3a3;
+}
+
+/* 텍스트 슬롯 — [input + counter] [×] */
+.dvads-asset-bulk-text-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+.dvads-asset-bulk-text-input {
+  flex: 1 1 auto;
+  height: 32px;
+  padding: 0 52px 0 10px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 120ms ease;
+  min-width: 0;
+}
+.dvads-asset-bulk-text-input:focus {
+  border-color: #E6783B;
+}
+.dvads-asset-bulk-text-counter {
+  position: absolute;
+  right: 44px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: #a3a3a3;
+  pointer-events: none;
+  font-feature-settings: "tnum";
+}
+/* 추가제목 row는 우측에 노출 위치 select가 추가되어 counter를 input 안쪽으로 더 끌어옴. */
+.dvads-asset-bulk-headline-row .dvads-asset-bulk-text-counter {
+  right: 158px;
+}
+
+/* 중복 슬롯 경고 — 입력값이 페이지에 이미 등록된 텍스트와 일치하면 빨간 보더 + 메시지. */
+.dvads-asset-bulk-dup-warn {
+  display: none;
+  position: absolute;
+  left: 10px;
+  bottom: -16px;
+  font-size: 11px;
+  color: #dc2626;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.dvads-asset-bulk-text-row.dvads-asset-bulk-dup {
+  margin-bottom: 14px;
+}
+.dvads-asset-bulk-text-row.dvads-asset-bulk-dup .dvads-asset-bulk-text-input {
+  border-color: #dc2626;
+}
+.dvads-asset-bulk-text-row.dvads-asset-bulk-dup .dvads-asset-bulk-dup-warn {
+  display: block;
+}
+
+/* 노출 위치 select — 페이지 모달의 dropdown과 1:1 매핑. 보조 UI라 주황 강조 X. */
+.dvads-asset-bulk-position {
+  flex-shrink: 0;
+  width: 110px;
+  height: 32px;
+  padding: 0 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #171717;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 6px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+.dvads-asset-bulk-position:focus {
+  border-color: #E6783B;
+}
+
+/* 슬롯 삭제 × */
+.dvads-asset-bulk-remove {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #a3a3a3;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+.dvads-asset-bulk-remove:hover:enabled {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-asset-bulk-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* + 슬롯 추가 버튼 */
+.dvads-asset-bulk-add {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed #ECEEF0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #666666;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-asset-bulk-add:hover:enabled {
+  background: rgba(230, 120, 59, 0.06);
+  color: #E6783B;
+  border-color: #E6783B;
+}
+.dvads-asset-bulk-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ─── F-DeviceSplit — popover 헤더의 [모바일 | PC] segmented control ─── */
+
+/* 토글 자체는 중성 회색 — DV 주황 면적 ~3% 규칙. popover 안에서 보조 UI라
+   화면에 주황 칠을 더하지 않는다. 선택된 디바이스만 흰 카드로 떠올라 강조. */
+.dvads-device-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 2px;
+  background: #F3F4F6;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  flex-shrink: 0;
+  user-select: none;
+}
+.dvads-device-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.dvads-device-seg:hover {
+  color: #171717;
+}
+.dvads-device-seg.is-active {
+  background: #ffffff;
+  color: #171717;
+  font-weight: 600;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+.dvads-device-seg.is-loading::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+
+/* PC lazy fetch 중 popover body 영역의 빈 자리 안내. ladder 자리 그대로 점유해
+   레이아웃 점프 방지(높이는 ladder 한 화면 분량 ≈ 320px). */
+.dvads-popover-loading {
+  min-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0;
+  font-size: 13px;
+  color: #6B7280;
+}
+.dvads-popover-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
 }

@@ -15,6 +15,7 @@ import type {
   KeywordPerformanceCache,
   ShoppingRankCache,
 } from "./storage";
+import type { AdDevice } from "./device";
 
 /** 옵션 페이지 열기 */
 export interface OpenOptionsRequest {
@@ -34,13 +35,16 @@ export interface OpenOptionsResponse {
  *   - 두 API 병렬 호출 + 각각 별도 캐시
  *
  * 자격증명이 없으면 `has_credential: false`로 응답 (콘텐츠 스크립트는 안내 배지로 폴백).
- * 검색광고 API 응답은 시장 단위 추정치 — 어떤 자격증명으로 호출해도 같은 숫자가 나오므로
- * 광고주 매칭 개념은 적용하지 않는다.
+ * 검색광고 API 응답은 시장 단위 추정치 — 어떤 자격증명으로 호출해도 같은 숫자가 나오지만
+ * `device` 파라미터에 따라 (PC | MOBILE) 시장이 달라진다. 모바일이 default 호출이고
+ * popover에서 사용자가 PC 토글 시 추가 호출.
  */
 export interface GetBidEstimateRequest {
   type: "GET_BID_ESTIMATE";
   /** 키워드별 요청 — currentBid 있으면 성과 추정도 함께 받음 */
   keywords: Array<{ keyword: string; currentBid: number | null }>;
+  /** 광고 디바이스 (PC | MOBILE). 한 요청은 단일 device. */
+  device: AdDevice;
 }
 
 export interface GetBidEstimateResponse {
@@ -48,6 +52,8 @@ export interface GetBidEstimateResponse {
   data?: KeywordVolumeCache[];
   /** 성과 추정 결과 — currentBid가 있던 키워드만 포함 (없거나 호출 실패 시 omit) */
   performance?: KeywordPerformanceCache[];
+  /** 요청 시 보낸 device를 echo — 콘텐츠 스크립트가 race 시 응답 식별용 */
+  device?: AdDevice;
   error?: string;
   /** 자격증명이 등록돼 있지 않으면 false */
   has_credential?: boolean;

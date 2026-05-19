@@ -33,9 +33,17 @@ export const PERFORMANCE_CACHE_PREFIX = "performance_cache:";
 export const normalizeKeyword = (raw: string): string =>
   raw.normalize("NFC").replace(/\s+/g, "").toLowerCase();
 
-/** F001 캐시 키 빌더 — `volume_cache:<keyword>` */
-export const keyForVolumeCache = (keyword: string): string =>
-  `${VOLUME_CACHE_PREFIX}${normalizeKeyword(keyword)}`;
+/**
+ * F001 캐시 키 빌더 — `volume_cache:<device>:<keyword>`.
+ *
+ * device(`PC`/`MOBILE`)를 prefix 직후에 둬서 cache-prune의 단순 prefix 매칭과 호환.
+ * normalizeKeyword가 공백/대소문자 차이를 흡수하므로 device prefix는 안전하다.
+ */
+export const keyForVolumeCache = (
+  keyword: string,
+  device: import("@/types/device").AdDevice,
+): string =>
+  `${VOLUME_CACHE_PREFIX}${device}:${normalizeKeyword(keyword)}`;
 
 /** F002/F003 캐시 키 빌더 — `shopping_cache:<product_id>:<keyword>` */
 export const keyForShoppingCache = (
@@ -48,13 +56,18 @@ export const keyForCurrentBid = (keyword: string): string =>
   `${CURRENT_BID_PREFIX}${normalizeKeyword(keyword)}`;
 
 /**
- * F001 성과 추정 캐시 키 빌더 — `performance_cache:<keyword>:<bid>`.
+ * F001 성과 추정 캐시 키 빌더 — `performance_cache:<device>:<keyword>:<bid>`.
  *
- * bid를 키에 포함하므로 같은 키워드라도 입찰가가 다르면 별도 캐시 엔트리.
- * 사용자가 광고관리자에서 입찰가를 변경하면 자동 cache miss → 새 호출.
+ * device·bid를 키에 포함하므로 같은 키워드라도 디바이스 또는 입찰가가 다르면
+ * 별도 캐시 엔트리. 사용자가 광고관리자에서 입찰가를 변경하거나 popover에서
+ * 디바이스를 전환하면 자동 cache miss → 새 호출.
  */
-export const keyForPerformanceCache = (keyword: string, bid: number): string =>
-  `${PERFORMANCE_CACHE_PREFIX}${normalizeKeyword(keyword)}:${bid}`;
+export const keyForPerformanceCache = (
+  keyword: string,
+  bid: number,
+  device: import("@/types/device").AdDevice,
+): string =>
+  `${PERFORMANCE_CACHE_PREFIX}${device}:${normalizeKeyword(keyword)}:${bid}`;
 
 /**
  * 캐시 prune 구현은 `src/lib/cache-prune.ts` 참조.

@@ -23,11 +23,12 @@ import type {
   RefreshActiveTabResponse,
 } from "@/types/messages";
 import {
-  MAX_POSITION,
+  MAX_POSITION_BY_DEVICE,
   type KeywordPerformanceCache,
   type KeywordVolumeCache,
   type RankPosition,
 } from "@/types/storage";
+import { DEFAULT_DEVICE, type AdDevice } from "@/types/device";
 import { estimateRank, type EstimatedRank } from "@/lib/rank";
 import { applyBidToRow, describeFailure } from "@/content/dom-bid";
 import { openConfirmDialog } from "@/content/confirm-dialog";
@@ -95,8 +96,9 @@ function findBidCellAndValue(cell: HTMLElement): BidCellMatch | null {
 }
 
 const mounts = new Map<HTMLElement, BadgeMount>();
+// 키 = `<device>:<keyword>` — 같은 키워드라도 디바이스가 다르면 별도 엔트리
 const dataCache = new Map<string, KeywordVolumeCache>();
-// 키 = `<keyword>:<bid>` — 같은 키워드라도 bid 다르면 별도 엔트리
+// 키 = `<device>:<keyword>:<bid>` — 디바이스·bid 모두 키에 포함
 const perfCache = new Map<string, KeywordPerformanceCache>();
 let credentialState: "unknown" | "ok" | "missing" = "unknown";
 let lastError: string | null = null;
@@ -120,7 +122,10 @@ function suppressPopoverClose(holdMs: number): void {
 }
 let openPopoverCleanup: (() => void) | null = null;
 
-const perfKey = (keyword: string, bid: number): string => `${keyword}:${bid}`;
+const dataKey = (keyword: string, device: AdDevice): string =>
+  `${device}:${keyword}`;
+const perfKey = (keyword: string, bid: number, device: AdDevice): string =>
+  `${device}:${keyword}:${bid}`;
 
 function isKeywordPage(): boolean {
   return KEYWORD_PAGE_PATTERN.test(location.pathname);
@@ -206,7 +211,8 @@ function renderBadge(m: BadgeMount) {
     return;
   }
 
-  const data = dataCache.get(m.keyword);
+  // 배지 자체는 DEFAULT_DEVICE 기준 — 사용자가 popover를 열면 그 안에서 디바이스 토글.
+  const data = dataCache.get(dataKey(m.keyword, DEFAULT_DEVICE));
   if (!data) {
     if (lastError) {
       // 에러 상태는 ⚠ 아이콘만 표시 — 풀 문구는 hover 시 custom tooltip으로.
@@ -245,27 +251,61 @@ function renderBadge(m: BadgeMount) {
   m.badge.textContent = label;
   m.badge.onclick = (e) => {
     e.stopPropagation();
-    togglePopover(m.badge, data, m, rank);
+    togglePopover(m.badge, m);
   };
 }
 
 // ─── popover ───
 
-function togglePopover(
-  anchor: HTMLElement,
-  data: KeywordVolumeCache,
-  mount: BadgeMount,
-  currentRank: EstimatedRank | null,
-) {
+/**
+ * popover 인스턴스의 디바이스 상태. 매 popover 오픈 시 DEFAULT_DEVICE(모바일)로 초기화.
+ * `selectDevice()` 가 이 값을 변경하고 popover body를 re-render.
+ */
+let openPopoverDevice: AdDevice = DEFAULT_DEVICE;
+/** PC lazy fetch 진행 중 토큰 — 빠른 토글 연타에서 마지막 요청만 반영. */
+let inflightDevice: AdDevice | null = null;
+/** popover에 표시 중인 mount — 외부 응답이 도착했을 때 re-render 대상 식별용. */
+let openPopoverMount: BadgeMount | null = null;
+/**
+ * popover 오픈 시점에 측정한 PC 기준 높이 — flip(아래→위 뒤집기) 결정을 device 토글
+ * 사이에도 일관되게 유지하기 위함. 0이면 아직 측정 전.
+ * 매 프레임 reposition은 pr.height로 실제 위치 계산하되, "fit below" 여부는 이 값으로 판단.
+ */
+let openPopoverFlipHeight = 0;
+
+function togglePopover(anchor: HTMLElement, mount: BadgeMount) {
   if (openPopover) {
-    closePopover();
-    return;
+    if (openPopoverMount === mount) {
+      // 같은 배지 재클릭 — toggle off로 fade-out 후 종료
+      closePopover();
+      return;
+    }
+    // 다른 mount로 전환 — fade-out 생략하고 즉시 제거. 새 popover의 entrance가
+    // 시각 연결을 받아주므로 사용자에겐 자연스러운 "교체"로 보임.
+    // (140ms fade-out 중 새 popover가 mount되면 둘이 겹쳐 보이는 race 회피)
+    closePopoverImmediate();
   }
+  // default device 캐시가 비어있으면 popover 의미 없음 — 무시 (배지 loading 상태)
+  if (!dataCache.get(dataKey(mount.keyword, DEFAULT_DEVICE))) return;
+
+  // 안전망 — 어떤 race로든 DOM에 남은 잔존 popover 즉시 정리. closePopover는
+  // setTimeout으로 140ms 후 제거하는 비동기 path라 빠른 연타에서 누락 가능.
+  document.querySelectorAll(".dvads-popover").forEach((el) => el.remove());
+
+  openPopoverDevice = DEFAULT_DEVICE;
+  openPopoverMount = mount;
+  inflightDevice = null;
+  openPopoverFlipHeight = 0;
+
   const popover = document.createElement("div");
   popover.className = "dvads dvads-popover";
   popover.style.position = "fixed";
   popover.style.zIndex = "2147483647";
-  popover.appendChild(buildBidTable(data, mount, currentRank));
+  const wrap = buildPopoverBody(mount, openPopoverDevice);
+  // 첫 mount entrance — wrap에 translateY+opacity keyframe. popover 자체의 transform은
+  // 위치 계산용이라 손대지 않고, 내부 wrap에 entrance를 적용해 충돌 회피.
+  wrap.classList.add("dvads-popover-content-enter");
+  popover.appendChild(wrap);
   document.body.appendChild(popover);
 
   openPopover = popover;
@@ -276,6 +316,15 @@ function togglePopover(
       closePopover();
       return;
     }
+    // 매 프레임 안전망 — openPopover 외 다른 .dvads-popover가 DOM에 남아있으면 강제 제거.
+    // togglePopover의 closePopoverImmediate + 안전망 이외 경로로 잔존 popover가 생기는
+    // race를 마지막 방어선으로 차단 (스크린샷 1300013에서 사용자 보고됨).
+    const allPopovers = document.querySelectorAll<HTMLElement>(".dvads-popover");
+    if (allPopovers.length > 1) {
+      for (const el of Array.from(allPopovers)) {
+        if (el !== popover) el.remove();
+      }
+    }
     const rect = anchor.getBoundingClientRect();
     // 배지가 가상화로 화면에서 사라졌으면 닫기
     if (rect.width === 0 && rect.height === 0) {
@@ -283,20 +332,29 @@ function togglePopover(
       return;
     }
     const pr = popover.getBoundingClientRect();
+    // 첫 측정값(보통 PC 기준)을 flip 결정의 기준 높이로 freeze.
+    // 이후 device 토글로 실제 pr.height가 줄어도 flip 방향은 그대로 유지 — 위치 jitter 방지.
+    if (openPopoverFlipHeight === 0 && pr.height > 0) {
+      openPopoverFlipHeight = pr.height;
+    }
+    const flipH = openPopoverFlipHeight || pr.height;
+
     // 좌우: 우측 viewport 밖이면 좌측으로 끌어옴
     let left = Math.max(8, rect.left);
     if (left + pr.width > window.innerWidth - 8) {
       left = Math.max(8, window.innerWidth - pr.width - 8);
     }
-    // 상하: 기본은 배지 아래(rect.bottom + 4). 하단 공간 부족 시 배지 위로 flip.
-    // 위도 안 맞는 극단적 viewport는 viewport 하단에 clamp (절대 잘리지 않게).
+    // 상하: 기본은 배지 아래(rect.bottom + 4). flip 여부는 flipH(고정값)로 판단해
+    // device 토글 사이에 결정이 뒤집히지 않게.
     let top = rect.bottom + 4;
-    if (top + pr.height > window.innerHeight - 8) {
-      const above = rect.top - pr.height - 4;
+    if (top + flipH > window.innerHeight - 8) {
+      const above = rect.top - flipH - 4;
       if (above >= 8) {
-        top = above;
+        // 배지 위로 flip — bottom 엣지 안정성 위해 실제 pr.height로 위치 계산
+        top = rect.top - pr.height - 4;
       } else {
-        top = Math.max(8, window.innerHeight - pr.height - 8);
+        // viewport 하단에 clamp — 고정 높이 기준
+        top = Math.max(8, window.innerHeight - flipH - 8);
       }
     }
     // transform으로 통째로 이동 — top/left 변경보다 합성 단계에서 처리돼 더 매끄럽다
@@ -339,43 +397,221 @@ function togglePopover(
 
 function closePopover() {
   if (!openPopover) return;
+  const popover = openPopover;
   openPopoverCleanup?.();
   openPopoverCleanup = null;
-  openPopover.remove();
   openPopover = null;
+  openPopoverMount = null;
+  inflightDevice = null;
+  openPopoverFlipHeight = 0;
+  // 종료 페이드 — `.dvads-popover-exit` 클래스가 opacity 1→0 keyframe 트리거.
+  // pointer-events: none으로 빠른 재오픈 시 그림자가 클릭 잡지 않게.
+  popover.classList.add("dvads-popover-exit");
+  window.setTimeout(() => popover.remove(), 140);
 }
 
-function buildBidTable(
-  data: KeywordVolumeCache,
-  mount: BadgeMount,
-  currentRank: EstimatedRank | null,
-): HTMLElement {
+/**
+ * fade-out 없이 popover 즉시 제거. 다른 키워드 배지로 전환할 때 사용 —
+ * 새 popover의 entrance가 시각 연결을 받아주므로 fade-out이 오히려 두 popover
+ * 겹침 race의 원인이 됨.
+ */
+function closePopoverImmediate(): void {
+  if (!openPopover) return;
+  const popover = openPopover;
+  openPopoverCleanup?.();
+  openPopoverCleanup = null;
+  openPopover = null;
+  openPopoverMount = null;
+  inflightDevice = null;
+  openPopoverFlipHeight = 0;
+  popover.remove();
+}
+
+/**
+ * popover 내부 컨텐츠 교체 시 crossfade + height morph.
+ *
+ * 핵심: 빠른 토글이나 lazy fetch 응답 도착 시 popover에 wrap이 누적될 수 있어
+ *   (1) 매 호출마다 popover의 *모든* 기존 children을 swap-out 처리
+ *   (2) 토큰 기반 cleanup으로 가장 최신 호출만 popover style/children 정리
+ * 가 필수. 안 하면 두 wrap이 popover 안에 동시에 정상 flow로 자리잡아 길이가
+ * 부풀어 사용자에겐 "popover 두 개"처럼 보임.
+ */
+let bodyAnimToken = 0;
+function animatePopoverBody(newBody: HTMLElement): void {
+  if (!openPopover) return;
+  const popover = openPopover;
+  const myToken = ++bodyAnimToken;
+
+  // 처음 mount (자식 없음) — 그냥 append
+  if (popover.children.length === 0) {
+    popover.appendChild(newBody);
+    return;
+  }
+
+  const oldH = popover.offsetHeight;
+  // 기존 모든 wrap을 swap-out 처리 — 누적된 children이 있어도 한꺼번에 fade-out + absolute로
+  // flow에서 빠지게 해 새 wrap이 popover 높이를 결정.
+  for (const el of Array.from(popover.children) as HTMLElement[]) {
+    if (el !== newBody) el.classList.add("dvads-popover-content-swap-out");
+  }
+  newBody.classList.add("dvads-popover-content-swap-in");
+  popover.appendChild(newBody);
+  const newH = popover.offsetHeight;
+
+  if (Math.abs(oldH - newH) > 1) {
+    popover.style.height = `${oldH}px`;
+    void popover.offsetHeight;
+    popover.style.transition = "height 200ms cubic-bezier(0.4, 0, 0.2, 1)";
+    popover.style.height = `${newH}px`;
+  }
+
+  window.setTimeout(() => {
+    // 더 새로운 animatePopoverBody 호출이 있었으면 그쪽 cleanup에 양보 — 현재 cleanup이
+    // 진행 중인 새 transition을 끊거나 다른 wrap을 잘못 제거하지 않게.
+    if (myToken !== bodyAnimToken) return;
+    if (openPopover !== popover) return;
+    // newBody 외 popover 내 모든 children 제거 (누적된 fading wrap들 정리)
+    for (const el of Array.from(popover.children) as HTMLElement[]) {
+      if (el !== newBody) el.remove();
+    }
+    newBody.classList.remove("dvads-popover-content-swap-in");
+    popover.style.height = "";
+    popover.style.transition = "";
+  }, 240);
+}
+
+/**
+ * popover 디바이스 토글 — 사용자가 [모바일 | PC] segmented control에서 클릭.
+ *
+ * - cache hit이면 즉시 body re-render.
+ * - cache miss(첫 PC 토글 등)면 loading skeleton + GET_BID_ESTIMATE 호출.
+ *   응답 도착 시 currentDevice가 그대로면 re-render, 다른 디바이스로 다시 바뀐
+ *   상태면 캐시만 저장하고 화면은 건드리지 않음 (race guard).
+ */
+function selectDevice(target: AdDevice): void {
+  if (!openPopover || !openPopoverMount) return;
+  if (openPopoverDevice === target) return;
+  // 토글 클릭이 popover 닫힘 트리거가 되지 않도록 가드
+  suppressPopoverClose(500);
+  openPopoverDevice = target;
+
+  const mount = openPopoverMount;
+  const cached = dataCache.get(dataKey(mount.keyword, target));
+  if (cached) {
+    animatePopoverBody(buildPopoverBody(mount,target));
+    return;
+  }
+
+  // cache miss — loading skeleton + lazy fetch
+  inflightDevice = target;
+  animatePopoverBody(buildPopoverBody(mount,target));
+
+  const req: GetBidEstimateRequest = {
+    type: "GET_BID_ESTIMATE",
+    keywords: [{ keyword: mount.keyword, currentBid: mount.currentBid }],
+    device: target,
+  };
+  chrome.runtime
+    .sendMessage(req)
+    .then((res: GetBidEstimateResponse | undefined) => {
+      if (!res) return;
+      if (res.has_credential === false) {
+        credentialState = "missing";
+        return;
+      }
+      if (!res.ok) {
+        console.warn("[dv-ads] lazy device fetch error:", res.error);
+        if (inflightDevice === target) inflightDevice = null;
+        return;
+      }
+      const respDevice = res.device ?? target;
+      for (const d of res.data ?? []) {
+        dataCache.set(dataKey(d.keyword, respDevice), d);
+      }
+      for (const p of res.performance ?? []) {
+        perfCache.set(perfKey(p.keyword, p.bid, respDevice), p);
+      }
+      // inflightDevice는 re-render 전에 풀어야 함 — buildPopoverBody가 토글의
+      // `.is-loading` 클래스 부착 여부를 inflightDevice로 판단하기 때문.
+      if (inflightDevice === respDevice) inflightDevice = null;
+      // 응답 도착 시 popover가 그대로 같은 mount + 같은 device 상태일 때만 re-render
+      if (
+        openPopover &&
+        openPopoverMount === mount &&
+        openPopoverDevice === respDevice
+      ) {
+        animatePopoverBody(buildPopoverBody(mount,respDevice));
+      }
+    })
+    .catch((e) => {
+      console.warn("[dv-ads] lazy device fetch failed", e);
+      if (inflightDevice === target) inflightDevice = null;
+    });
+}
+
+const DEVICE_LABEL: Record<AdDevice, string> = {
+  MOBILE: "모바일",
+  PC: "PC",
+};
+
+function buildPopoverBody(mount: BadgeMount, device: AdDevice): HTMLElement {
   const wrap = document.createElement("div");
+
+  const data = dataCache.get(dataKey(mount.keyword, device));
 
   const hdr = document.createElement("div");
   hdr.className = "dvads-popover-hdr";
+
   // 키워드명 클릭 → 네이버 광고 검색결과(파워링크 미리보기) 새 탭으로 열기
   const kw = document.createElement("a");
   kw.className = "kw";
-  kw.textContent = data.keyword;
-  kw.href = `https://ad.search.naver.com/search.naver?where=ad&query=${encodeURIComponent(data.keyword)}`;
+  kw.textContent = mount.keyword;
+  kw.href = `https://ad.search.naver.com/search.naver?where=ad&query=${encodeURIComponent(mount.keyword)}`;
   kw.target = "_blank";
   kw.rel = "noopener noreferrer";
   kw.title = "네이버 광고 검색결과로 이동";
   hdr.append(kw);
 
-  const closeBtn = document.createElement("button");
-  closeBtn.type = "button";
-  closeBtn.className = "dvads-popover-close";
-  closeBtn.setAttribute("aria-label", "닫기");
-  closeBtn.textContent = "×";
-  closeBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    closePopover();
-  });
-  hdr.append(closeBtn);
+  // 디바이스 토글 (PC | 모바일) — segmented control. 헤더 우측(이전 X 버튼 자리)에 배치.
+  // popover 닫기는 외부 클릭 / ESC / 배지 재클릭으로 가능하므로 X 버튼은 두지 않음.
+  // DV 주황 안 씀(보조 UI) — 트랙 회색 + 흰 카드 선택.
+  const toggle = document.createElement("div");
+  toggle.className = "dvads-device-toggle";
+  toggle.setAttribute("role", "tablist");
+  toggle.setAttribute("aria-label", "디바이스 선택");
+  for (const d of ["PC", "MOBILE"] as AdDevice[]) {
+    const seg = document.createElement("button");
+    seg.type = "button";
+    seg.className = "dvads-device-seg";
+    seg.dataset.device = d;
+    seg.textContent = DEVICE_LABEL[d];
+    seg.setAttribute("role", "tab");
+    seg.setAttribute("aria-selected", d === device ? "true" : "false");
+    if (d === device) seg.classList.add("is-active");
+    if (inflightDevice === d) seg.classList.add("is-loading");
+    seg.addEventListener("click", (e) => {
+      e.stopPropagation();
+      selectDevice(d);
+    });
+    toggle.appendChild(seg);
+  }
+  hdr.append(toggle);
 
   wrap.appendChild(hdr);
+
+  // body — cache hit이면 ladder, miss면 loading skeleton
+  if (!data) {
+    const loading = document.createElement("div");
+    loading.className = "dvads-popover-loading";
+    loading.textContent = `${DEVICE_LABEL[device]} 데이터 가져오는 중...`;
+    wrap.appendChild(loading);
+    return wrap;
+  }
+
+  const currentRank: EstimatedRank | null =
+    mount.currentBid != null
+      ? estimateRank(mount.currentBid, data.rank_to_bid)
+      : null;
 
   // 통합 테이블: 순위 | 입찰가 | 예상 노출수 | 예상 클릭수 | 예상 광고비 × 10행
   const table = document.createElement("table");
@@ -388,15 +624,19 @@ function buildBidTable(
   thead.appendChild(trHead);
   table.appendChild(thead);
 
+  // device별 순위 상한 — PC 10 / MOBILE 5. 토글에 따라 표 행 수가 달라지지만 popover
+   // 위치는 안정 — togglePopover가 PC 최대 높이를 한 번 측정해 flip 결정을 freeze하기 때문.
+  const maxRows = MAX_POSITION_BY_DEVICE[device];
   const tbody = document.createElement("tbody");
-  for (let i = 1; i <= MAX_POSITION; i++) {
+  for (let i = 1; i <= maxRows; i++) {
     const tr = document.createElement("tr");
     if (currentRank === i) tr.classList.add("current");
     tr.appendChild(createCell("td", `${i}위`));
     const bid = data.rank_to_bid[i as RankPosition];
     tr.appendChild(createCell("td", bid != null ? bid.toLocaleString() : "—"));
 
-    const perf = bid != null ? perfCache.get(perfKey(mount.keyword, bid)) : undefined;
+    const perf =
+      bid != null ? perfCache.get(perfKey(mount.keyword, bid, device)) : undefined;
     tr.appendChild(createCell("td", perf ? perf.impressions.toLocaleString() : "—"));
     tr.appendChild(createCell("td", perf ? perf.clicks.toLocaleString() : "—"));
     tr.appendChild(
@@ -404,6 +644,7 @@ function buildBidTable(
     );
 
     // 행 클릭 → 입찰가 변경. 현재 행과 입찰가 없는 행은 비활성.
+    // 입찰가 적용 자체는 device-agnostic — 페이지의 현재 입찰가 셀을 그대로 클릭.
     if (bid != null && currentRank !== i) {
       tr.classList.add("dvads-clickable");
       tr.addEventListener("click", () => {
@@ -460,11 +701,9 @@ function requestBidChange(mount: BadgeMount, targetBid: number): void {
 
 function refreshOpenPopover(mount: BadgeMount): void {
   if (!openPopover) return;
-  const data = dataCache.get(mount.keyword);
-  if (!data) return;
-  const newRank: EstimatedRank | null =
-    mount.currentBid != null ? estimateRank(mount.currentBid, data.rank_to_bid) : null;
-  openPopover.replaceChildren(buildBidTable(data, mount, newRank));
+  // popover에 표시 중인 mount가 아니면 무관 (다른 키워드 popover면 건드리지 않음)
+  if (openPopoverMount && openPopoverMount !== mount) return;
+  animatePopoverBody(buildPopoverBody(mount,openPopoverDevice));
 }
 
 async function performBidApply(
@@ -676,12 +915,13 @@ async function poll() {
     }
   }
 
-  // bid 추정이 아직 없는 키워드 + 성과 추정이 아직 없는 (keyword, bid) 조합
+  // bid 추정이 아직 없는 키워드 + 성과 추정이 아직 없는 (keyword, bid) 조합.
+  // poll은 항상 DEFAULT_DEVICE(모바일) 기준 — PC는 popover 토글 시 lazy 호출.
   const missingBids = Array.from(byKeyword.entries()).filter(
-    ([k]) => !dataCache.has(k),
+    ([k]) => !dataCache.has(dataKey(k, DEFAULT_DEVICE)),
   );
   const missingPerf = Array.from(byKeyword.entries()).filter(
-    ([k, bid]) => bid != null && !perfCache.has(perfKey(k, bid)),
+    ([k, bid]) => bid != null && !perfCache.has(perfKey(k, bid, DEFAULT_DEVICE)),
   );
 
   // 둘 다 없으면 요청 skip — 단순 재렌더만
@@ -702,36 +942,41 @@ async function poll() {
   const req: GetBidEstimateRequest = {
     type: "GET_BID_ESTIMATE",
     keywords: reqList,
+    device: DEFAULT_DEVICE,
   };
   let res: GetBidEstimateResponse | undefined;
   try {
     res = (await chrome.runtime.sendMessage(req)) as GetBidEstimateResponse;
   } catch (e) {
     console.warn("[dv-ads] sendMessage failed", e);
-    lastError = "확장 응답 없음 (reload 후 페이지 새로고침 필요)";
+    lastError = "확장 프로그램이 업데이트됐어요. 페이지를 새로고침해 주세요";
   }
   if (res === undefined && !lastError) {
     // background가 sendResponse를 호출하지 않은 채 포트가 닫힌 경우 (MV3 SW 비정상 종료 등)
     console.warn("[dv-ads] GET_BID_ESTIMATE returned undefined — background may have crashed");
-    lastError = "백그라운드 응답 없음";
+    lastError = "잠시 응답이 없어요. 페이지를 새로고침해 주세요";
   } else if (res) {
     if (res.has_credential === false) {
       credentialState = "missing";
       lastError = null;
     } else if (res.ok) {
       credentialState = "ok";
-      for (const d of res.data ?? []) dataCache.set(d.keyword, d);
-      for (const p of res.performance ?? []) perfCache.set(perfKey(p.keyword, p.bid), p);
+      const respDevice = res.device ?? DEFAULT_DEVICE;
+      for (const d of res.data ?? []) dataCache.set(dataKey(d.keyword, respDevice), d);
+      for (const p of res.performance ?? [])
+        perfCache.set(perfKey(p.keyword, p.bid, respDevice), p);
       // silent-empty 감지: bid 추정을 요청했는데 0개 받으면 schema mismatch
       if (missingBids.length > 0) {
-        const stillMissing = missingBids.filter(([k]) => !dataCache.has(k));
+        const stillMissing = missingBids.filter(
+          ([k]) => !dataCache.has(dataKey(k, respDevice)),
+        );
         if (stillMissing.length === missingBids.length) {
           console.warn(
             "[dv-ads] requested",
             missingBids.length,
             "but got 0 in data — possible schema mismatch or empty estimate. SW 콘솔의 raw 로그 확인 필요",
           );
-          lastError = "응답없음";
+          lastError = "데이터를 받지 못했어요. 잠시 후 다시 시도해 주세요";
         } else {
           lastError = null;
         }
@@ -826,13 +1071,22 @@ async function handleRefreshActiveTab(): Promise<RefreshActiveTabResponse> {
   // storage 캐시 무효화 (volume + performance)
   await Promise.all([invalidateBids(keywords), invalidatePerformance(keywords)]);
 
-  // in-memory 캐시도 비워야 poll이 miss로 판단해 재요청
-  for (const k of keywords) dataCache.delete(k);
-  for (const k of Array.from(perfCache.keys())) {
-    const colon = k.lastIndexOf(":");
-    if (colon < 0) continue;
-    const kw = k.slice(0, colon);
-    if (keywords.includes(kw)) perfCache.delete(k);
+  // in-memory 캐시도 비워야 poll이 miss로 판단해 재요청.
+  // dataCache 키 = `<device>:<keyword>`, perfCache 키 = `<device>:<keyword>:<bid>`.
+  // 키워드 매칭 시 모든 device 변형 일괄 삭제.
+  const targetKeywords = new Set(keywords);
+  for (const key of Array.from(dataCache.keys())) {
+    const firstColon = key.indexOf(":");
+    if (firstColon < 0) continue;
+    const kw = key.slice(firstColon + 1);
+    if (targetKeywords.has(kw)) dataCache.delete(key);
+  }
+  for (const key of Array.from(perfCache.keys())) {
+    const firstColon = key.indexOf(":");
+    const lastColon = key.lastIndexOf(":");
+    if (firstColon < 0 || lastColon <= firstColon) continue;
+    const kw = key.slice(firstColon + 1, lastColon);
+    if (targetKeywords.has(kw)) perfCache.delete(key);
   }
 
   // 이전 에러 표시 초기화 — 재조회로 회복 가능

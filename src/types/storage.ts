@@ -7,6 +7,8 @@
  * 본 파일에서는 캐시 모델만 정의한다.
  */
 
+import type { AdDevice } from "./device";
+
 /**
  * 노출 순위 1~10위. F001/F002/F003 모두 동일 범위 사용 (네이버 검색결과 1페이지 커버).
  *
@@ -15,19 +17,36 @@
  */
 export type RankPosition = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10;
 
-/** 한 번에 조회할 최대 순위. F001 콘텐츠 오버레이 미니 테이블 컬럼 수. */
+/** 한 번에 조회할 최대 순위. F001 콘텐츠 오버레이 미니 테이블 컬럼 수 (PC 기준). */
 export const MAX_POSITION = 10;
 
 /**
+ * 디바이스별 허용 최대 순위. 검색광고 API `/estimate/average-position-bid/keyword`가
+ * `position` 필드 상한을 디바이스별로 다르게 적용:
+ *   - PC: 1~10 (400 `position(N) must be lower than 10`)
+ *   - MOBILE: 1~5 (400 `position(N) must be lower than 5`)
+ *
+ * 모바일 검색결과 페이지가 노출하는 광고 슬롯 수 차이를 반영한 것으로 추정.
+ * 호출자는 device를 알고 있을 때 이 맵을 보고 items 범위를 결정해야 400 회피.
+ */
+export const MAX_POSITION_BY_DEVICE: Record<"PC" | "MOBILE", number> = {
+  PC: 10,
+  MOBILE: 5,
+};
+
+/**
  * F001 — 키워드별 1~10위 예상 입찰가 캐시.
- * chrome.storage.local 키: `volume_cache:<keyword>`
+ * chrome.storage.local 키: `volume_cache:<device>:<keyword>`
  *
  * 데이터 소스: `POST /estimate/average-position-bid/keyword` (네이버 검색광고 API).
- * 응답은 시장 단위 추정치 — 호출자 customerId와 무관하게 동일하므로 캐시는 키워드 단위로만 스코프.
+ * 응답은 시장 단위 추정치 — 호출자 customerId와 무관하지만 device 파라미터(`PC`/`MOBILE`)에
+ * 따라 결과가 갈리므로 캐시는 (keyword, device) 단위로 스코프한다.
  */
 export interface KeywordVolumeCache {
   /** 정규화된 키워드 (공백 제거, NFC 정규화) */
   keyword: string;
+  /** 호출 시의 광고 디바이스 (PC | MOBILE) */
+  device: AdDevice;
   /** 노출 순위 → 예상 입찰가 매핑. 응답에서 빠진 순위는 누락 가능 */
   rank_to_bid: Partial<Record<RankPosition, number>>;
   /** 캐시 적재 시각 (ISO date string) */
@@ -71,16 +90,19 @@ export interface CurrentBidSnapshot {
 
 /**
  * F001 — 키워드별 특정 입찰가에서의 예상 성과 지표.
- * chrome.storage.local 키: `performance_cache:<keyword>:<bid>`
+ * chrome.storage.local 키: `performance_cache:<device>:<keyword>:<bid>`
  *
  * 데이터 소스: `POST /estimate/performance-bulk` (네이버 검색광고 API).
  * 키워드 도구 "선택한 키워드" 표의 4지표 — 노출/클릭/CPC/광고비.
  *
- * 캐시 키에 bid가 포함되므로 사용자가 광고관리자에서 입찰가를 변경하면 자동 cache miss.
+ * 캐시 키에 device·bid가 포함되므로 사용자가 광고관리자에서 입찰가를 변경하거나
+ * popover에서 디바이스를 토글하면 자동 cache miss.
  */
 export interface KeywordPerformanceCache {
   /** 정규화된 키워드 */
   keyword: string;
+  /** 호출 시의 광고 디바이스 (PC | MOBILE) */
+  device: AdDevice;
   /** 호출 시 보낸 입찰가 (원화 정수) — 같은 키워드라도 bid가 다르면 결과가 다름 */
   bid: number;
   /** 예상 노출수 */
