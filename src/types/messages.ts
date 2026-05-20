@@ -92,16 +92,107 @@ export interface RefreshActiveTabResponse {
   error?: string;
 }
 
+/**
+ * F-MultiAccount — content → background. 다른 광고계정의 어제/비즈머니/계약 데이터 수집 위임.
+ * background는 hidden tab으로 해당 계정 페이지 열고 그 콘텐츠 스크립트에
+ * MULTI_ACCOUNT_COLLECT_ACTIVE 보낸 뒤 응답을 전달 + tab 정리.
+ */
+export interface MultiAccountCollectAccountRequest {
+  type: "MULTI_ACCOUNT_COLLECT_ACCOUNT";
+  adAccountNo: number;
+}
+
+export interface MultiAccountCollectResponse {
+  ok: boolean;
+  bizMoney?: number | null;
+  yesterday?: {
+    impressions: number;
+    clicks: number;
+    cpc: number;
+    cost: number;
+    conversionValue: number;
+    conversions: number;
+  } | null;
+  contracts?: Array<{
+    product: string;
+    campaignTp: string;
+    endDate: string;
+    status: string;
+  }>;
+  error?: string;
+}
+
+/**
+ * F-AssetBulk V2 — content(ads.naver.com) → background. 상품 페이지에서 이미지 후보 수집.
+ * background는 hidden tab으로 상품 페이지를 열고 그 안의 콘텐츠 스크립트(product-page-scrape.ts)에
+ * SCRAPE_PRODUCT_IMAGES 메시지를 보내 응답을 받음. SPA hydration 후 실제 DOM에서 추출하므로
+ * SSR HTML 직접 fetch보다 정확.
+ */
+export interface FetchProductPageRequest {
+  type: "FETCH_PRODUCT_PAGE";
+  url: string;
+}
+
+export interface FetchProductPageResponse {
+  ok: boolean;
+  /** ok=true면 후보 이미지 URL 배열 */
+  candidates?: string[];
+  /** ok=false면 사용자 친화 한글 메시지 */
+  error?: string;
+}
+
+/**
+ * F-AssetBulk V2 — background → 상품 페이지 콘텐츠 스크립트. DOM 갤러리에서 이미지 URL 추출.
+ */
+export interface ScrapeProductImagesRequest {
+  type: "SCRAPE_PRODUCT_IMAGES";
+}
+
+export interface ScrapeProductImagesResponse {
+  ok: boolean;
+  urls?: string[];
+  error?: string;
+}
+
+/**
+ * F-AssetBulk V2 — content → background. 사용자가 후보 중 선택한 이미지의 binary fetch.
+ * 콘텐츠 스크립트의 origin(ads.naver.com)에서 shop-phinf.pstatic.net에 직접 fetch하면 CORS에 막힘.
+ * background는 host_permissions 기반으로 fetch 후 ArrayBuffer + MIME으로 응답.
+ */
+export interface FetchImageBinaryRequest {
+  type: "FETCH_IMAGE_BINARY";
+  url: string;
+}
+
+export interface FetchImageBinaryResponse {
+  ok: boolean;
+  /**
+   * ok=true면 base64 encoded binary. Chrome MV3의 chrome.runtime.sendMessage가 ArrayBuffer를
+   * JSON serialize해서 `{}`로 손실시키는 동작 회피. content가 atob + Uint8Array로 복원.
+   */
+  base64?: string;
+  mimeType?: string;
+  error?: string;
+}
+
 /** 모든 in-bound 메시지 유니온 */
 export type ExtensionMessage =
   | OpenOptionsRequest
   | GetBidEstimateRequest
   | GetProductRankRequest
-  | RefreshActiveTabRequest;
+  | RefreshActiveTabRequest
+  | MultiAccountCollectAccountRequest
+  | FetchProductPageRequest
+  | ScrapeProductImagesRequest
+  | FetchImageBinaryRequest;
 
 /** 모든 out-bound 응답 유니온 */
 export type ExtensionResponse =
   | OpenOptionsResponse
   | GetBidEstimateResponse
   | GetProductRankResponse
-  | RefreshActiveTabResponse;
+  | RefreshActiveTabResponse
+  | MultiAccountCollectResponse
+  | FetchProductPageResponse
+  | ScrapeProductImagesResponse
+  | FetchImageBinaryResponse;

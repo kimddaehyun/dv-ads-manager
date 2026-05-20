@@ -13,13 +13,14 @@
 import {
   openAssetBulkPopup,
   type AssetBulkInput,
-  type ImageSlotInput,
+  type AssetBulkImagesInput,
 } from "@/content/asset-bulk-popup";
 import {
   closeOpenMenu,
   describeAssetFailure,
   registerAssetItem,
   scanExistingAssets,
+  ensurePageSizeFifty,
   type AssetItemSource,
   type AssetResult,
 } from "@/content/dom-asset";
@@ -106,31 +107,60 @@ function ensureBulkItem(container: HTMLElement): void {
     e.stopPropagation();
     // 페이지 드롭다운은 자체 click 리스너로 자동 닫힘. 우리 팝업은 setTimeout으로
     // 다음 tick에 열어 메뉴 unmount와 race하지 않게 한다.
-    setTimeout(() => openBulkPopup(), 0);
+    setTimeout(() => {
+      openBulkPopup().catch((err) => {
+        console.error("[dv-ads/asset-bulk] open failed", err);
+      });
+    }, 0);
   });
 
   container.appendChild(li);
 }
 
-function openBulkPopup(): void {
-  // popup 열기 직전에 페이지 등록 목록 스캔 — 슬롯에 실시간 중복 경고 표시용.
-  // 페이지 테이블이 가상화·페이지네이션을 쓸 수 있어 1페이지 분만 잡힐 수 있다는
-  // 한계는 있지만 같은 광고그룹 한 페이지 안에서는 충분히 유효한 사전 안내.
-  const existing = scanExistingAssets();
-  openAssetBulkPopup({
+async function openBulkPopup(): Promise<void> {
+  // popup을 먼저 mount해 backdrop이 페이지를 가린 뒤, 그 뒤에서 페이지 크기 50으로
+  // 변경 + scan을 진행한다. 사용자는 selector dropdown이 깜빡이는 시각 변화를
+  // 보지 못함. scan 완료 시 popup.setExisting()으로 슬롯 dup 상태/hint를 갱신.
+  //
+  // existing은 mutable ref로 두어 runBulkRegistration이 호출되는 submit 시점에
+  // 최신 값을 보게 한다 (popup이 열리자마자 사용자가 빠르게 submit해도 안전).
+  const existing = {
+    headlines: new Set<string>(),
+    descriptions: new Set<string>(),
+    promos: new Set<string>(),
+    imageCount: 0,
+  };
+  const handle = openAssetBulkPopup({
     onSubmit: async (data) => {
       await runBulkRegistration(data, existing);
     },
-    existingHeadlines: existing.headlines,
-    existingDescriptions: existing.descriptions,
   });
+
+  try {
+    await ensurePageSizeFifty();
+    const scanned = scanExistingAssets();
+    existing.headlines = scanned.headlines;
+    existing.descriptions = scanned.descriptions;
+    existing.promos = scanned.promos;
+    existing.imageCount = scanned.imageCount;
+    handle.setExisting(scanned);
+  } catch (err) {
+    console.error("[dv-ads/asset-bulk] page size + scan failed", err);
+    // graceful fallback — popup은 그대로 열려있고 중복 체크만 빈 상태로 유지.
+    // 사용자가 일괄 등록 누르면 페이지 자체 중복 검증이 막아줌.
+  }
 }
 
 // ─── 자동화 실행 ───
 
 async function runBulkRegistration(
   data: AssetBulkInput,
-  existing: { headlines: Set<string>; descriptions: Set<string> },
+  existing: {
+    headlines: Set<string>;
+    descriptions: Set<string>;
+    promos: Set<string>;
+    imageCount: number;
+  },
 ): Promise<void> {
   // 입력을 작업 큐로 평탄화. 빈 슬롯은 skip — orchestrator 차원에서.
   // 이미지는 모든 파일을 한 큐 항목에 합쳐 한 모달에서 multiple upload 한 번에 처리.
@@ -138,27 +168,53 @@ async function runBulkRegistration(
   let skippedDuplicates = 0;
 
   const imageFiles = await resolveImageFiles(data.images);
-  if (imageFiles.files.length > 0) {
-    items.push({ kind: "image", files: imageFiles.files });
+  // 한도 가드 — UI에서 이미 차단하지만 race로 빠져나간 케이스 방어. (existing.imageCount + N) <= 2
+  const imageRoom = Math.max(0, 2 - existing.imageCount);
+  if (imageFiles.files.length > imageRoom) {
+    imageFiles.files.length = imageRoom;
+  }
+  // 페이지 모달은 single image UI — 1장씩 N번 모달 사이클로 등록.
+  for (const f of imageFiles.files) {
+    items.push({ kind: "image", files: [f] });
   }
 
+  // 페이지에 이미 등록된 텍스트 + 같은 섹션 내 다른 슬롯과 동일한 텍스트 모두 skip.
+  // (popup UI에서 빨간 보더로 사용자에게 경고 + 여기서 큐에 안 넣음)
+  const seenHeadlines = new Set<string>();
   for (const h of data.headlines) {
     const t = h.text.trim();
     if (!t) continue;
-    if (existing.headlines.has(t)) {
+    if (existing.headlines.has(t) || seenHeadlines.has(t)) {
       skippedDuplicates += 1;
       continue;
     }
+    seenHeadlines.add(t);
     items.push({ kind: "headline", text: t, position: h.position });
   }
+  const seenDescriptions = new Set<string>();
   for (const d of data.descriptions) {
     const t = d.trim();
     if (!t) continue;
-    if (existing.descriptions.has(t)) {
+    if (existing.descriptions.has(t) || seenDescriptions.has(t)) {
       skippedDuplicates += 1;
       continue;
     }
+    seenDescriptions.add(t);
     items.push({ kind: "description", text: t });
+  }
+  // 홍보문구 dedup — (종류, 설명) composite key 기준. 페이지 정책상 추가설명이 같아도
+  // 홍보종류가 다르면 별개 항목으로 등록되므로.
+  const seenPromos = new Set<string>();
+  for (const p of data.promos) {
+    const t = p.description.trim();
+    if (!t) continue;
+    const key = `${p.kind}|${t}`;
+    if (existing.promos.has(key) || seenPromos.has(key)) {
+      skippedDuplicates += 1;
+      continue;
+    }
+    seenPromos.add(key);
+    items.push({ kind: "promo", description: t, promoKind: p.kind });
   }
 
   if (items.length === 0 && imageFiles.failedUrls.length === 0) {
@@ -172,15 +228,12 @@ async function runBulkRegistration(
     return;
   }
 
-  const headlineCount = data.headlines.filter(
-    (h) => h.text.trim().length > 0 && !existing.headlines.has(h.text.trim()),
-  ).length;
-  const descriptionCount = data.descriptions.filter(
-    (d) => d.trim().length > 0 && !existing.descriptions.has(d.trim()),
-  ).length;
+  const headlineCount = items.filter((it) => it.kind === "headline").length;
+  const descriptionCount = items.filter((it) => it.kind === "description").length;
+  const promoCount = items.filter((it) => it.kind === "promo").length;
   const dupSuffix = skippedDuplicates > 0 ? `, 중복 ${skippedDuplicates}건 skip` : "";
   showToast({
-    message: `일괄 등록 시작 (이미지 ${imageFiles.files.length > 0 ? "1세트" : "0"}, 추가제목 ${headlineCount}건, 추가설명 ${descriptionCount}건${dupSuffix})`,
+    message: `일괄 등록 시작 (이미지 ${imageFiles.files.length}장, 추가제목 ${headlineCount}건, 추가설명 ${descriptionCount}건, 홍보문구 ${promoCount}건${dupSuffix})`,
     variant: "success",
     ttlMs: 2500,
   });
@@ -251,23 +304,17 @@ interface ResolvedImages {
   failedUrls: Array<{ url: string; error: string }>;
 }
 
-async function resolveImageFiles(slots: ImageSlotInput[]): Promise<ResolvedImages> {
-  const files: File[] = [];
+async function resolveImageFiles(input: AssetBulkImagesInput): Promise<ResolvedImages> {
+  const files: File[] = [...input.files];
   const failedUrls: Array<{ url: string; error: string }> = [];
 
-  for (const slot of slots) {
-    if (slot.mode === "file" && slot.file) {
-      files.push(slot.file);
-      continue;
-    }
-    if (slot.mode === "url" && slot.url) {
-      try {
-        const file = await fetchUrlAsFile(slot.url);
-        files.push(file);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        failedUrls.push({ url: slot.url, error: msg });
-      }
+  for (const url of input.selectedUrls) {
+    try {
+      const file = await fetchUrlAsFile(url);
+      files.push(file);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failedUrls.push({ url, error: msg });
     }
   }
 
@@ -275,17 +322,57 @@ async function resolveImageFiles(slots: ImageSlotInput[]): Promise<ResolvedImage
 }
 
 /**
- * 이미지 URL을 content script 컨텍스트에서 fetch해 File로 변환. content는 ads.naver.com
- * origin이라 외부 호스트의 CORS 정책이 응답 헤더에 없으면 실패 — 그 경우 사용자에게
- * 결과 토스트로 노출하고 사용자가 직접 파일로 첨부하도록 안내한다 (V1 정책).
- * V2에서 background fetch fallback 검토.
+ * 이미지 URL을 background에 위임해 binary 받은 뒤 File로 변환.
+ * 콘텐츠 스크립트(ads.naver.com)에서 외부 CDN(shop-phinf.pstatic.net)에 직접 fetch하면
+ * CORS에 막힘. background는 host_permissions 기반 fetch 후 ArrayBuffer로 응답.
+ *
+ * 응답 헤더의 content-type이 비정상(`application/octet-stream` 등)으로 와도 페이지 모달은
+ * mime이 image/*가 아니면 reject — URL path 확장자 기반으로 mime을 자체 추정해 안전하게.
  */
 async function fetchUrlAsFile(url: string): Promise<File> {
-  const resp = await fetch(url, { mode: "cors" });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const blob = await resp.blob();
-  const name = guessFileName(url, blob.type);
-  return new File([blob], name, { type: blob.type || "image/jpeg" });
+  const resp = (await chrome.runtime.sendMessage({
+    type: "FETCH_IMAGE_BINARY",
+    url,
+  })) as import("@/types/messages").FetchImageBinaryResponse;
+  if (!resp?.ok || !resp.base64) {
+    throw new Error(resp?.error ?? "이미지를 받아오지 못했어요");
+  }
+  const ext = guessExtFromUrl(url);
+  const headerMime = resp.mimeType ?? "";
+  const mime =
+    headerMime.startsWith("image/") && headerMime !== "image/octet-stream"
+      ? headerMime
+      : extToMime(ext);
+  const name = guessFileName(url, mime);
+  const buffer = base64ToBuffer(resp.base64);
+  return new File([buffer], name, { type: mime });
+}
+
+function base64ToBuffer(b64: string): ArrayBuffer {
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const view = new Uint8Array(buf);
+  for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i);
+  return buf;
+}
+
+function guessExtFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const last = u.pathname.split("/").filter(Boolean).pop() ?? "";
+    const m = last.match(/\.([a-z0-9]+)$/i);
+    return m?.[1]?.toLowerCase() ?? "jpg";
+  } catch {
+    return "jpg";
+  }
+}
+
+function extToMime(ext: string): string {
+  if (ext === "png") return "image/png";
+  if (ext === "bmp") return "image/bmp";
+  if (ext === "gif") return "image/gif";
+  if (ext === "webp") return "image/webp";
+  return "image/jpeg";
 }
 
 function guessFileName(url: string, mime: string): string {

@@ -905,13 +905,6 @@ td.dvads-period-delta-down {
   display: flex;
   flex-direction: column;
 }
-.dvads-asset-bulk-intro {
-  font-size: 12px;
-  color: #666666;
-  margin-bottom: 10px;
-  word-break: keep-all;
-  line-height: 1.55;
-}
 .dvads-asset-bulk-body {
   flex: 1 1 auto;
   overflow-y: auto;
@@ -939,78 +932,65 @@ td.dvads-period-delta-down {
   font-weight: 600;
   color: #171717;
 }
-.dvads-asset-bulk-section-hint {
-  font-size: 11px;
-  color: #808080;
-  line-height: 1.4;
-  word-break: keep-all;
-}
-
 .dvads-asset-bulk-slots {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
 
-/* 이미지 슬롯 — [모드 토글] [입력 영역] [×] 3컬럼 */
-.dvads-asset-bulk-image-row {
+/* 이미지 영역 — 파일 첨부 + 상품 URL 후보 그리드 통합 */
+.dvads-asset-bulk-counter {
+  margin-left: auto;
+  font-size: 12px;
+  color: #666666;
+}
+.dvads-asset-bulk-counter-blocked {
+  color: #B23A3A;
+}
+.dvads-asset-bulk-file-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-bottom: 6px;
 }
-.dvads-asset-bulk-mode {
+.dvads-asset-bulk-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dvads-asset-bulk-file-item {
   display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px 4px 10px;
+  background: #fafafa;
   border: 1px solid #ECEEF0;
   border-radius: 6px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-.dvads-asset-bulk-mode-btn {
-  background: #ffffff;
-  border: 0;
-  font-family: inherit;
-  font-size: 12px;
-  color: #666666;
-  padding: 6px 10px;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease;
-}
-.dvads-asset-bulk-mode-btn + .dvads-asset-bulk-mode-btn {
-  border-left: 1px solid #ECEEF0;
-}
-.dvads-asset-bulk-mode-btn:hover {
-  background: #fafafa;
-  color: #171717;
-}
-.dvads-asset-bulk-mode-btn-active {
-  background: rgba(230, 120, 59, 0.10);
-  color: #E6783B;
-}
-
-.dvads-asset-bulk-image-input {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-.dvads-asset-bulk-file {
-  font-family: inherit;
   font-size: 12px;
   color: #171717;
-  flex: 0 1 auto;
-  min-width: 0;
+  max-width: 220px;
 }
-.dvads-asset-bulk-file-name {
+.dvads-asset-bulk-file-item .dvads-asset-bulk-file-name {
   font-size: 12px;
-  color: #666666;
+  color: #171717;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1 1 auto;
   min-width: 0;
 }
-.dvads-asset-bulk-url {
+.dvads-asset-bulk-url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dvads-asset-bulk-url-input {
   flex: 1 1 auto;
   height: 32px;
   padding: 0 10px;
@@ -1024,25 +1004,95 @@ td.dvads-period-delta-down {
   transition: border-color 120ms ease;
   min-width: 0;
 }
-.dvads-asset-bulk-url:focus {
+.dvads-asset-bulk-url-input:focus {
   border-color: #E6783B;
 }
-.dvads-asset-bulk-image-placeholder {
-  font-size: 12px;
-  color: #a3a3a3;
+.dvads-asset-bulk-url-input:disabled {
+  background: #f5f5f5;
+  color: #999999;
+  cursor: not-allowed;
 }
 
-/* 텍스트 슬롯 — [input + counter] [×] */
+.dvads-asset-bulk-thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dvads-asset-bulk-thumb {
+  position: relative;
+  padding: 0;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.dvads-asset-bulk-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.dvads-asset-bulk-thumb:hover {
+  border-color: #cccccc;
+}
+.dvads-asset-bulk-thumb-selected {
+  border: 1.5px solid #E6783B;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.15);
+}
+.dvads-asset-bulk-thumb-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #E6783B;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.dvads-asset-bulk-thumb-selected .dvads-asset-bulk-thumb-check {
+  opacity: 1;
+}
+
+.dvads-asset-bulk-image-status {
+  font-size: 12px;
+  color: #666666;
+  padding: 6px 0;
+}
+.dvads-asset-bulk-image-status-loading {
+  color: #666666;
+}
+.dvads-asset-bulk-image-status-error {
+  color: #B23A3A;
+}
+/* 텍스트 슬롯 — [inputWrap (input + counter + ×)] [positionSelect (headline only)] */
 .dvads-asset-bulk-text-row {
   display: flex;
   align-items: center;
   gap: 8px;
   position: relative;
 }
+.dvads-asset-bulk-input-wrap {
+  flex: 1 1 auto;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
 .dvads-asset-bulk-text-input {
   flex: 1 1 auto;
   height: 32px;
-  padding: 0 52px 0 10px;
+  /* 우측 padding = counter(40px) + clearBtn(28px) + 여백(4px) */
+  padding: 0 72px 0 10px;
   font-family: inherit;
   font-size: 13px;
   color: #171717;
@@ -1058,7 +1108,7 @@ td.dvads-period-delta-down {
 }
 .dvads-asset-bulk-text-counter {
   position: absolute;
-  right: 44px;
+  right: 36px;
   top: 50%;
   transform: translateY(-50%);
   font-size: 11px;
@@ -1066,9 +1116,30 @@ td.dvads-period-delta-down {
   pointer-events: none;
   font-feature-settings: "tnum";
 }
-/* 추가제목 row는 우측에 노출 위치 select가 추가되어 counter를 input 안쪽으로 더 끌어옴. */
-.dvads-asset-bulk-headline-row .dvads-asset-bulk-text-counter {
-  right: 158px;
+/* input 안쪽 오른쪽 끝 — 슬롯 삭제 × 버튼. value 비어있으면 hidden 속성으로 숨김. */
+.dvads-asset-bulk-text-clear {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: #a3a3a3;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-asset-bulk-text-clear:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-asset-bulk-text-clear[hidden] {
+  display: none;
 }
 
 /* 중복 슬롯 경고 — 입력값이 페이지에 이미 등록된 텍스트와 일치하면 빨간 보더 + 메시지. */
@@ -1092,24 +1163,90 @@ td.dvads-period-delta-down {
   display: block;
 }
 
-/* 노출 위치 select — 페이지 모달의 dropdown과 1:1 매핑. 보조 UI라 주황 강조 X. */
-.dvads-asset-bulk-position {
+/* ─── 공용 dropdown — `src/content/ui-dropdown.ts` 가 그리는 단일 진실의 원천.
+   네이티브 <select>는 OS·브라우저별 외관이 갈려 시각 통일이 불가능하므로
+   콘텐츠 오버레이의 모든 dropdown은 본 클래스를 사용한다. (DESIGN.md 참조) */
+.dvads-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   flex-shrink: 0;
-  width: 110px;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 10px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
   color: #171717;
   background: #ffffff;
   border: 1px solid #ECEEF0;
-  border-radius: 6px;
+  border-radius: 8px;
   outline: none;
   cursor: pointer;
-  transition: border-color 120ms ease;
+  transition: border-color 120ms ease, background 120ms ease;
 }
-.dvads-asset-bulk-position:focus {
+.dvads-dropdown-trigger:hover {
+  border-color: #cfd6dc;
+}
+.dvads-dropdown-trigger.is-open {
   border-color: #E6783B;
+  background: rgba(230, 120, 59, 0.04);
+}
+.dvads-dropdown-label {
+  flex: 1 1 auto;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dvads-dropdown-chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #a3a3a3;
+  transition: transform 120ms ease, color 120ms ease;
+  line-height: 1;
+}
+.dvads-dropdown-trigger.is-open .dvads-dropdown-chevron {
+  transform: rotate(180deg);
+  color: #E6783B;
+}
+
+/* dropdown 패널 — document.body에 portal로 mount되어 popup overflow를 escape.
+   z-index는 backdrop과 동일 max + DOM order 마지막으로 가시성 확보. */
+.dvads-dropdown-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 130px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.dvads-dropdown-option {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  padding: 9px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+  white-space: nowrap;
+}
+.dvads-dropdown-option:hover {
+  background: #F3F4F6;
+}
+.dvads-dropdown-option.is-selected {
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
 }
 
 /* 슬롯 삭제 × */
@@ -1231,3 +1368,578 @@ td.dvads-period-delta-down {
   border-top-color: transparent;
   animation: dvads-spin 0.8s linear infinite;
 }
+
+/* ─── F-MultiAccount ─── */
+/* 헤더 광고계정 칩 좌측 형제 노드로 inject. F-PoP `.dvads-period-btn`과 동일 디자인.
+   position fixed 없음 — 페이지 DOM 자식이라 광고관리자 헤더와 함께 자연스럽게 움직임. */
+.dvads-multi-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: #ffffff;
+  color: #525252;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  margin-right: 8px;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.dvads-multi-btn svg {
+  display: block;
+}
+.dvads-multi-btn:hover {
+  background: #fafafa;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+
+/* popover — 1100px (8지표 컬럼 수용), 흰 배경, rounded, shadow */
+.dvads-multi-popover {
+  width: 1100px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 160px);
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 즐겨찾기 셀 */
+.dvads-multi-table th.dvads-multi-th-fav,
+.dvads-multi-table td.dvads-multi-td-fav {
+  width: 32px;
+  padding-left: 8px;
+  padding-right: 0;
+  text-align: center;
+}
+.dvads-multi-fav-btn {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #D1D5DB;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.dvads-multi-fav-btn:hover {
+  background: rgba(230, 120, 59, 0.1);
+  color: #E6783B;
+}
+.dvads-multi-fav-btn.is-on {
+  color: #E6783B;
+}
+
+/* 정렬 가능 헤더 */
+.dvads-multi-table th.dvads-multi-th-sort {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+.dvads-multi-table th.dvads-multi-th-sort:hover {
+  background: #f3f4f6;
+  color: #171717;
+}
+.dvads-multi-sort-ind {
+  display: inline-block;
+  width: 10px;
+  margin-left: 3px;
+  font-size: 9px;
+  color: #E6783B;
+}
+
+/* 컬럼 폭 조정 — 8지표 컴팩트하게 */
+.dvads-multi-table td.dvads-multi-td-num,
+.dvads-multi-table th.dvads-multi-th-num {
+  padding: 7px 8px;
+  font-size: 12.5px;
+}
+.dvads-multi-table td.dvads-multi-td-name,
+.dvads-multi-table th:first-child {
+  padding: 7px 12px;
+  min-width: 240px;
+  width: 240px;
+  max-width: 240px;
+}
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* dvads-bid-table의 2번째 컬럼 우측 분리선 제거 (multi-account는 그룹 분리 불필요) */
+.dvads-multi-table th:nth-child(2),
+.dvads-multi-table td:nth-child(2) {
+  border-right: 0 !important;
+}
+/* dvads-bid-table의 2번째 컬럼 weight 600 강조도 제거 (multi-account는 평등) */
+.dvads-multi-table td:nth-child(2) {
+  font-weight: 400 !important;
+}
+
+/* 계약 종료 시각 cue — 행 자체에 좌측 빨간 보더 */
+.dvads-multi-tr.dvads-multi-tr-contract-warning td:first-child {
+  position: relative;
+}
+.dvads-multi-tr.dvads-multi-tr-contract-warning td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #DC2626;
+}
+.dvads-multi-tr.dvads-multi-tr-contract-warning .dvads-multi-name::after {
+  content: " ⚠";
+  color: #DC2626;
+  font-size: 11px;
+}
+.dvads-multi-tr.dvads-multi-tr-contract-expired td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #9CA3AF;
+}
+
+.dvads-multi-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px 10px 16px;
+  border-bottom: 1px solid #F3F4F6;
+}
+.dvads-multi-title-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.dvads-multi-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #171717;
+}
+.dvads-multi-sub {
+  font-size: 11px;
+  color: #9CA3AF;
+}
+.dvads-multi-hdr-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.dvads-multi-add-btn,
+.dvads-multi-refresh-all {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, filter 120ms ease;
+}
+.dvads-multi-add-btn {
+  background: #E6783B;
+  color: #ffffff;
+  border: 0;
+}
+.dvads-multi-add-btn:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.dvads-multi-refresh-all {
+  border: 1px solid #E5E7EB;
+  background: #ffffff;
+  color: #6B7280;
+}
+.dvads-multi-refresh-all:hover:not(:disabled) {
+  background: #FAFAF9;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+.dvads-multi-refresh-all:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+/* ─── 검색 view ─── */
+.dvads-multi-hdr-search {
+  gap: 8px;
+}
+.dvads-multi-back-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #E5E7EB;
+  background: #ffffff;
+  border-radius: 8px;
+  color: #6B7280;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-multi-back-btn:hover {
+  background: #FAFAF9;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+.dvads-multi-search-input {
+  flex: 1;
+  min-width: 0;
+  height: 32px;
+  padding: 0 12px;
+  background: #F3F4F6;
+  border: 0;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #171717;
+  font-family: inherit;
+  outline: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-multi-search-input:focus {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
+}
+.dvads-multi-search-input::placeholder {
+  color: #9CA3AF;
+}
+.dvads-multi-done-btn {
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  background: #ffffff;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  color: #6B7280;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-multi-done-btn:hover {
+  background: #FAFAF9;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+
+.dvads-multi-search-list-wrap {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.dvads-multi-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+.dvads-multi-search-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid #F9FAFB;
+  transition: background 120ms ease;
+}
+.dvads-multi-search-row:first-child {
+  border-top: 0;
+}
+.dvads-multi-search-row:hover {
+  background: #FAFAF9;
+}
+.dvads-multi-search-info {
+  flex: 1;
+  min-width: 0;
+}
+.dvads-multi-search-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-multi-search-meta {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #9CA3AF;
+}
+.dvads-multi-search-origin {
+  color: #9CA3AF;
+}
+.dvads-multi-search-no {
+  font-variant-numeric: tabular-nums;
+}
+.dvads-multi-search-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.dvads-multi-add-one {
+  height: 28px;
+  padding: 0 12px;
+  background: #E6783B;
+  color: #ffffff;
+  border: 0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+.dvads-multi-add-one:hover {
+  filter: brightness(0.95);
+}
+.dvads-multi-edit-alias {
+  width: 28px;
+  height: 28px;
+  border: 1px solid #E5E7EB;
+  background: #ffffff;
+  border-radius: 8px;
+  color: #6B7280;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-multi-edit-alias:hover {
+  background: #FAFAF9;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+.dvads-multi-remove {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #E5E7EB;
+  background: #ffffff;
+  border-radius: 8px;
+  color: #9CA3AF;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-multi-remove:hover {
+  background: #FEF2F2;
+  border-color: #FCA5A5;
+  color: #DC2626;
+}
+.dvads-multi-alias-input {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  background: #ffffff;
+  border: 1px solid #E6783B;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #171717;
+  font-family: inherit;
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.2);
+}
+.dvads-multi-alias-save {
+  height: 28px;
+  padding: 0 10px;
+  background: #E6783B;
+  color: #ffffff;
+  border: 0;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.dvads-multi-alias-save:hover {
+  filter: brightness(0.95);
+}
+.dvads-multi-alias-cancel {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid #E5E7EB;
+  background: #ffffff;
+  color: #6B7280;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.dvads-multi-alias-cancel:hover {
+  background: #FAFAF9;
+}
+.dvads-multi-search-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #9CA3AF;
+}
+
+.dvads-multi-list-wrap {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.dvads-multi-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.dvads-multi-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-top: 1px solid #F9FAFB;
+  transition: background 120ms ease;
+}
+.dvads-multi-row:first-child {
+  border-top: 0;
+}
+.dvads-multi-row:hover {
+  background: #FAFAF9;
+}
+.dvads-multi-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-multi-fav {
+  font-size: 14px;
+  color: #D1D5DB;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.dvads-multi-fav.is-on {
+  color: #E6783B;
+}
+.dvads-multi-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-multi-no {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-variant-numeric: tabular-nums;
+}
+.dvads-multi-row-refresh {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #9CA3AF;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+.dvads-multi-row:hover .dvads-multi-row-refresh,
+.dvads-multi-row.dvads-multi-row-loading .dvads-multi-row-refresh {
+  opacity: 1;
+}
+.dvads-multi-row-refresh:hover {
+  background: rgba(230, 120, 59, 0.1);
+  color: #E6783B;
+}
+.dvads-multi-row.dvads-multi-row-loading .dvads-multi-row-refresh {
+  animation: dvads-spin 0.8s linear infinite;
+  color: #E6783B;
+  pointer-events: none;
+}
+
+/* 캐시 stale / 비어있음 상태 시각 표시 */
+.dvads-multi-row.dvads-multi-row-stale .dvads-multi-row-mid,
+.dvads-multi-row.dvads-multi-row-stale .dvads-multi-row-bot {
+  opacity: 0.55;
+}
+.dvads-multi-row.dvads-multi-row-empty .dvads-multi-row-mid,
+.dvads-multi-row.dvads-multi-row-empty .dvads-multi-row-bot {
+  opacity: 0.4;
+}
+.dvads-multi-row-mid,
+.dvads-multi-row-bot {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: #6B7280;
+  padding-left: 22px;
+  flex-wrap: wrap;
+}
+.dvads-multi-metric em,
+.dvads-multi-biz em {
+  font-style: normal;
+  font-weight: 500;
+  color: #171717;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.dvads-multi-row-bot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.dvads-multi-contract {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6B7280;
+}
+.dvads-multi-contract.is-warning {
+  color: #DC2626;
+}
+.dvads-multi-contract.is-expired {
+  color: #9CA3AF;
+}
+.dvads-multi-row-error {
+  font-size: 11px;
+  color: #DC2626;
+  padding-left: 22px;
+}
+
+.dvads-multi-loading,
+.dvads-multi-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #6B7280;
+}
+.dvads-multi-loading::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+

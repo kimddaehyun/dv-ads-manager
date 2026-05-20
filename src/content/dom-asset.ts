@@ -20,23 +20,28 @@
  */
 
 import { setReactInputValue, waitFor } from "@/content/dom-bid";
-import type { HeadlinePosition } from "@/content/asset-bulk-popup";
+import type { HeadlinePosition, PromoKind } from "@/content/asset-bulk-popup";
 
 // ─── 공개 타입 ───
 
-export type AssetKind = "headline" | "description" | "image";
+export type AssetKind = "headline" | "description" | "image" | "promo";
 
 export interface ExistingAssets {
   /** 이미 등록된 추가제목 텍스트 (trim 후) */
   headlines: Set<string>;
   /** 이미 등록된 추가설명 텍스트 (trim 후) */
   descriptions: Set<string>;
+  /** 이미 등록된 홍보문구 추가설명 텍스트 (trim 후) */
+  promos: Set<string>;
+  /** 이미 등록된 파워링크 이미지 개수 — 한도(2장)에서 차감해 남은 슬롯 계산. */
+  imageCount: number;
 }
 
 export type AssetItemSource =
   | { kind: "headline"; text: string; position: HeadlinePosition }
   | { kind: "description"; text: string }
-  | { kind: "image"; files: File[] };
+  | { kind: "image"; files: File[] }
+  | { kind: "promo"; description: string; promoKind: PromoKind };
 
 export type AssetFailure =
   | "no-trigger"          // "+ 새 확장 소재" 버튼 못 찾음
@@ -75,6 +80,8 @@ const HEADLINE_INPUT_ID = "headline-adextension";
 
 // 모달 등장 대기. 페이지 트랜지션 + React 렌더 합쳐 보통 200~500ms.
 const MODAL_WAIT_MS = 2500;
+// 이미지 모달은 5MB 클라이언트 리사이즈/검증 단계가 있어 다른 모달보다 오래 걸림 — 별도 wait.
+const IMAGE_SUBMIT_ENABLE_WAIT_MS = 6000;
 // 저장 버튼 활성화 대기 (validation 통과 + setState 반영).
 const SUBMIT_ENABLE_WAIT_MS = 1500;
 // 저장 클릭 후 모달 unmount 대기. 이미지 업로드 처리가 길 수 있어 넉넉히.
@@ -87,6 +94,17 @@ const KIND_LABELS: Record<AssetKind, string> = {
   headline: "추가제목",
   description: "추가설명",
   image: "파워링크 이미지",
+  promo: "홍보문구",
+};
+
+// 홍보종류 dropdown 옵션 라벨 (페이지 텍스트 그대로 — "선택 안 함"이 default).
+const PROMO_KIND_LABELS: Record<PromoKind, string> = {
+  none: "선택 안 함",
+  discount: "할인",
+  freebie: "사은품",
+  "extra-gift": "추가선물증정",
+  event: "이벤트",
+  newitem: "신상품",
 };
 
 // ─── 페이지 트리거·메뉴 ───
@@ -106,9 +124,125 @@ const KIND_LABELS: Record<AssetKind, string> = {
  *
  * 이미지는 파일 비교가 복잡하고 사용자가 매번 다른 파일을 올리는 경우가 보통이라 스캔 범위 밖.
  */
+/**
+ * 확장소재 테이블 하단의 페이지 크기 selector(`10 / 30 / 50 페이지`)를 `50/페이지`로
+ * 강제 변경한다. 광고그룹당 확장소재는 보통 50개 이내라 한 페이지에 모두 mount되어
+ * 후속 `scanExistingAssets`가 누락 없이 잡는다.
+ *
+ * 페이지네이션이 1페이지뿐인 케이스(이미 50/페이지)도 정상 동작 — selector를 못 찾거나
+ * 이미 50인 상태면 no-op.
+ */
+export async function ensurePageSizeFifty(): Promise<void> {
+  // ads.naver.com은 antd fork에 `ad-cms-` prefix를 씀.
+  // 트리거: .ad-cms-pagination-options-size-changer (selector wrapper)
+  // 현재 값: .ad-cms-select-content-value (title 속성 + textContent "N / 페이지")
+  const sizeChanger = document.querySelector<HTMLElement>(
+    ".ad-cms-pagination-options-size-changer",
+  );
+  if (!sizeChanger) {
+    console.warn("[dv-ads/asset-bulk] page size selector not found - skip");
+    return;
+  }
+
+  // 이미 50/페이지면 변경 불필요
+  const currentValue = sizeChanger
+    .querySelector<HTMLElement>(".ad-cms-select-content-value")
+    ?.textContent?.trim() ?? "";
+  if (/^50\s*\/\s*페이지/.test(currentValue)) {
+    return;
+  }
+
+  // antd fork는 mousedown 기반으로 dropdown을 토글 — click만으론 안 열릴 수 있어
+  // mousedown + click을 같이 dispatch. 이벤트 target은 selector 내부 content 영역이
+  // 정확. 그 안 .ad-cms-select-content가 실제 클릭 hit target.
+  const clickTarget =
+    sizeChanger.querySelector<HTMLElement>(".ad-cms-select-content") ?? sizeChanger;
+  dispatchMouseSequence(clickTarget);
+
+  const optionsRoot = await waitForPageSizeOptions();
+  if (!optionsRoot) {
+    console.warn("[dv-ads/asset-bulk] page size options dropdown not mounted - skip");
+    return;
+  }
+  const items = optionsRoot.querySelectorAll<HTMLElement>(
+    ".ad-cms-select-item-option, [role='option']",
+  );
+  let target: HTMLElement | null = null;
+  for (const it of Array.from(items)) {
+    const t = (it.textContent ?? "").trim();
+    if (/^50\s*\/\s*페이지$/.test(t)) {
+      target = it;
+      break;
+    }
+  }
+  if (!target) {
+    console.warn("[dv-ads/asset-bulk] 50/페이지 option not found - skip");
+    dispatchMouseSequence(clickTarget); // 드롭다운 닫기 시도
+    return;
+  }
+  dispatchMouseSequence(target);
+
+  // 페이지 re-render(추가 행 mount) 대기 — 600ms로 여유 확보
+  await new Promise((r) => setTimeout(r, 600));
+}
+
+function dispatchMouseSequence(el: HTMLElement): void {
+  // antd Select는 mousedown으로 dropdown을 토글. click도 같이 dispatch해서 다른 리스너 cover.
+  const opts = { bubbles: true, cancelable: true, view: window } as const;
+  el.dispatchEvent(new MouseEvent("mousedown", opts));
+  el.dispatchEvent(new MouseEvent("mouseup", opts));
+  el.dispatchEvent(new MouseEvent("click", opts));
+}
+
+async function waitForPageSizeOptions(): Promise<HTMLElement | null> {
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline) {
+    const root = document.querySelector<HTMLElement>(
+      ".ad-cms-select-dropdown:not(.ad-cms-select-dropdown-hidden), " +
+        ".ad-cms-select-dropdown, " +
+        "[role='listbox']",
+    );
+    if (
+      root &&
+      root.querySelector(
+        ".ad-cms-select-item-option, [role='option']",
+      )
+    ) {
+      return root;
+    }
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  return null;
+}
+
+/**
+ * 페이지 표시 라벨 → `PromoKind` enum. 행 텍스트 "홍보종류: ___" 파싱용.
+ * 홍보종류가 없는 행(= 사용자가 "선택 안 함"으로 등록한 경우)은 행에 "홍보종류:" 라인이
+ * 통째로 없어서 fallback으로 "none"으로 간주.
+ */
+const PROMO_KIND_LABEL_TO_ENUM: Record<string, PromoKind> = {
+  "선택 안 함": "none",
+  "할인": "discount",
+  "사은품": "freebie",
+  "추가선물증정": "extra-gift",
+  "이벤트": "event",
+  "신상품": "newitem",
+};
+
+/**
+ * 홍보문구 dedup 키 형식 — `${kind}|${description}`.
+ * 페이지 정책상 추가설명이 같아도 홍보종류가 다르면 별개 항목으로 등록되므로
+ * 종류+설명 쌍을 dedup 단위로 삼는다.
+ */
+export function promoDedupKey(kind: PromoKind, description: string): string {
+  return `${kind}|${description.trim()}`;
+}
+
 export function scanExistingAssets(): ExistingAssets {
   const headlines = new Set<string>();
   const descriptions = new Set<string>();
+  const promos = new Set<string>();
+  let imageCount = 0;
 
   const rows = document.querySelectorAll<HTMLElement>(
     "tr.ad-cms-table-row[data-row-key]",
@@ -118,22 +252,118 @@ export function scanExistingAssets(): ExistingAssets {
     if (cells.length < 5) continue;
 
     const typeText = (cells[4].textContent ?? "").trim();
-    if (typeText !== "추가제목" && typeText !== "추가설명") continue;
+    if (typeText === "파워링크 이미지") {
+      // 이미지 파일 dedup은 비용 대비 가치 낮음(파일명·해시 비교 필요) → 개수만 카운트.
+      // 한도(2장) 초과 차단·남은 슬롯 표시에는 충분.
+      imageCount += 1;
+      continue;
+    }
+    if (typeText !== "추가제목" && typeText !== "추가설명" && typeText !== "홍보문구") continue;
 
-    const firstDot = cells[2].querySelector<HTMLElement>(
-      ".extension-text ul li:first-child .extension-dot",
+    // 홍보문구 행은 cell[2] 안에 "홍보종류: ___" / "추가설명: ___" 두 줄 형태로 표시.
+    // 추가설명만 단독으로 있으면 종류는 "선택 안 함"(none). dedup은 (종류, 설명) 쌍 기준.
+    if (typeText === "홍보문구") {
+      const parsed = parsePromoCell(cells[2]);
+      if (parsed && parsed.description) {
+        promos.add(promoDedupKey(parsed.kind, parsed.description));
+      }
+      console.log(
+        "[dv-ads/asset-scan-row]",
+        "type=홍보문구",
+        "parsed=", parsed,
+      );
+      continue;
+    }
+
+    // 본문 텍스트 추출 — 추가제목/추가설명 DOM 구조가 다를 수 있어 3단계 fallback:
+    //   1) 첫 li 안 .extension-dot textContent
+    //   2) 첫 li 직속 textContent
+    //   3) cells[2] 자체 textContent에서 button/input 영역 clone 제거 후 추출
+    let text = "";
+    const firstLi = cells[2].querySelector<HTMLElement>(
+      ".extension-text ul li:first-child",
     );
-    if (!firstDot) continue;
-    // .extension-dot 안에 "노출 가능 위치 지정:" 같은 메타정보가 같이 들어오는 경우는
-    // 두 번째 li로 분리되어 있어서, 첫 li의 .extension-dot은 본문 텍스트만 들고 있음.
-    const text = (firstDot.textContent ?? "").trim();
+    let stage = "none";
+    if (firstLi) {
+      const dot = firstLi.querySelector<HTMLElement>(".extension-dot");
+      if (dot && (dot.textContent ?? "").trim()) {
+        text = (dot.textContent ?? "").trim();
+        stage = "dot";
+      } else if ((firstLi.textContent ?? "").trim()) {
+        text = (firstLi.textContent ?? "").trim();
+        stage = "li";
+      }
+    }
+    if (!text) {
+      // cells[2] 전체 텍스트 — button/input/링크 같은 보조 영역은 clone에서 제거
+      const cloned = cells[2].cloneNode(true) as HTMLElement;
+      cloned
+        .querySelectorAll("button, input, a, .ad-cms-button, [role='button']")
+        .forEach((el) => el.remove());
+      text = (cloned.textContent ?? "").trim();
+      stage = "cell";
+    }
+    console.log(
+      "[dv-ads/asset-scan-row]",
+      "type=" + typeText,
+      "firstLi=" + !!firstLi,
+      "stage=" + stage,
+      "text=" + JSON.stringify(text),
+    );
     if (!text) continue;
 
     if (typeText === "추가제목") headlines.add(text);
     else descriptions.add(text);
   }
 
-  return { headlines, descriptions };
+  // 진단 로그 — 출시 전 제거. scan 결과를 콘솔에서 즉시 확인 가능.
+  console.log(
+    "[dv-ads/asset-scan] headlines:",
+    Array.from(headlines),
+    "descriptions:",
+    Array.from(descriptions),
+    "promos:",
+    Array.from(promos),
+    "imageCount:",
+    imageCount,
+  );
+
+  return { headlines, descriptions, promos, imageCount };
+}
+
+/**
+ * 홍보문구 행 cell에서 (kind, description) 쌍 파싱.
+ *
+ * 페이지 DOM (2026-05-20 정찰):
+ *   <td>...<ul>
+ *     <li><span class="extension-dot">홍보종류: 추가선물증정</span></li>
+ *     <li><span class="extension-dot">추가설명: 1234</span></li>
+ *   </ul>...</td>
+ * 홍보종류 "선택 안 함"인 경우 첫 번째 li가 통째로 없고 추가설명 라인 하나만 존재.
+ */
+function parsePromoCell(
+  cell: HTMLElement,
+): { kind: PromoKind; description: string } | null {
+  let kind: PromoKind = "none";
+  let description = "";
+
+  const dots = cell.querySelectorAll<HTMLElement>(
+    ".extension-text li .extension-dot",
+  );
+  for (const dot of Array.from(dots)) {
+    const clean = (dot.textContent ?? "").trim().replace(/^[\s·•・]+/, "");
+    if (clean.startsWith("홍보종류:")) {
+      const label = clean.slice("홍보종류:".length).trim();
+      if (label in PROMO_KIND_LABEL_TO_ENUM) {
+        kind = PROMO_KIND_LABEL_TO_ENUM[label];
+      }
+    } else if (clean.startsWith("추가설명:")) {
+      description = clean.slice("추가설명:".length).trim();
+    }
+  }
+
+  if (!description) return null;
+  return { kind, description };
 }
 
 export function findExtensionDropdownTrigger(): HTMLButtonElement | null {
@@ -286,6 +516,56 @@ async function selectHeadlinePosition(
   return true;
 }
 
+/**
+ * 홍보문구 모달의 "홍보종류" dropdown을 열어 지정된 옵션을 선택. default ("none")이면 no-op.
+ * trigger는 모달 body 안에서 현재 라벨("선택 안 함"|"할인"|...)을 가진 dropdown.
+ * antd-like select(`.ad-cms-select`) 또는 dropdown trigger(`.ad-cms-dropdown-trigger`) 둘 다 시도.
+ */
+async function selectPromoKind(
+  modal: HTMLElement,
+  kind: PromoKind,
+): Promise<boolean> {
+  if (kind === "none") return true;
+
+  const body = modal.querySelector<HTMLElement>(MODAL_BODY_SELECTOR) ?? modal;
+  const triggers = body.querySelectorAll<HTMLElement>(
+    ".ad-cms-dropdown-trigger, button.ad-cms-dropdown-trigger, .ad-cms-select",
+  );
+  let kindTrigger: HTMLElement | null = null;
+  for (const t of Array.from(triggers)) {
+    const txt = (t.textContent ?? "").trim();
+    // 현재 라벨이 홍보종류 옵션 중 하나면 그 dropdown이 우리 타깃.
+    const allLabels = Object.values(PROMO_KIND_LABELS);
+    if (allLabels.some((l) => txt === l || txt.includes(l))) {
+      kindTrigger = t;
+      break;
+    }
+  }
+  if (!kindTrigger) return false;
+  // antd Select는 mousedown으로도 열림. click과 둘 다 dispatch해 다른 리스너 cover.
+  const opts = { bubbles: true, cancelable: true, view: window } as const;
+  kindTrigger.dispatchEvent(new MouseEvent("mousedown", opts));
+  kindTrigger.dispatchEvent(new MouseEvent("mouseup", opts));
+  kindTrigger.click();
+
+  const targetLabel = PROMO_KIND_LABELS[kind];
+  const opt = await waitFor(() => {
+    const items = document.querySelectorAll<HTMLElement>(
+      "li.ad-cms-dropdown-menu-item, li[role='option'], .ad-cms-select-option, .ad-cms-select-item-option",
+    );
+    for (const li of Array.from(items)) {
+      const text = (li.textContent ?? "").trim();
+      if (text === targetLabel) return li;
+    }
+    return null;
+  }, MENU_WAIT_MS);
+  if (!opt) return false;
+  opt.dispatchEvent(new MouseEvent("mousedown", opts));
+  opt.dispatchEvent(new MouseEvent("mouseup", opts));
+  opt.click();
+  return true;
+}
+
 /** 모달 footer의 "저장" primary 버튼. disabled 상태도 그대로 돌려준다. */
 function findSubmitButton(modal: HTMLElement): HTMLButtonElement | null {
   const footer = modal.querySelector<HTMLElement>(MODAL_FOOTER_SELECTOR);
@@ -306,12 +586,12 @@ function findCloseButton(modal: HTMLElement): HTMLButtonElement | null {
 }
 
 /** 저장 버튼이 활성화될 때까지 대기. 시간 초과 시 false. */
-async function waitForSubmitEnabled(modal: HTMLElement): Promise<boolean> {
+async function waitForSubmitEnabled(modal: HTMLElement, timeoutMs = SUBMIT_ENABLE_WAIT_MS): Promise<boolean> {
   const ready = await waitFor(() => {
     const btn = findSubmitButton(modal);
     if (!btn) return null;
     return btn.disabled ? null : btn;
-  }, SUBMIT_ENABLE_WAIT_MS);
+  }, timeoutMs);
   return ready != null;
 }
 
@@ -390,6 +670,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function raf(): Promise<void> {
+  return new Promise((r) => requestAnimationFrame(() => r()));
+}
+
 /**
  * 저장 클릭 후 모달 unmount 대기. 1차 대기에서 안 닫히면 input 이벤트 재dispatch + click 재시도.
  * 사용자 보고된 race(첫·마지막 모달의 submit click 무시)에 대응.
@@ -457,18 +741,34 @@ async function registerImageItem(files: File[]): Promise<AssetResult> {
     return { kind: "image", ok: false, label: displayLabel, reason: "no-file-input" };
   }
 
-  // DataTransfer로 file 주입 — 페이지의 onChange가 정상 트리거되도록 change 이벤트도 dispatch.
+  // DataTransfer로 file 주입. 페이지(React)가 file 받자마자 canvas로 미리보기 처리 —
+  // canvas ref가 mount되기 전에 `.toBlob()` 호출되면 "Cannot read properties of null"
+  // 에러. input/change를 같은 tick에 dispatch하면 React batched 처리로 ref mount 시점이
+  // 어긋남. raf 사이에 두 이벤트를 분리하고 short delay로 canvas mount 시간 확보.
   const dt = new DataTransfer();
   for (const f of validFiles) dt.items.add(f);
   fileInput.files = dt.files;
+  validFiles.forEach((f) => {
+    console.log(
+      `[dv-ads/asset-bulk] image inject name="${f.name}" size=${f.size}b type="${f.type}"`,
+    );
+  });
   fileInput.dispatchEvent(new Event("input", { bubbles: true }));
+  await raf();
   fileInput.dispatchEvent(new Event("change", { bubbles: true }));
+  // 페이지의 file picker dismissal 흉내 — blur 후 페이지가 canvas mount 진행.
+  await sleep(50);
+  fileInput.dispatchEvent(new Event("blur", { bubbles: true }));
 
   // 페이지가 이미지 업로드 처리(클라이언트 리사이즈/검증)를 마치고 저장 버튼을 활성화할 때까지 대기.
-  // 5MB·2000x2000 한도라 single image는 보통 1초 이내, 여러 장이면 더 걸릴 수 있음.
-  const enabled = await waitForSubmitEnabled(modal);
+  // 5MB·2000x2000 한도. URL 다운로드 받은 이미지가 큰 경우 리사이즈에 수 초 걸릴 수 있어
+  // 이미지 모달은 다른 모달보다 긴 wait(6초) 적용.
+  const enabled = await waitForSubmitEnabled(modal, IMAGE_SUBMIT_ENABLE_WAIT_MS);
   const submitBtn = findSubmitButton(modal);
   if (!enabled || !submitBtn) {
+    // 진단 — 페이지가 모달에 띄운 에러 메시지(있다면)를 콘솔로 남겨 어떤 검증이 실패했는지 추적.
+    const modalText = (modal.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 500);
+    console.warn("[dv-ads/asset-bulk] submit-disabled - modal text:", modalText);
     findCloseButton(modal)?.click();
     return {
       kind: "image",
@@ -488,6 +788,74 @@ async function registerImageItem(files: File[]): Promise<AssetResult> {
 }
 
 /**
+ * 홍보문구 등록 — 홍보종류 dropdown(선택 안 함 default) + 추가설명 14자 입력 후 저장.
+ * 텍스트 모달과 흐름은 같되 dropdown 선택이 한 단계 추가됨.
+ */
+async function registerPromoItem(
+  description: string,
+  promoKind: PromoKind,
+): Promise<AssetResult> {
+  const label = KIND_LABELS.promo;
+  const trimmed = description.trim();
+  if (!trimmed) {
+    return { kind: "promo", ok: true, label: `${label} (빈 항목)`, reason: "empty" };
+  }
+  const kindSuffix =
+    promoKind !== "none" ? ` [${PROMO_KIND_LABELS[promoKind]}]` : "";
+  const displayLabel = `${label} "${trimmed}"${kindSuffix}`;
+
+  const opened = await openMenuAndClick(label);
+  if (!opened) {
+    return { kind: "promo", ok: false, label: displayLabel, reason: "no-menu-item" };
+  }
+
+  const modal = await waitFor(() => findOpenModal("promo"), MODAL_WAIT_MS);
+  if (!modal) {
+    return { kind: "promo", ok: false, label: displayLabel, reason: "no-modal" };
+  }
+
+  // React mount 직후 페이지 리스너 settle을 위해 짧게 양보 (텍스트 모달과 동일).
+  await sleep(80);
+
+  // 홍보종류를 먼저 선택 — dropdown이 setState하면서 input 영역 재mount 가능성.
+  if (promoKind !== "none") {
+    const kindOk = await selectPromoKind(modal, promoKind);
+    if (!kindOk) {
+      findCloseButton(modal)?.click();
+      return { kind: "promo", ok: false, label: displayLabel, reason: "position-failed" };
+    }
+    // dropdown close + 다음 단계 input 안정화 짧은 대기.
+    await sleep(120);
+  }
+
+  // 추가설명 input — 모달 body 안의 단일 text input.
+  const input = findTextInput(modal, "description");
+  if (!input) {
+    findCloseButton(modal)?.click();
+    return { kind: "promo", ok: false, label: displayLabel, reason: "no-input" };
+  }
+  setReactInputValue(input, trimmed);
+
+  const enabled = await waitForSubmitEnabled(modal);
+  const submitBtn = findSubmitButton(modal);
+  if (!enabled || !submitBtn) {
+    findCloseButton(modal)?.click();
+    return {
+      kind: "promo",
+      ok: false,
+      label: displayLabel,
+      reason: submitBtn ? "submit-disabled" : "no-submit",
+    };
+  }
+  submitBtn.click();
+  const closed = await waitForModalClosedRetry(modal, submitBtn, input, trimmed);
+  if (!closed) {
+    return { kind: "promo", ok: false, label: displayLabel, reason: "modal-not-closed" };
+  }
+  return { kind: "promo", ok: true, label: displayLabel };
+}
+
+/**
  * 외부 진입점 — 한 항목 등록. 종류별 분기.
  */
 export async function registerAssetItem(item: AssetItemSource): Promise<AssetResult> {
@@ -497,6 +865,9 @@ export async function registerAssetItem(item: AssetItemSource): Promise<AssetRes
     }
     if (item.kind === "description") {
       return await registerTextItem("description", item.text);
+    }
+    if (item.kind === "promo") {
+      return await registerPromoItem(item.description, item.promoKind);
     }
     return await registerImageItem(item.files);
   } catch (e) {

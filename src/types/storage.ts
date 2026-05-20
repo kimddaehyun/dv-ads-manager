@@ -116,3 +116,91 @@ export interface KeywordPerformanceCache {
   /** 캐시 적재 시각 (ISO date string) */
   fetched_at: string;
 }
+
+/**
+ * F-MultiAccount — 광고계정 자동 명단 디렉터리 캐시.
+ * chrome.storage.local 단일 키: `multi_account_directory`
+ *
+ * 데이터 소스: `GET /apis/ad-account/v1.1/adAccounts/access` (광고관리자 internal API).
+ * 콘텐츠 스크립트가 ads.naver.com 첫 로드 시 자동 수집 후 캐시. 옵션 페이지는 이 캐시를 읽어서
+ * 사용자 편집 메타(MultiAccountUserMeta)와 합쳐서 표시한다.
+ */
+export interface MultiAccountDirectoryEntry {
+  /** 광고계정 번호 */
+  adAccountNo: number;
+  /** 서버측 광고계정명 */
+  name: string;
+  /** SA(검색광고) | GFA(디스플레이) — F-MultiAccount는 SA만 사용 */
+  adPlatformType: string;
+  /** 사용자 권한 (MASTER / OPERATOR / VIEWER 등) */
+  roleName: string;
+  /** 서버측 즐겨찾기 (사용자 메타 favorite과 OR 결합) */
+  serverFavorite: boolean;
+  /** 마지막 접속 시각 (ISO 8601) */
+  lastAccessTime: string;
+  /** masterCustomerId — 검색광고 API customerId와 동일 */
+  masterCustomerId?: number;
+  /** 비활성/삭제 계정은 리스트에서 제외 */
+  disabled?: boolean;
+  deleted?: boolean;
+}
+
+export interface MultiAccountDirectoryCache {
+  /** 캐시 적재 시각 (ISO date string) */
+  fetched_at: string;
+  /** 전체 광고계정 명단 (페이지네이션 누적) */
+  entries: MultiAccountDirectoryEntry[];
+}
+
+/**
+ * F-MultiAccount — 광고계정 사용자 편집 메타.
+ * chrome.storage.local 단일 키: `multi_account_user_meta` (Record<adAccountNo, MultiAccountUserMeta>)
+ *
+ * 광고계정 명단 자체는 `/apis/ad-account/v1.1/adAccounts/access`로 자동 수집(디렉터리 캐시).
+ * 그 디렉터리에서 사용자가 명시적으로 "추가"한 것만 popover에 표시(별도 키 `multi_account_added_list`).
+ * 본 모델은 추가된 계정의 별칭만 관리한다.
+ */
+export interface MultiAccountUserMeta {
+  /** 광고계정 번호 (광고관리자 URL ad-accounts/{adAccountNo}) */
+  adAccountNo: number;
+  /** 사용자 별칭. 비어있으면 서버의 adAccount.name 사용 */
+  displayName?: string;
+  /** 즐겨찾기 — true면 1시간마다 자동 갱신 + 리스트 상단 정렬 */
+  favorite?: boolean;
+}
+
+/**
+ * F-MultiAccount — 각 광고계정의 어제 데이터/비즈머니/계약 캐시 스냅샷.
+ * chrome.storage.local 키: `multi_account_snapshot:<adAccountNo>` — 10분 TTL stale-while-revalidate.
+ *
+ * 수집 방식: background tab으로 해당 계정 페이지를 active:false로 열어 콘텐츠 스크립트가
+ * 비즈머니/계약/stats를 호출한 뒤 응답. 자세한 사유는 메모리
+ * `project_f_multiaccount_cross_account_decision` 참조.
+ */
+export interface MultiAccountSnapshot {
+  adAccountNo: number;
+  /** 어제 8지표 합산 (광고계정 전체 캠페인). 수집 실패 시 null */
+  yesterday: {
+    impressions: number;
+    clicks: number;
+    ctr: number;         // 클릭률 % = clicks/impressions * 100
+    cpc: number;         // 평균 CPC (원)
+    cost: number;        // 총비용 (원)
+    revenue: number;     // 전환매출 (원)
+    conversions: number; // 전환수
+    roas: number;        // ROAS % = revenue/cost * 100
+  } | null;
+  /** 비즈머니 잔액 = refundableAmt + nonRefundableAmt (원). 수집 실패 시 null */
+  bizMoney: number | null;
+  /** BRAND_SEARCH 등 기간 계약. 계약 없으면 빈 배열 */
+  contracts: {
+    product: string;        // contractName (e.g. "PC.4.10 ~ 7.08")
+    campaignTp: string;     // "BRAND_SEARCH" 등
+    endDate: string;        // ISO 8601 UTC (contractEndDt)
+    status: string;         // contractStatus (e.g. "ON_EXPOSING")
+  }[];
+  /** 캐시 적재 시각 (ISO date string) */
+  fetched_at: string;
+  /** 수집 중 실패 사유 (사용자 친화 한글 메시지) */
+  error?: string;
+}

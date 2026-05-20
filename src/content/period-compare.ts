@@ -34,7 +34,7 @@ import { friendlyApiError } from "@/lib/friendly-error";
 // SPA 라우팅 시 모두 비움.
 const recentCaptures: PeriodCompareCapture[] = [];
 const MAX_RECENT_CAPTURES = 20;
-const DEBUG_CAPTURE = true; // 첫 출시까지 켜두고, 안정화 후 false.
+const DEBUG_CAPTURE = false; // 매체별 응답 schema 분석/별칭 추가 시 true로 일시 전환.
 
 declare global {
   interface WindowEventMap {
@@ -284,7 +284,17 @@ const BTN_MARK = "data-dvads-period-btn";
 let lastButton: HTMLButtonElement | null = null;
 let lastContainer: HTMLElement | null = null;
 
+// 보고서 메뉴 하위 페이지(매체별/다차원/캠페인 보고서 등)는 데이터를 비동기 큐 API
+// (Master Reports)로 처리해 page 자체 fetch로는 의미 있는 stats를 캡처할 수 없다.
+// 버튼이 떠도 popover가 0/0으로만 채워져 혼란만 주므로 mount 자체를 skip.
+// 매체 캠페인 리스트(/sa/campaigns-by/*)·광고그룹 페이지(/sa/adgroups/*)에서만 표시.
+const REPORT_PATH_RE = /\/reports?(\/|$)/i;
+
 function mountButton(): void {
+  if (REPORT_PATH_RE.test(location.pathname)) {
+    unmountButton();
+    return;
+  }
   // 매체 pathname 매칭이 부정확한 페이지가 있어 (파워링크/브랜드/파워컨텐츠 캠페인 리스트 등)
   // 매체 사전 식별은 mount 조건에서 제외. 날짜 picker가 발견되는 모든 광고관리자 페이지에
   // 버튼을 mount하고, 매체 식별은 fetch capture 들어올 때 fetch URL로 판별한다.

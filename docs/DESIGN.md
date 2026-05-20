@@ -629,6 +629,39 @@ variants: 기본(brand 톤) / `.warn` (앰버) / `.lock` (회색).
 진행바(`scaleX(1)` → `scaleX(0)`)로 Undo 잔여 시간(기본 5000ms)을 시각화.
 큐 최대 3개, 초과 시 가장 오래된 것부터 제거.
 
+### Dropdown (오버레이 공용 — 단일 진실의 원천)
+
+콘텐츠 오버레이의 모든 단일 선택 UI는 **`src/content/ui-dropdown.ts`의 `createDropdown`**
+함수를 사용한다. 네이티브 `<select>`는 OS·브라우저별 외관이 달라 시각 통일이 불가능하므로
+**오버레이에서는 사용 금지**. 옵션/팝업(React+Tailwind 컨텍스트)은 별도 — 추후 React용
+컴포넌트 도입 시 동일 시각 토큰을 따른다.
+
+**시각 토큰** — 트리거는 `1px #ECEEF0` 보더 + 8px radius + 32px height + Pretendard 13px/500.
+열린 상태에서 보더가 `#E6783B`로 전환되고 chevron이 180° 회전하며 색도 주황으로. 패널은
+`6px` 내부 패딩 + 10px radius + `box-shadow: 0 8px 24px rgba(0,0,0,0.10)` + 각 옵션은 6px
+radius로 호버 시 `#F3F4F6`, 선택된 옵션은 `rgba(230,120,59,0.10)` 배경 + 주황 텍스트.
+
+```css
+.dvads-dropdown-trigger { height: 32px; padding: 0 10px; border: 1px solid #ECEEF0; border-radius: 8px; }
+.dvads-dropdown-trigger.is-open { border-color: #E6783B; background: rgba(230,120,59,0.04); }
+.dvads-dropdown-panel { padding: 6px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.10); }
+.dvads-dropdown-option.is-selected { background: rgba(230,120,59,0.10); color: #E6783B; }
+```
+
+```ts
+const dd = createDropdown<HeadlinePosition>({
+  value: "all",
+  options: [{ value: "all", label: "모든 위치" }, ...],
+  ariaLabel: "노출 위치",
+  width: 120,
+  onChange: (v) => { ... },
+});
+row.appendChild(dd.root);
+```
+
+패널은 `document.body`에 portal로 mount되어 popup의 `overflow-y:auto` 클리핑을 escape한다.
+popup 등 컨테이너가 dismiss될 때 `closeAllOpenDropdowns()`를 호출해 잔여 패널을 정리.
+
 ### Common Button (오버레이 — 다이얼로그/토스트용)
 
 ```css
@@ -670,6 +703,9 @@ variants: 기본(brand 톤) / `.warn` (앰버) / `.lock` (회색).
   버튼은 1~2개로 제한 (너무 많으면 강조가 사라짐).
 - **새 패턴이 필요하면 즉흥 도입 X** — 이 문서 먼저 갱신한 뒤 `src/styles/theme.css`와
   `src/styles/overlay.css`에 반영.
+- **오버레이 dropdown은 `createDropdown` 사용 의무** — 네이티브 `<select>`는 OS별 외관이
+  갈려 시각 통일 불가. 모든 단일 선택 UI는 `src/content/ui-dropdown.ts`의 함수를 거치고
+  새 dropdown 변종이 필요하면 옵션 추가로 흡수 (별도 컴포넌트 X).
 
 ---
 

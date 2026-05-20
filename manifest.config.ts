@@ -16,10 +16,17 @@ export default defineManifest({
     "48": "src/assets/icon-128.png",
     "128": "src/assets/icon-128.png",
   },
-  permissions: ["storage"],
+  permissions: ["storage", "tabs"],
   host_permissions: [
     "https://ads.naver.com/*",
     "https://api.searchad.naver.com/*",
+    // F-AssetBulk V2 — 상품 페이지에서 메인 이미지 후보 추출. background hidden tab으로 페이지를
+    // 열고 그 안의 콘텐츠 스크립트(product-page-scrape.ts)가 DOM에서 갤러리 이미지를 수집.
+    "https://smartstore.naver.com/*",
+    "https://brand.naver.com/*",
+    // F-AssetBulk V2 — 사용자가 선택한 상품 이미지를 광고 모달에 업로드하기 위해 binary를
+    // background에서 fetch. 네이버 쇼핑 이미지 CDN.
+    "https://shop-phinf.pstatic.net/*",
   ],
   options_ui: {
     page: "src/options/index.html",
@@ -49,6 +56,18 @@ export default defineManifest({
       run_at: "document_start",
       world: "MAIN",
       all_frames: true,
+    },
+    {
+      // F-AssetBulk V2 — 스마트스토어/브랜드스토어 상품 페이지에 inject되는 가벼운 스크레이퍼.
+      // background가 hidden tab으로 이 페이지를 열면 SCRAPE_PRODUCT_IMAGES 메시지를 받아
+      // DOM에서 갤러리 이미지 URL을 수집해 응답한다. SPA hydration 후 추출하므로 SSR fetch보다
+      // 정확하다.
+      matches: [
+        "https://smartstore.naver.com/*/products/*",
+        "https://brand.naver.com/*/products/*",
+      ],
+      js: ["src/content/product-page-scrape.ts"],
+      run_at: "document_idle",
     },
   ],
   web_accessible_resources: [

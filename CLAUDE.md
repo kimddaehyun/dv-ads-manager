@@ -27,7 +27,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 
 - `src/content/index.ts` — `ads.naver.com` 페이지 주입 콘텐츠 스크립트. 광고 키워드 옆 입찰가·순위 오버레이 렌더 + 팝오버 행 클릭으로 입찰가 자동 변경. popover에 PC/모바일 디바이스 토글(PC default eager 호출, MOBILE은 토글 시 lazy 호출). in-memory + storage 캐시 키에 device 포함(`<prefix>:<device>:<keyword>[:<bid>]`). 토글 시 popover 높이 morph(FLIP 패턴) + flip 결정 freeze(`openPopoverFlipHeight`)로 위치 jitter 방지.
 - `src/content/dom-bid.ts` — ads.naver.com 입찰가 변경 UI 자동화 격리. 페이지 입찰가 셀 클릭 → React 호환 input 값 주입 → 변경 버튼 클릭 → 셀 갱신 대기. `waitFor` / `setReactInputValue` 헬퍼는 다른 자동화 모듈에서도 import해서 사용.
-- `src/content/asset-bulk.ts` + `asset-bulk-popup.ts` + `dom-asset.ts` — F-AssetBulk 파워링크 확장소재 일괄 등록. "+ 새 확장 소재" 드롭다운에 "일괄 등록" li 주입 → native DOM 팝업으로 이미지/추가제목/추가설명 입력 → 페이지 모달 자동화로 순차 등록. 확장소재 페이지 DOM 셀렉터는 `dom-asset.ts`에 격리.
+- `src/content/asset-bulk.ts` + `asset-bulk-popup.ts` + `dom-asset.ts` — F-AssetBulk 파워링크 확장소재 일괄 등록. "+ 새 확장 소재" 드롭다운에 "등록" li 주입 → native DOM 팝업으로 이미지/추가제목/추가설명/홍보문구(최대 2개) 입력 → 페이지 모달 자동화로 순차 등록. 홍보문구는 `[홍보종류 select][추가설명 14자]` 쌍이고 종류 dropdown은 `selectPromoKind`로 mousedown+click + portal li 매칭. 확장소재 페이지 DOM 셀렉터는 `dom-asset.ts`에 격리.
 - `src/content/confirm-dialog.ts` / `toast.ts` — 오버레이 다이얼로그·토스트(+5초 Undo). React 미사용, native DOM.
 - `src/background/index.ts` — MV3 Service Worker. 검색광고 API(GET_BID_ESTIMATE) fetch 위임.
 - `src/popup/` — React 19 팝업 (옵션 진입점)
@@ -39,6 +39,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `src/content/fetch-patch-main.ts` — MAIN-world에서 페이지 `fetch`/`XHR`을 패치해 stats 요청을 캡처. `CustomEvent`로 ISOLATED 콘텐츠 스크립트에 전달 (`dvads:fetch-capture`).
 - `src/content/period-compare.ts` — F-PoP 전후 비교 popover. 6개 매체 페이지 우측 상단 날짜 picker 옆 버튼 + 캡처된 stats를 직전 동일 기간 날짜로 replay.
 - `src/lib/period-compare-adapters.ts` — 매체별 응답 schema → 6지표 정규화 + URL/body 날짜 shift.
+- `src/content/multi-account.ts` + `src/lib/multi-account-data.ts` + `src/lib/multi-account-storage.ts` + `src/options/multi-account-ui.tsx` — F-MultiAccount 다계정 대시보드. `/manage/ad-accounts/` URL에서 우상단 fixed 버튼(`dvads-multi-btn`) → `dvads-multi-popover`로 광고계정 명단(자동 fetch) + 어제 6지표 + 비즈머니 + 계약 D-day(≤5 빨강). 활성 계정 데이터는 직접 fetch, 다른 계정은 background hidden tab 위임(`MULTI_ACCOUNT_COLLECT_ACCOUNT` → `chrome.tabs.create({active:false})` → tabs.sendMessage → tabs.remove, 동시 2개 cap). 옵션 페이지에서 별칭/즐겨찾기/숨김 편집. PRD §8 단일 자격증명 모델과 충돌 없음 — 광고관리자 로그인 쿠키 기반.
 - ~~F002/F003 쇼핑검색광고~~ — ⏸️ 보류 (2026-05-19). Spike B 정찰 결과(`admng_exp_keyword` + `ad-account v2`)는 메모리 `project_spike_b_shopping_endpoints`에 보존 — 추후 다른 기능에서 재사용 가능. 보류 사유는 `docs/ROADMAP.md` Task 013/014 항목 참조.
 
 ## 디자인 시스템
@@ -50,6 +51,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - **DV 주황 사용 면적 ~3% 이내** — primary 버튼 + F001 "현재 N위 ▾" 배지 + focus ring + 다이얼로그 차액(+) 강조. 페이지 배경·본문 텍스트·카드 보더 등에는 X.
 - **Pretendard 1순위**, 3-weight(400/500/600) 시스템. 700 bold는 옵션 페이지 h1에만.
 - **콘텐츠 오버레이는 `dvads-` prefix로 격리** — `ads.naver.com` 호스트 CSS와 충돌 방지.
+- **오버레이 dropdown은 `createDropdown`(`src/content/ui-dropdown.ts`) 의무** — 네이티브 `<select>` 사용 금지. OS·브라우저별 외관 차이로 시각 통일 불가. popup 등 컨테이너 dismiss 시 `closeAllOpenDropdowns()` 호출해 portal 패널 정리.
 - **em dash(`—`) / minus sign(`−` U+2212) 금지** — 모든 짝대기는 일반 하이픈 `-` (U+002D)만 사용. 음수 표시(`(-230)`)도 동일.
 
 새 패턴이 필요하면 코드에 즉흥 도입하지 말고 `docs/DESIGN.md`를 먼저 갱신한 뒤 반영.
@@ -73,6 +75,8 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - **XHR `readystatechange` 단독 의존 금지** — `lib-sentry` 등 third-party가 XHR wrap을 덧씌우면 우리 listener가 무력화됨. `load`/`loadend`/`error`/`abort`도 같이 listen + `dispatched` flag로 멱등성 보장.
 - **광고관리자 SPA URL 패턴**: `/manage/ad-accounts/{adAccountNo}/sa/campaigns-by/{TYPE}` (매체 리스트, TYPE=`WEB_SITE`(파워링크)/`SHOPPING_NS`(쇼핑)/`BRAND`(브랜드)/`POWER_CONTENTS`/`PLACE`), `/manage/ad-accounts/{adAccountNo}/sa/adgroups/{adgroupId}` (광고그룹 상세). `adAccountNo`는 광고관리자 URL ID — 검색광고 API `customerId`와 별개.
 - **`.dvads-bid-table` 재사용 시 CSS specificity 주의** — 베이스 `.dvads-bid-table td { color: #171717 }`(specificity 0,1,1)가 셀 색 클래스(`.dvads-period-delta-up` 0,1,0)를 덮어씀. 행·셀 색 override는 `td.dvads-X` 또는 `.dvads-bid-table td.dvads-X`(0,2,1) 형태로 specificity 맞춤.
+- **광고관리자 internal API의 SPA 활성 계정 컨텍스트 의존성** — `/apis/sa/api/bizmoney/account`·`/apis/sa/api/ncc/time-contracts/...`·`/apis/sa/api/ncc/campaigns` 같은 endpoint들이 URL에 `adAccountNo`가 없고 현재 활성 계정(SPA state·쿠키 세션) 기준으로 응답. 콘텐츠 스크립트에서 다른 계정 ID로 직접 fetch해도 현재 계정 데이터가 돌아오거나 거부됨. F-MultiAccount는 이 한계 때문에 **background hidden tab**(`chrome.tabs.create({active:false})` → 새 탭 컨텐츠 스크립트가 활성 계정으로 fetch → tabs.remove) 패턴을 채택. 다른 internal API 신규 사용 시 cross-account 가능 여부를 먼저 정찰 필요.
+- **`/apis/sa/api/stats` body `ids` 필드는 캠페인/광고그룹 ID 쉼표 분리 문자열** — 배열 아닌 문자열. 한 번에 많이 넣으면 URL/payload 한계가 있을 수 있어 chunk(80개 등)로 호출 후 응답 합산. `*Micros` suffix는 ÷1,000,000 = 원 단위.
 - **`/estimate/average-position-bid/keyword` position 상한은 device별로 다름** — PC 1~10, **MOBILE 1~5만 허용** (400 `position(N) must be lower than 5`). batch에 cap 초과 1개라도 섞이면 전체 400 거부 → silent-empty → "응답없음" 배지. `MAX_POSITION_BY_DEVICE` 상수(`src/types/storage.ts`)로 가드. 다른 estimate endpoint도 device-specific 제약 가능성 — 새 device 호출 도입 시 raw 응답 1회 검증 필수.
 - **배지 ⚠ "응답없음" 디버깅 1순위 = SW Console raw 로그** (`[searchad] ... raw response` 또는 `API 4xx`). silent-empty = "응답은 받았는데 데이터 0개" 상태. spike 로그는 모듈당 1회만 찍히니 확장 reload 후 재호출하면 다시 찍힘. 400 에러 메시지의 `fields:` 가 결정적 단서.
 - **`tsc -b` incremental cache(`.tsbuildinfo`)에 stale 에러가 남을 수 있음** — `rm -f tsconfig.*.tsbuildinfo && npm run typecheck`로 클린 재실행.

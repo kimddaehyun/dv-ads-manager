@@ -79,7 +79,7 @@
   - ✅ F003 `ShoppingDetailOverlay`: 소재 상세 풀패널 + 키워드 검색 input
   - ✅ 셀렉터 미정 단계라 별도 Vite 엔트리 `src/demo/index.html` 작성
 
-### Phase 3: 핵심 기능 구현
+### Phase 3: 핵심 기능 구현 ✅
 
 - **Task 008: F011 단일 자격증명 옵션 폼 구현 (storage 연동)** ✅ - 완료
   - ✅ `src/lib/searchad.ts`의 기존 `loadCredentials`/`saveCredentials`/`clearCredentials` 그대로 사용 — 단일 객체 모델 유지
@@ -115,11 +115,10 @@
   - ✅ `host_permissions`만으로 충분 — `activeTab` 추가 불필요 확인
   - 수동 검증: 자격증명 등록 상태에서 ads.naver.com 키워드 페이지 열고 팝업 새로고침 시 (1) 배지가 loading으로 돌아갔다 새 데이터로 갱신 (2) 키워드 0개일 때 안내 메시지 (3) ads.naver.com 아닌 탭에서 친화적 에러
 
-- **Task 011-1: Phase 3 통합 수동 검증**
-  - chrome://extensions reload 후 시나리오 검증
-    - 자격증명 등록 → 파워링크 오버레이 정상
-    - 자격증명 미등록 → 미등록 안내 배지 + 옵션 페이지 링크
-    - 광고주 탭 전환 시 오버레이가 정상 재초기화되는지
+- **Task 011-1: Phase 3 통합 수동 검증** ✅ - 완료 (2026-05-20)
+  - ✅ 자격증명 등록 → 파워링크 오버레이 정상 (배지 분석 중 → 현재 순위 → popover 1~10위 + 성과 추정 + 행 클릭 입찰가 자동 변경 + 5초 Undo)
+  - ✅ 자격증명 미등록 → "API 키 미등록" 배지 + 클릭 시 옵션 페이지 열림
+  - ✅ 광고주 탭 전환 시 SPA 라우팅 후 오버레이 새 키워드 행에 재마운트, 이전 광고주 잔존 없음
 
 ### Phase 4: 고급 기능 및 최적화
 
@@ -161,9 +160,9 @@
   - ✅ **다른 키워드 배지 1클릭 전환**: togglePopover가 다른 mount 클릭 시 `closePopoverImmediate()`(fade-out 생략)로 옛 popover 즉시 제거 후 새 popover 마운트. fade-out 140ms 동안 두 popover 겹침 race 차단. 추가 안전망 2겹: (1) 새 popover 만들기 직전 `document.querySelectorAll(".dvads-popover").remove()` (2) reposition rAF에서 매 프레임 잔존 popover 강제 정리
   - ✅ **CSS `overflow:hidden` + `position:relative` 보존 필수**: crossfade의 swap-out absolute wrap이 popover 박스 밖으로 튀어나가 "두 popover처럼" 보이는 시각 버그 방지. 린터가 되돌릴 수 있어 코멘트로 의도 명시
   - ✅ **캐시 마이그레이션**: 기존 device 없는 키는 새 빌드에서 자동 cache miss → 다음 fetch 때 새 키로 자연 재구축. 별도 마이그레이션 코드 불필요(TTL 4h 만료 후 prune이 청소)
-  - 🟡 **수동 검증 대기**: chrome reload + ads.naver.com hard refresh 후 (1) PC↔모바일 토글 시 popover 위치·크기 jitter 없는지 (2) 모바일 토글 시 로딩 스피너가 응답 후 사라지는지 (3) 다른 키워드 배지 1클릭 전환 시 옛 popover 즉시 사라지는지
+  - ✅ **수동 검증 완료** (2026-05-20): chrome reload + ads.naver.com hard refresh 후 (1) PC↔모바일 토글 시 popover 위치·크기 jitter 없음 (2) 모바일 토글 시 로딩 스피너가 응답 후 정상 종료 (3) 다른 키워드 배지 1클릭 전환 시 옛 popover 즉시 사라짐
 
-- **Task 018: F-PoP — 데이터 비교 popover (Period-over-Period)** 🟡 - 진행 중 (2026-05-19, SA·전체 캠페인·대시보드·GFA에서 정상 동작 확인, 일부 매체별 잔존 한계 보강 대기)
+- **Task 018: F-PoP — 데이터 비교 popover (Period-over-Period)** ✅ - 완료 (2026-05-20, SA·전체 캠페인·대시보드·GFA에서 정상 동작 확인)
   - ✅ **6개 매체 페이지 우측 상단 날짜 picker 옆 아이콘 버튼 주입** (`period-compare.ts`): bar chart 비교 아이콘(32×32 정사각, hover 시 DV 주황). 클릭 시 popover. 매체 사전 식별 없이 날짜 picker가 발견되는 광고관리자 페이지면 어디든 mount. SPA 라우팅 대응 MutationObserver
   - ✅ **MAIN-world fetch/XHR 가로채기 패턴** (`fetch-patch-main.ts` 기존): 페이지가 호출하는 stats fetch를 우리가 직접 정찰 없이 가로채 학습 → 같은 endpoint를 직전 동일 기간 날짜로 1회 replay. `CustomEvent("dvads:fetch-capture")` 채널, response는 `JSON.stringify` 후 string으로 전달(구조화 클론 안전)
   - ✅ **stats 응답 인식: URL 패턴 → shape 기반** (`isStatsLikeCapture`): 매체별 endpoint path 추정 대신 응답 안 `impCnt`·`clkCnt`·`cost`·`cpc`·`ctr` 같은 stats hint key 2개 이상이면 stats로 판정. 매체 사전 정찰 불필요, 캠페인 리스트처럼 row별 stats도 자동 cover
@@ -175,10 +174,10 @@
   - ✅ **직전 기간 날짜 shift** (`shiftDateParams`): 현재 기간 길이만큼 backward 이동. URL 쿼리·body JSON 안의 모든 string에서 4가지 포맷(`YYYY-MM-DD`/`.`/`/`/없음) 매칭 + 치환. 어떤 키 이름(`startDate`/`from`/`period.start` 등)을 쓰든 무관 동작
   - ✅ **UI/UX 완성**: ① popover 헤더 `데이터 비교` + 우측 X ② 기간 줄 "이전 기간 ~ 종료 → 선택 기간 ~ 종료 (N일)" 즉시 렌더(fetch 무관) ③ 8지표 통합 테이블 4컬럼(지표 / 이전 기간 / 선택 기간 / 증감) ④ 로딩 중 shimmer 스켈레톤 셀(레이아웃 점프 없음) ⑤ 빈값 통일 0/0원/0.0% ⑥ 한국 주식 컨벤션 증감 색(상승=빨강 / 하강=파랑) + 1자리 소수 ⑦ 이전 기간 0 → 선택 N(>0)은 분수 ∞라 "-" 표기 통일. popover 너비 520px로 수억 원대 숫자 cover
   - ✅ **DEBUG_CAPTURE 로그**: `STATS KEEP/skip-empty` + 추출된 metrics + 응답 sample 1500자 출력(콘솔). 매체별 응답 schema 분석/별칭 추가 시 사용
-  - 🟡 **잔존 한계**: ① GFA 페이지가 사용자 picker 8일 대신 weekly bucket 7일로 stats를 fetch하면 우리 shift가 부분 매치만 되어 replay 범위 어긋남 (capture URL의 실제 날짜를 "current"로 정정하는 로직 필요) ② GFA 일부 페이지는 paginated 10개 campaign stats만 부르고 account-level 집계는 없음 → 표가 top 10 합계만 표시
-  - 🟡 **첫 출시 후 cleanup**: `DEBUG_CAPTURE` flag false 전환 + 디버그 로그 제거
+  - ✅ **`DEBUG_CAPTURE` flag false 전환** (2026-05-20): `src/content/period-compare.ts:37` — 매체별 응답 schema 분석/별칭 추가 시 일시 true 전환 가능하도록 flag 자체는 보존 (`if (DEBUG_CAPTURE)` 가드로 console 출력 차단)
+  - 🔵 **출시 후 보강 후보 (corner case)**: ① GFA 페이지가 사용자 picker 8일 대신 weekly bucket 7일로 stats를 fetch하면 부분 매치만 되어 replay 범위 어긋남 (capture URL의 실제 날짜를 "current"로 정정하는 로직 필요) ② GFA 일부 페이지는 paginated 10개 campaign stats만 부르고 account-level 집계는 없음 → 표가 top 10 합계만 표시. 일반 사용 케이스 정상 동작 확인되어 v0.1 ship 차단 요소 아님
 
-- **Task 017: F-AssetBulk v1 — 파워링크 확장소재 일괄 등록** 🟡 - 진행 중 (2026-05-19, 기본 동작 검증 완료, 중복 사전 안내 + 드롭다운 깜빡임 fix 재검증 대기)
+- **Task 017: F-AssetBulk v1 — 파워링크 확장소재 일괄 등록** ✅ - 완료 (2026-05-20)
   - ✅ **드롭다운 li 주입**: ads.naver.com 광고그룹의 확장소재 탭에서 "+ 새 확장 소재 ▾" 드롭다운 끝에 "일괄 등록" 항목을 portal MutationObserver로 주입. URL 분기 없이 메뉴 mount 시점에 자연 격리(다른 탭에서는 메뉴 자체가 안 뜸)
   - ✅ **native DOM popup** (`asset-bulk-popup.ts`): 파워링크 이미지(파일/URL 모드 토글, 슬롯 ≤8) + 추가제목(슬롯 ≤8, 슬롯별 노출 위치 dropdown `[모든 위치 / 위치 1만 / 위치 2만]`) + 추가설명(슬롯 ≤1). dvads-confirm-card 베이스 + 자동화 중 visibility hidden으로 페이지 모달 가운데 표시 양보
   - ✅ **DOM 자동화** (`dom-asset.ts`): "+ 새 확장 소재" 트리거 + 종류별 li click → 페이지 모달 mount 대기(`waitFor`) → input 채움(`setReactInputValue` 재사용) → 추가제목은 노출 위치 dropdown 선택(default "all"이면 no-op, "p1"/"p2"이면 트리거 click + 라벨 매칭 li click) → 저장 enabled 대기 → click → 모달 unmount 대기. 이미지는 한 모달에서 multiple files `DataTransfer`로 한 번에 업로드, 추가제목/추가설명은 각 모달 N회 사이클
@@ -186,8 +185,23 @@
   - ✅ **중복 사전 안내** (`scanExistingAssets`): popup 열 때 페이지 확장소재 테이블(`tr.ad-cms-table-row[data-row-key]`)에서 유형 셀("추가제목"/"추가설명") + 첫 `.extension-dot` 텍스트 추출. 사용자 입력값이 일치하면 슬롯에 빨간 보더 + "이미 등록됨 - 자동 skip" 메시지. 일괄 등록 시 중복 항목은 큐에 안 넣고 시작 토스트에 "중복 N건 skip" 표시
   - ✅ **submit click race fix** (`waitForModalClosedRetry`): 첫·마지막 모달에서 페이지가 우리 click을 무시하는 race 보고됨. 모달 mount 후 80ms 양보 + 1차 800ms 대기 → 안 닫히면 input 재commit + click 1회 재시도 → 2차 대기
   - ✅ **드롭다운 깜빡임 fix**: 사이클 사이 finally의 `closeOpenMenu` trigger click이 메뉴를 토글로 다시 여는 부작용. li click이 메뉴를 자연 close하므로 finally cleanup 제거 + `closeOpenMenu`는 ESC dispatch만 사용. orchestrator 끝에서 한 번만 명시적 호출
-  - 🟡 **재검증 대기**: 중복 슬롯 실시간 경고 표시 + 자동 skip + 드롭다운 깜빡임 종료 확인
+  - ✅ **재검증 완료** (2026-05-20): 중복 슬롯 실시간 경고 + 자동 skip + 드롭다운 깜빡임 종료 확인
   - 🟡 **V2 후보** (메모리 `project_f_assetbulk_v1` 참조): 상세페이지 URL 입력 → og:image / 상품 갤러리 자동 파싱 → 이미지 슬롯 N개 자동 채우기. background fetch fallback으로 CORS 차단 URL 지원
+
+- **Task 019: F-MultiAccount — 다계정 대시보드** 🟢 - v1 구현 완료 (2026-05-20, Phase 0~2 + 1차 빌드)
+  - ✅ **Phase 0 Spike** (2026-05-20): ads.naver.com 광고관리자 페이지에서 fetch/XHR 캡처 스크립트로 정찰. 4종 endpoint·응답 schema 확정 → 메모리 `project_f_multiaccount_endpoints` 보존
+    - 광고계정 명단: `GET /apis/ad-account/v1.1/adAccounts/access?size&page&sort` (페이지네이션, content[].adAccount.{no,name,adPlatformType,masterCustomerId})
+    - 비즈머니 잔액: `GET /apis/sa/api/bizmoney/account` → `refundableAmt + nonRefundableAmt` (URL에 ID 없음 = SPA 활성 계정 컨텍스트)
+    - 계약 정보: `GET /apis/sa/api/ncc/time-contracts/after-current-summaries?nccAdgroupIds=쉼표분리` → currentTimeContract.{contractName, contractEndDt, campaignTp:"BRAND_SEARCH", contractStatus}
+    - Stats: `POST /apis/sa/api/stats` body `{fields, timeIncrement:"allDays", timeRange, ids:"cmp-...,..."}` → data[].{impCnt,clkCnt,cpc,salesAmtMicros,purchaseConvAmtMicros,purchaseCcnt} (Micros÷1M)
+  - ✅ **결정**: 비즈머니/계약이 SPA 활성 계정 의존 → 다른 계정 데이터는 **background tab 위임** (`chrome.tabs.create({active:false})` → tabs.sendMessage → tabs.remove, 동시 2개 cap). `manifest.config.ts`에 `"tabs"` permission 추가. 메모리 `project_f_multiaccount_cross_account_decision` 참조
+  - ✅ **PRD §8 단일 자격증명 모델과 충돌 없음**: 본 기능은 광고관리자 로그인 쿠키 기반, SearchadCredentials와 별개 인증 채널. 계정 명단은 자동 fetch (수동 등록 불필요), 사용자는 옵션 페이지에서 별칭/즐겨찾기/숨김만 편집
+  - ✅ **Phase 1 — Storage 모델 + 옵션 UI**: `src/types/storage.ts`에 MultiAccountDirectoryEntry/MultiAccountDirectoryCache/MultiAccountUserMeta/MultiAccountSnapshot 추가. `src/lib/multi-account-storage.ts` 신설(디렉터리·사용자 메타·스냅샷 CRUD + 10분 TTL stale check). `src/options/multi-account-ui.tsx` 신설 — 행마다 ☆즐겨찾기 토글·별칭 인라인 편집·숨김 토글·마지막 접속 시각. "명단 다시 받기" 버튼이 광고관리자 탭에 sendMessage로 갱신 위임
+  - ✅ **Phase 2 — 콘텐츠 스크립트 + 데이터 수집**: `src/lib/multi-account-data.ts` 신설(`fetchAllDirectory`·`fetchBizMoney`·`fetchCampaignIds`·`fetchAdgroupIdsByCampaignTp`·`fetchYesterdayStats`·`fetchContracts`·`collectActiveAccount`·`yesterdayKST`). `src/content/multi-account.ts` 신설 — `/manage/ad-accounts/` URL에서 우상단 fixed 버튼(`dvads-multi-btn`) 주입, 클릭 시 `dvads-multi-popover` 표시. 활성 계정은 직접 fetch(background tab 우회), 다른 계정은 `MULTI_ACCOUNT_COLLECT_ACCOUNT` 메시지 → background hidden tab. `src/background/index.ts`에 핸들러 추가(`collectViaHiddenTab` + onUpdated complete 대기 + 15초 timeout + 동시 2개 cap). `src/styles/overlay.css`에 dvads-multi-* 클래스 + D-5 빨강(`text:#DC2626`) 추가
+  - ✅ **D-5 빨강 + 만료 회색**: `computeMinDday(contracts)` 최소 D-day 계산. ≤ 0 "계약 만료" 회색, ≤ 5 "⚠ D-N 계약 종료 임박" 빨강, > 5 "D-N" 보통 색. 계약 없으면 미렌더(공간 미점유). 추가 계약 등록은 캐시 무효화(10분 후 자연 갱신 또는 옵션 페이지 "명단 다시 받기")로 빨강 해제
+  - ✅ **빌드 통과** (2026-05-20): `npm run typecheck` + `npm run build` 통과. `dist/` 갱신 완료
+  - 🟡 **다음 단계 (사용자 수동 QA)**: ① dist 로드 후 광고관리자 진입 시 우상단 "계정" 버튼 노출 확인 ② 버튼 클릭 시 popover에 명단·어제 데이터·비즈머니·계약 표시 확인 ③ 행 클릭으로 다른 계정 페이지 전환 확인 ④ 옵션 페이지 "광고계정 명단" 섹션에서 별칭 편집/즐겨찾기/숨김 동작 확인 ⑤ D-5 빨강 표시 확인 (브랜드검색 계약 종료 임박 계정이 있을 때)
+  - 🔵 **V2 후보**: ① 행 드래그로 순서 변경 ② 검색/필터 입력 ③ 광고비 일간/주간 토글 ④ 비즈머니 잔액 임계값 알림 ⑤ 다른 광고그룹 타입(POWER_CONTENTS_BRANDING 등) 계약도 표시
 
 - **Task 015: 캐시 prune + 웹스토어 심사 준비** 🟡 - 진행 중 (캐시 prune 완료)
   - ✅ **캐시 prune** (2026-05-19): `src/lib/cache-prune.ts` 신규 — 4개 prefix(`volume_cache:` / `performance_cache:` / `shopping_cache:` / `current_bid:`) 스캔해 TTL 4h 만료 항목 일괄 삭제. 메타 키 `__last_prune_at`로 마지막 실행 시각 기록 후 1h 간격 throttle. background `onInstalled`에서 1회 + `GET_BID_ESTIMATE` hot path에서 fire-and-forget `maybePrune()` 호출. 형식 모를 엔트리(타임스탬프 없음)는 안전 보존. `chrome.alarms` 권한 추가 없이 service worker 자연 깨어남 사이클로 처리
@@ -198,11 +212,10 @@
 
 ---
 
-**📅 최종 업데이트**: 2026-05-19
-**📊 진행 상황**: Phase 1·2 완료 ✅ + Phase 3 Task 008·010·011 완료 ✅ (Task 011-1 통합 검증 대기) + Phase 4 Task 012 Spike B 완료 ✅ + Task 015 캐시 prune 완료 ✅ + Task 016 device 토글 완료 ✅ (수동 검증 대기 🟡) + Task 017 F-AssetBulk v1 진행 중 🟡 + Task 018 F-PoP 데이터 비교 popover 진행 중 🟡 (SA·전체 캠페인·대시보드·GFA 정상 동작 확인, 일부 매체별 잔존 한계 보강 대기). F001 파워링크 라인 완성 — 1~10위 시장가 + 현재 순위 + 성과 추정 + **팝오버 행 클릭으로 입찰가 자동 변경(다이얼로그 → 페이지 DOM 자동화 → 5초 Undo 토스트)** + **PC/모바일 디바이스 토글(PC default + 모바일 lazy, MOBILE 1~5위 cap 보강, crossfade·height morph 애니메이션, 1-click 키워드 전환, 한글 친화 에러 메시지)** 까지. F012 팝업 새로고침이 실제 동작. 캐시 prune 자동화로 5MB quota 보호. F-AssetBulk로 확장소재 일괄 등록(이미지·추가제목·추가설명 + 노출 위치 슬롯별 지정 + 중복 사전 안내) 추가. F-PoP로 6개 매체 페이지 데이터 비교 popover(8지표·shape 기반 자동 캡처·날짜 매칭 필터·깊이 walk 집계) 추가. **Task 013/014 F002·F003 보류** (2026-05-19). v0.1은 **F001 + F011 + F012 + F-AssetBulk + F-PoP**로 ship, Task 011-1 통합 검증 + Task 015 잔여(아이콘·스토어 자료·릴리스) 마무리 후 출시.
+**📅 최종 업데이트**: 2026-05-20
+**📊 진행 상황**: Phase 1·2·3 완료 ✅ + Phase 4 Task 012 Spike B 완료 ✅ + Task 015 캐시 prune 완료 ✅ + Task 016 device 토글 완료 ✅ + Task 017 F-AssetBulk v1 완료 ✅ + Task 018 F-PoP 데이터 비교 popover 완료 ✅ (DEBUG_CAPTURE flag off). 남은 작업은 Task 015 잔여(아이콘 분리·스토어 자료·v0.1.0 릴리스)만. F001 파워링크 라인 완성 — 1~10위 시장가 + 현재 순위 + 성과 추정 + **팝오버 행 클릭으로 입찰가 자동 변경(다이얼로그 → 페이지 DOM 자동화 → 5초 Undo 토스트)** + **PC/모바일 디바이스 토글(PC default + 모바일 lazy, MOBILE 1~5위 cap 보강, crossfade·height morph 애니메이션, 1-click 키워드 전환, 한글 친화 에러 메시지)** 까지. F012 팝업 새로고침이 실제 동작. 캐시 prune 자동화로 5MB quota 보호. F-AssetBulk로 확장소재 일괄 등록(이미지·추가제목·추가설명 + 노출 위치 슬롯별 지정 + 중복 사전 안내) 추가. F-PoP로 6개 매체 페이지 데이터 비교 popover(8지표·shape 기반 자동 캡처·날짜 매칭 필터·깊이 walk 집계) 추가. **Task 013/014 F002·F003 보류** (2026-05-19). v0.1은 **F001 + F011 + F012 + F-AssetBulk + F-PoP**로 ship, Task 011-1 통합 검증 + Task 015 잔여(아이콘·스토어 자료·릴리스) 마무리 후 출시.
 
-**다음 세션 작업 (내일):**
-- Task 016 수동 검증 — chrome reload + hard refresh 후 popover 토글·전환·애니메이션 동작 확인 (이슈 있으면 추가 fix)
-- Task 017 F-AssetBulk 잔여 — 중복 슬롯 실시간 경고 + 드롭다운 깜빡임 재검증
-- Task 018 F-PoP 잔여 — GFA weekly bucket 매치 / paginated stats 보강
-- (선택) Task 015 잔여 — 아이콘 분리, 스토어 자료, v0.1.0 릴리스
+**다음 세션 작업:**
+- Task 019 F-MultiAccount — 수동 QA 완료 후 corner case 보강 (실제 사용 시 발견되는 endpoint schema 차이·시간 측정·UI 조정)
+- Task 015 잔여 — 아이콘 분리 (16/48/128), 스토어 자료(스크린샷 5장·상세 설명·개인정보처리방침·권한 사유), v0.1.0 릴리스
+- (출시 후 후보) Task 018 GFA weekly bucket 매치 / paginated stats 보강
