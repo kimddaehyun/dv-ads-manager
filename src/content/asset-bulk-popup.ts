@@ -510,18 +510,20 @@ function buildImageBlock(
   root.appendChild(urlRow);
 
   // 수동 자르기 토글 — 켜면 각 이미지마다 페이지 모달에서 사용자가 직접 자르고 [저장] 누름.
+  // shadcn Switch 비주얼을 vanilla input + pseudo-element로 재현.
   const optionRow = document.createElement("label");
   optionRow.className = "dvads-asset-bulk-option-row";
-  const cropCheckbox = document.createElement("input");
-  cropCheckbox.type = "checkbox";
-  cropCheckbox.className = "dvads-asset-bulk-checkbox";
-  cropCheckbox.checked = state.manualCrop;
+  const cropToggle = document.createElement("input");
+  cropToggle.type = "checkbox";
+  cropToggle.role = "switch";
+  cropToggle.className = "dvads-asset-bulk-switch";
+  cropToggle.checked = state.manualCrop;
   const cropText = document.createElement("span");
   cropText.className = "dvads-asset-bulk-option-label";
   cropText.textContent = "수동 자르기";
-  optionRow.append(cropCheckbox, cropText);
-  cropCheckbox.addEventListener("change", () => {
-    state.manualCrop = cropCheckbox.checked;
+  optionRow.append(cropToggle, cropText);
+  cropToggle.addEventListener("change", () => {
+    state.manualCrop = cropToggle.checked;
   });
   root.appendChild(optionRow);
 

@@ -1217,42 +1217,69 @@ td.dvads-period-delta-down {
 .dvads-asset-bulk-option-row {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   cursor: pointer;
   user-select: none;
   margin-top: -4px;
 }
-/* 커스텀 체크박스 — appearance:none으로 네이티브 외관 제거하고 주황 fill + 흰 체크로 통일.
-   체크 표시는 inline SVG를 background-image로 두고 center 배치 — rotated border 트릭은
-   회전 기준점 때문에 시각 중심이 치우치는 문제 있어 SVG로 정확히 중앙. */
-.dvads-asset-bulk-checkbox {
+/* 토글 스위치 — shadcn Switch 비주얼을 native input + ::before thumb로 재현.
+   appearance:none + position:relative로 track, ::before로 thumb. p-0.5(2px) 마진. */
+.dvads-asset-bulk-switch {
   appearance: none;
   -webkit-appearance: none;
-  width: 18px;
-  height: 18px;
+  position: relative;
+  width: 36px;
+  height: 20px;
   margin: 0;
   flex-shrink: 0;
-  background-color: #ffffff;
-  background-repeat: no-repeat;
-  background-position: center;
-  background-size: 12px 12px;
-  border: 1.5px solid #d4d4d4;
-  border-radius: 4px;
+  background: #d4d4d4;
+  border-radius: 9999px;
   cursor: pointer;
-  transition: background-color 120ms ease, border-color 120ms ease;
+  outline: none;
+  transition: background-color 160ms ease;
 }
-.dvads-asset-bulk-checkbox:hover {
-  border-color: #E6783B;
+.dvads-asset-bulk-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
 }
-.dvads-asset-bulk-checkbox:checked {
-  background-color: #E6783B;
-  border-color: #E6783B;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+.dvads-asset-bulk-switch:hover {
+  background: #bdbdbd;
+}
+.dvads-asset-bulk-switch:checked {
+  background: #E6783B;
+}
+.dvads-asset-bulk-switch:checked:hover {
+  background: #d96d31;
+}
+.dvads-asset-bulk-switch:checked::before {
+  /* thumb 이동 거리 = track 폭 - thumb 폭 - 좌우 padding = 36 - 16 - 4 = 16 */
+  transform: translateX(16px);
+}
+.dvads-asset-bulk-switch:focus-visible {
+  box-shadow: 0 0 0 3px rgba(230, 120, 59, 0.25);
+}
+.dvads-asset-bulk-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 .dvads-asset-bulk-option-label {
   font-size: 12px;
   font-weight: 500;
-  color: #525252;
+  color: #a3a3a3;
+  transition: color 160ms ease;
+}
+/* 토글이 켜진 상태에서는 라벨 텍스트도 진한 색으로 — 시각적으로 활성 표시.
+   :checked ~ sibling combinator는 input이 label 앞에 있어야 작동(현재 DOM 순서 OK). */
+.dvads-asset-bulk-switch:checked ~ .dvads-asset-bulk-option-label {
+  color: #171717;
 }
 .dvads-asset-bulk-url-input {
   flex: 1 1 auto;
@@ -1587,6 +1614,28 @@ td.dvads-period-delta-down {
   background: rgba(230, 120, 59, 0.10);
   color: #E6783B;
 }
+/* destructive 액션(삭제 등) — 항상 빨강, hover 시 살짝 더 진하게. */
+.dvads-dropdown-option.is-danger {
+  color: #DC2626;
+}
+.dvads-dropdown-option.is-danger:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: #B91C1C;
+}
+.dvads-dropdown-option.is-disabled,
+.dvads-dropdown-option:disabled {
+  color: #9CA3AF;
+  cursor: not-allowed;
+}
+.dvads-dropdown-option.is-disabled:hover,
+.dvads-dropdown-option:disabled:hover {
+  background: transparent;
+}
+/* 액션 메뉴 패널 — createDropdown 패널과 동일 베이스, 폭만 살짝 좁게.
+   menu 항목 라벨이 짧은 편(바로가기/삭제 등)이라 컨텐츠 폭에 맞춰 표시. */
+.dvads-action-menu-panel {
+  min-width: 140px;
+}
 
 /* 슬롯 삭제 × */
 .dvads-asset-bulk-remove {
@@ -1917,6 +1966,18 @@ td.dvads-period-delta-down {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 이름 셀만 페이지 전환 트리거 — 지표 셀 클릭으로 의도치 않은 전환 방지.
+   행 전체 hover bg는 .dvads-bid-table tbody tr:hover td 에서 처리하고,
+   여기선 이름 셀에 cursor + 살짝 더 진한 hover로 클릭 가능 영역임을 시각화. */
+.dvads-multi-table td.dvads-multi-td-name-clickable {
+  cursor: pointer;
+}
+.dvads-multi-table tbody tr:hover td.dvads-multi-td-name-clickable {
+  background: #f3f4f6;
+}
+.dvads-multi-table td.dvads-multi-td-name-clickable:hover .dvads-multi-name {
+  color: #E6783B;
 }
 
 /* dvads-bid-table의 2번째 컬럼 우측 분리선 제거 (multi-account는 그룹 분리 불필요) */
