@@ -134,7 +134,9 @@
   background: rgba(217, 119, 6, 0.18);
 }
 
-/* custom tooltip — 배지에 hover 시 띄움 (native title은 호스트 페이지에 가려질 수 있어 대체) */
+/* custom tooltip — hover 시 띄움 (native title은 호스트 페이지에 가려질 수 있어 대체).
+   placement = "top"|"bottom" — anchor 위/아래에 표시 + 캐럿이 anchor를 가리킴.
+   JS가 caret 가로 위치는 `--dvads-tooltip-caret-x`로 계산 (viewport clamp 시에도 anchor 중앙 향함). */
 .dvads-tooltip {
   position: fixed;
   z-index: 2147483647;
@@ -151,6 +153,25 @@
   word-break: keep-all;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   pointer-events: none;
+}
+/* 캐럿 — 5px 정삼각. anchor 중앙으로 정렬되며 viewport clamp 시에도 anchor 향함. */
+.dvads-tooltip::after {
+  content: "";
+  position: absolute;
+  left: var(--dvads-tooltip-caret-x, 50%);
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+}
+.dvads-tooltip[data-placement="top"]::after {
+  top: 100%;
+  border-top: 5px solid #1f2937;
+}
+.dvads-tooltip[data-placement="bottom"]::after {
+  bottom: 100%;
+  border-bottom: 5px solid #1f2937;
 }
 .dvads-rank-badge.lock {
   background: #F3F4F6;
@@ -659,41 +680,11 @@
 }
 .dvads-period-btn svg {
   display: block;
-  overflow: visible; /* X morph 시 rect가 viewBox 밖으로 살짝 나가도 잘리지 않게 */
 }
 .dvads-period-btn:hover {
   background: #fafafa;
   border-color: #E6783B;
   color: #E6783B;
-}
-/* open 상태 — popover 열려있는 동안 active 시각 cue + 두 막대가 X로 morph.
-   viewBox 0 0 16 16 기준, SVG 중심 (8, 8). 각 rect를 자기 중심 기준으로 회전 + 중심으로 이동.
-   - 왼쪽 rect: x=2.5 y=7 w=3.5 h=6 → 중심 (4.25, 10) → 중심까지 translate(3.75, -2) + rotate(45)
-   - 오른쪽 rect: x=10 y=3 w=3.5 h=10 → 중심 (11.75, 8) → translate(-3.75, 0) + rotate(-45)
-   `transform-box: fill-box`로 transform-origin이 각 rect의 자기 box 중심이 되게 한다. */
-.dvads-period-btn.is-open {
-  background: #fff8f3;
-  border-color: #E6783B;
-  color: #E6783B;
-}
-.dvads-period-btn svg rect {
-  transform-box: fill-box;
-  transform-origin: center;
-  transition: transform 350ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-/* 차트 막대(w=3, 높이 다름)를 즐겨찾기 X와 매칭되는 thin X로 morph:
-   - scaleX(0.417): 너비 3 → 1.25 (즐겨찾기 X stroke 두께 매칭)
-   - scaleY: 두 획 길이 13으로 통일 (왼쪽 5 → ×2.6, 오른쪽 11 → ×1.182)
-   - rotate ±45° + SVG 중심 (8,8)으로 translate
-   CSS transform은 right-to-left → scale 먼저 (자기 box 중심 기준) → rotate → translate. */
-.dvads-period-btn.is-open svg rect:nth-of-type(1) {
-  transform: translate(3.5px, -3.5px) rotate(45deg) scale(0.417, 2.6);
-}
-.dvads-period-btn.is-open svg rect:nth-of-type(2) {
-  transform: translate(-3.5px, -0.5px) rotate(-45deg) scale(0.417, 1.182);
-}
-@media (prefers-reduced-motion: reduce) {
-  .dvads-period-btn svg rect { transition: none !important; }
 }
 
 /* popover는 F001과 같은 .dvads-popover 베이스 사용. PoP 전용 너비·내부 폭 조정.
@@ -1636,6 +1627,13 @@ td.dvads-period-delta-down {
 .dvads-action-menu-panel {
   min-width: 140px;
 }
+/* 메뉴 항목 구분선 — 그룹 사이 가는 hr. dropdown panel 안에서 음수 좌우 마진으로 패널 양끝까지. */
+.dvads-dropdown-separator {
+  height: 1px;
+  background: #F3F4F6;
+  margin: 4px -4px;
+  pointer-events: none;
+}
 
 /* 슬롯 삭제 × */
 .dvads-asset-bulk-remove {
@@ -1820,7 +1818,9 @@ td.dvads-period-delta-down {
 
 /* popover — 1100px (8지표 컬럼 수용), 흰 배경, rounded, shadow */
 .dvads-multi-popover {
-  width: 1100px;
+  /* 폭은 view별 가변 — list(전체 11컬럼 테이블)는 1100px, search(단순 리스트)는 640px.
+     JS가 view 전환 시 CSS 변수로 토글. width transition으로 부드럽게 리사이즈. */
+  width: var(--dvads-multi-popover-width, 1100px);
   max-width: calc(100vw - 48px);
   max-height: calc(100vh - 160px);
   background: #ffffff;
@@ -1833,6 +1833,38 @@ td.dvads-period-delta-down {
      scale + opacity 조합으로 sweep-down 느낌 유지. 위치는 top/left로 잡으므로 transform 자유. */
   animation: dvads-multi-popover-enter 280ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
   transform-origin: top center;
+  /* view 전환 시 width 슬라이드. animation 키프레임이 끝난 뒤에만 발화하지만 진입 모션은
+     opacity/transform이라 transition: width와 충돌 없음. */
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-popover { transition: none !important; }
+}
+
+/* 크게 보기(전체화면) 모달 — 사용자가 kebab → "크게 보기" 선택 시 진입.
+   inline 위치 스타일은 JS가 비우고 여기 inset이 인계받음. 폭/높이 viewport 채움.
+   transition은 평소 width transition 그대로 + inset도 부드럽게. */
+.dvads-multi-popover.is-fullscreen {
+  top: 32px;
+  left: 32px;
+  right: 32px;
+  bottom: 32px;
+  width: auto;
+  max-width: none;
+  max-height: none;
+}
+
+/* backdrop — 크게 보기 진입 시 popover 뒤에 회색 dim. 클릭하면 popover 자체 닫힘. */
+.dvads-multi-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483646;
+  animation: dvads-multi-backdrop-fade-in 200ms ease-out both;
+}
+@keyframes dvads-multi-backdrop-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 .dvads-period-popover {
   /* F-PoP popover는 JS에서 popover.style.transform = translate(x,y)로 위치를 매 프레임 잡아서
@@ -1948,18 +1980,30 @@ td.dvads-period-delta-down {
   }
 }
 
-/* 컬럼 폭 조정 — 8지표 컴팩트하게 */
+/* 컬럼 폭/높이 — 좌우 12px + 상하 12px(이전 7px → 행 시각 간격 늘림). */
 .dvads-multi-table td.dvads-multi-td-num,
 .dvads-multi-table th.dvads-multi-th-num {
-  padding: 7px 8px;
-  font-size: 12.5px;
+  padding: 12px 12px;
+}
+.dvads-multi-table td.dvads-multi-td-name {
+  padding: 12px;
+}
+.dvads-multi-table td.dvads-multi-td-cb,
+.dvads-multi-table td.dvads-multi-td-act {
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 .dvads-multi-table td.dvads-multi-td-name,
 .dvads-multi-table th:first-child {
   padding: 7px 12px;
-  min-width: 240px;
-  width: 240px;
-  max-width: 240px;
+  min-width: 200px;
+  width: 200px;
+  max-width: 200px;
+  text-align: left;
+}
+/* 내 계정 헤더 "계정" th도 좌측 정렬 — base의 th text-align(우정렬) 덮음. */
+.dvads-multi-table th.dvads-multi-th-sort[data-sort-key="name"] {
+  text-align: left;
 }
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-name {
   max-width: 100%;
@@ -1980,6 +2024,43 @@ td.dvads-period-delta-down {
   color: #E6783B;
 }
 
+/* 작업 컬럼 (kebab "..." 트리거) — 가운데 정렬, 트리거 hover 영역 충분히 확보. */
+.dvads-multi-table th.dvads-multi-th-act,
+.dvads-multi-table td.dvads-multi-td-act {
+  width: 64px;
+  min-width: 64px;
+  padding: 7px 8px;
+  text-align: center;
+}
+/* 크게 보기 모드 — 화면이 넓고 컬럼이 많아 작업 셀이 비례적으로 좁아 보임. 폭 확장으로 비례 회복. */
+.dvads-multi-popover.is-fullscreen .dvads-multi-table th.dvads-multi-th-act,
+.dvads-multi-popover.is-fullscreen .dvads-multi-table td.dvads-multi-td-act {
+  width: 100px;
+  min-width: 100px;
+}
+.dvads-multi-action-trigger {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #6B7280;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+}
+.dvads-multi-action-trigger:hover,
+.dvads-multi-action-trigger.is-open {
+  background: #F3F4F6;
+  color: #171717;
+}
+
 /* dvads-bid-table의 2번째 컬럼 우측 분리선 제거 (multi-account는 그룹 분리 불필요) */
 .dvads-multi-table th:nth-child(2),
 .dvads-multi-table td:nth-child(2) {
@@ -1988,6 +2069,11 @@ td.dvads-period-delta-down {
 /* dvads-bid-table의 2번째 컬럼 weight 600 강조도 제거 (multi-account는 평등) */
 .dvads-multi-table td:nth-child(2) {
   font-weight: 400 !important;
+}
+
+/* 행 click → 체크박스 토글(이름 셀 클릭은 별도로 바로가기). 마우스 cursor로 어포던스 신호. */
+.dvads-multi-tr {
+  cursor: pointer;
 }
 
 /* 계약 종료 시각 cue — 행 자체에 좌측 빨간 보더 */
@@ -2023,23 +2109,9 @@ td.dvads-period-delta-down {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 12px 14px 10px 16px;
-  border-bottom: 1px solid #F3F4F6;
-}
-.dvads-multi-title-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-.dvads-multi-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: #171717;
-}
-.dvads-multi-sub {
-  font-size: 11px;
-  color: #9CA3AF;
+  padding: 8px 14px 8px 16px;
+  /* 8px 하단 패딩 — indicator는 .dvads-multi-tabs(hdr 내부) 바닥에 붙고,
+     그 아래 8px만큼 hdr 자체가 더 내려가 다음 콘텐츠(테이블/검색창)와 간격 확보. */
 }
 .dvads-multi-hdr-actions {
   display: inline-flex;
@@ -2047,72 +2119,262 @@ td.dvads-period-delta-down {
   gap: 6px;
   flex-shrink: 0;
 }
-.dvads-multi-add-btn,
-.dvads-multi-refresh-all {
+/* 헤더 우측 "설정" / "설정 (N)" 버튼 — kebab을 대체하는 라벨 트리거. 클릭 시 action menu.
+   라벨에 카운트 유무에 관계없이 버튼 폭 동일하게 — min-width로 "설정 (NN)" 최대 폭 확보.
+   tabular-nums로 숫자 폭 균일. */
+/* 호스트 페이지의 회색 pill 버튼(전체 상태 등)과 톤 맞춤 — 회색 배경 + 진한 텍스트, 보더 없음. */
+.dvads-multi-settings-btn {
   display: inline-flex;
   align-items: center;
-  height: 28px;
-  padding: 0 10px;
+  justify-content: center;
+  min-width: 86px;
+  height: 36px;
+  padding: 0 15px;
   border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, filter 120ms ease;
-}
-.dvads-multi-add-btn {
-  background: #E6783B;
-  color: #ffffff;
   border: 0;
+  background: #F3F4F6;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: background 120ms ease;
+  flex-shrink: 0;
 }
-.dvads-multi-add-btn:hover:not(:disabled) {
-  filter: brightness(0.95);
+.dvads-multi-settings-btn:hover,
+.dvads-multi-settings-btn.is-open {
+  background: #E5E7EB;
 }
-.dvads-multi-refresh-all {
-  border: 1px solid #E5E7EB;
-  background: #ffffff;
-  color: #6B7280;
+/* has-selection은 background/border 별도 강조 안 함 — 카운트 라벨 자체가 시그널. 클래스는 유지(JS hook). */
+
+/* 검색 input wrapper — 양쪽에 아이콘(돋보기 좌/x 우). list/search view 공통.
+   기본(anchored popover) 280px / 크게 보기 모드 600px로 분기. height도 살짝 차이 둠.
+   shrink:1로 좁은 컨테이너에선 자동 축소 (탭 깨짐 방지). */
+.dvads-multi-search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 280px;
+  height: 36px;
+  flex-shrink: 1;
+  min-width: 0;
+  /* popover 크기 transition과 같은 곡선/시간으로 검색창 폭/높이도 부드럽게 따라감. */
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1),
+              height 320ms cubic-bezier(0.4, 0, 0.2, 1);
 }
-.dvads-multi-refresh-all:hover:not(:disabled) {
-  background: #FAFAF9;
-  border-color: #E6783B;
-  color: #E6783B;
+.dvads-multi-popover.is-fullscreen .dvads-multi-search-wrap {
+  width: 600px;
+  height: 40px;
 }
-.dvads-multi-refresh-all:disabled {
-  opacity: 0.6;
-  cursor: progress;
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-search-wrap { transition: none !important; }
+}
+.dvads-multi-search-icon {
+  position: absolute;
+  left: 10px;
+  color: #9CA3AF;
+  pointer-events: none;
+}
+.dvads-multi-search-clear {
+  position: absolute;
+  right: 6px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: #9CA3AF;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-multi-search-clear:hover {
+  background: #E5E7EB;
+  color: #171717;
+}
+.dvads-multi-search-wrap.has-value .dvads-multi-search-clear {
+  display: inline-flex;
 }
 
-/* ─── 검색 view ─── */
-.dvads-multi-hdr-search {
-  gap: 8px;
+/* 접힘 상태 — 5개 추가 컬럼 숨김. 크게 보기 모드 진입 시 JS가 클래스 제거 → 모든 컬럼 노출. */
+.dvads-multi-table.is-collapsed th[data-sort-key="impressions"],
+.dvads-multi-table.is-collapsed th[data-sort-key="clicks"],
+.dvads-multi-table.is-collapsed th[data-sort-key="ctr"],
+.dvads-multi-table.is-collapsed th[data-sort-key="cpc"],
+.dvads-multi-table.is-collapsed th[data-sort-key="conversions"],
+.dvads-multi-table.is-collapsed td[data-k="impressions"],
+.dvads-multi-table.is-collapsed td[data-k="clicks"],
+.dvads-multi-table.is-collapsed td[data-k="ctr"],
+.dvads-multi-table.is-collapsed td[data-k="cpc"],
+.dvads-multi-table.is-collapsed td[data-k="conversions"] {
+  display: none;
 }
-.dvads-multi-back-btn {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  border: 1px solid #E5E7EB;
-  background: #ffffff;
-  border-radius: 8px;
-  color: #6B7280;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1;
+
+/* ─── 다중 선택 체크박스 (커스텀 스타일) ───
+   native input은 시각 숨기고 인접 span에 체크 상태 따라 배경/체크마크 그림. */
+.dvads-multi-cb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
   cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  position: relative;
+  flex-shrink: 0;
 }
-.dvads-multi-back-btn:hover {
-  background: #FAFAF9;
+.dvads-multi-cb input {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.dvads-multi-cb-box {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #D1D5DB;
+  border-radius: 4px;
+  background: #ffffff;
+  position: relative;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.dvads-multi-cb input:checked + .dvads-multi-cb-box {
+  background: #E6783B;
   border-color: #E6783B;
-  color: #E6783B;
 }
-.dvads-multi-search-input {
-  flex: 1;
-  min-width: 0;
+.dvads-multi-cb input:checked + .dvads-multi-cb-box::after {
+  /* 체크마크 — CSS pseudo로 작은 ✓ 그림. transform rotate로 자연스러운 비대칭 stroke. */
+  content: "";
+  position: absolute;
+  left: 4.5px;
+  top: 1px;
+  width: 4px;
+  height: 8.5px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.dvads-multi-cb input:indeterminate + .dvads-multi-cb-box {
+  background: #E6783B;
+  border-color: #E6783B;
+}
+.dvads-multi-cb input:indeterminate + .dvads-multi-cb-box::after {
+  /* indeterminate — 가운데 가로 막대 (일부만 선택된 상태). */
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 6px;
+  width: 8px;
+  height: 1.5px;
+  background: #ffffff;
+  border-radius: 1px;
+}
+.dvads-multi-cb input:hover:not(:checked):not(:indeterminate) + .dvads-multi-cb-box {
+  border-color: #9CA3AF;
+}
+
+/* 테이블 체크박스 셀/헤더 — 좁고 가운데 정렬 */
+.dvads-multi-table th.dvads-multi-th-cb,
+.dvads-multi-table td.dvads-multi-td-cb {
+  width: 36px;
+  min-width: 36px;
+  padding: 7px 6px 7px 12px;
+  text-align: center;
+}
+
+
+/* ─── 탭바 (Vercel Tabs 패턴) — 내 계정 / 전체 계정 view 전환 ─── */
+/* 제목("계정 현황") 자리를 대체. hdr 안에 들어가며 탭 폰트는 title 크기(16px)에 맞춤.
+   아래 회색 보더는 의도적으로 없음 — 주황 active indicator만 시각적 baseline 역할. */
+.dvads-multi-tabs {
+  position: relative;
+  flex-shrink: 0;
+}
+.dvads-multi-tabs-list {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* hover 하이라이트 — 마우스 따라 슬라이드. inactive 탭 위에 떴을 때 살짝 강조. */
+.dvads-multi-tabs-hover {
+  position: absolute;
+  top: 4px;
   height: 32px;
-  padding: 0 12px;
+  background: rgba(14, 15, 17, 0.06);
+  border-radius: 6px;
+  transition: left 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              width 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 180ms ease;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+/* active 아래 underline — left/width로 슬라이드. DV 주황(브랜드 액센트). */
+.dvads-multi-tabs-indicator {
+  position: absolute;
+  bottom: 0;
+  height: 2px;
+  background: #E6783B;
+  border-radius: 1px;
+  transition: left 280ms cubic-bezier(0.4, 0, 0.2, 1),
+              width 280ms cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  z-index: 1;
+}
+.dvads-multi-tab-item {
+  position: relative;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0 10px;
+  height: 40px;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: #9CA3AF;
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 220ms ease;
+  z-index: 1;
+}
+/* 크게 보기 시 "전체 계정" 탭 숨김 — 풀스크린은 데이터 분석 컨텍스트라 추가 흐름 불필요.
+   indicator 위치도 "내 계정" 첫 탭에 자연스럽게 맞음. */
+.dvads-multi-popover.is-fullscreen .dvads-multi-tab-item[data-view="search"] {
+  display: none;
+}
+.dvads-multi-tab-item:hover {
+  color: #171717;
+}
+.dvads-multi-tab-item.is-active {
+  color: #171717;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-tabs-hover,
+  .dvads-multi-tabs-indicator,
+  .dvads-multi-tab-item {
+    transition: none !important;
+  }
+}
+
+/* ─── 검색 input — 좌(돋보기)/우(x) 아이콘 자리 확보. height는 wrap 따라감(100%). ─── */
+.dvads-multi-search-input {
+  width: 100%;
+  height: 100%;
+  padding: 0 32px 0 34px;
   background: #F3F4F6;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 13px;
   color: #171717;
   font-family: inherit;
@@ -2126,125 +2388,113 @@ td.dvads-period-delta-down {
 .dvads-multi-search-input::placeholder {
   color: #9CA3AF;
 }
-.dvads-multi-done-btn {
-  flex-shrink: 0;
-  height: 28px;
-  padding: 0 12px;
-  background: #ffffff;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  color: #6B7280;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
-}
-.dvads-multi-done-btn:hover {
-  background: #FAFAF9;
-  border-color: #E6783B;
-  color: #E6783B;
-}
 
-.dvads-multi-search-list-wrap {
+.dvads-multi-search-list-wrap,
+.dvads-multi-table-wrap {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  /* 스크롤 체이닝 방지 — popover 내부 스크롤이 끝에 도달해도 호스트 페이지로 스크롤 전파 안 함.
+     `contain`: 경계 도달 시 부모로 전파 차단(자체 bounce는 유지). 모달성 popover의 표준 처리. */
+  overscroll-behavior: contain;
 }
-.dvads-multi-search-list {
-  list-style: none;
-  margin: 0;
-  padding: 4px 0;
+/* sticky thead 픽셀-jitter 해결 — `border-collapse: collapse`는 sticky th가 스크롤 시 1px씩
+   미세 흔들리는 알려진 버그가 있어 multi-table만 `separate` 모드로 전환. 행 보더는 td에 직접. */
+.dvads-multi-table {
+  border-collapse: separate;
+  border-spacing: 0;
 }
-.dvads-multi-search-row {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  border-top: 1px solid #F9FAFB;
-  transition: background 120ms ease;
+.dvads-multi-table tbody td {
+  border-bottom: 1px solid #f3f4f6;
 }
-.dvads-multi-search-row:first-child {
-  border-top: 0;
+.dvads-multi-table tbody tr:last-child td {
+  border-bottom: 0;
 }
-.dvads-multi-search-row:hover {
-  background: #FAFAF9;
+/* sticky를 <thead>에 직접 적용 — border-collapse: separate 환경에서 가장 신뢰성 높음.
+   transform/will-change는 GPU 레이어 만들 때 sticky containing block을 망가뜨릴 수 있어 제거. */
+.dvads-multi-table-wrap thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
-.dvads-multi-search-info {
-  flex: 1;
-  min-width: 0;
+.dvads-multi-table-wrap thead th {
+  background: #fafafa;
+  border-bottom: 1px solid #ECEEF0;
 }
-.dvads-multi-search-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #171717;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* 헤더 정렬은 각 컬럼의 데이터 셀과 동일하게 — text-align 규칙은 위쪽 dual 셀렉터(th+td)가
+   이미 처리. 헤더만 center로 통일하면 데이터(좌측)와 어긋나서 컬럼 라벨이 데이터 위에 안 놓임. */
+/* ─── 전체 계정(검색 view) 테이블 ─── */
+/* 검색 view 전용 — 계정 컬럼 좌측 정렬 + 200px(220 → 200, ID를 왼쪽으로 당김). */
+.dvads-multi-search-table td.dvads-multi-td-name,
+.dvads-multi-search-table th.dvads-multi-th-search-name {
+  width: 200px;
+  min-width: 200px;
+  max-width: 200px;
+  text-align: left;
+  padding-left: 12px;
 }
-.dvads-multi-search-meta {
-  margin-top: 2px;
+/* 검색 view 작업 컬럼 — kebab "⋯" 하나만 들어가는 영역이라 50px로 더 컴팩트하게. */
+.dvads-multi-search-table th.dvads-multi-th-act,
+.dvads-multi-search-table td.dvads-multi-td-act {
+  width: 50px;
+  min-width: 50px;
+}
+/* 계정 컬럼 보조 "원래 ..." 라인 — 별칭 있는 경우 원본 이름 표시. */
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name + .dvads-multi-no {
   font-size: 11px;
   color: #9CA3AF;
+  margin-top: 2px;
 }
-.dvads-multi-search-origin {
-  color: #9CA3AF;
-}
-.dvads-multi-search-no {
-  font-variant-numeric: tabular-nums;
-}
-.dvads-multi-search-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-.dvads-multi-add-one {
-  height: 28px;
-  padding: 0 12px;
-  background: #E6783B;
-  color: #ffffff;
-  border: 0;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: filter 120ms ease;
-}
-.dvads-multi-add-one:hover {
-  filter: brightness(0.95);
-}
-.dvads-multi-edit-alias {
-  width: 28px;
-  height: 28px;
-  border: 1px solid #E5E7EB;
-  background: #ffffff;
-  border-radius: 8px;
-  color: #6B7280;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
-}
-.dvads-multi-edit-alias:hover {
-  background: #FAFAF9;
-  border-color: #E6783B;
+/* 검색 view에서 이미 내 계정에 추가된 행 — 계정명을 DV 주황으로 강조해 한눈에 식별. */
+.dvads-multi-search-table tr.is-added .dvads-multi-name {
   color: #E6783B;
 }
-.dvads-multi-remove {
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid #E5E7EB;
-  background: #ffffff;
-  border-radius: 8px;
-  color: #9CA3AF;
+/* 상태 컬럼 — 권한 라벨. 좌측 정렬, 보조 색상. ID와 동일 폭(130px)으로 시각 균형. */
+.dvads-multi-table th.dvads-multi-th-search-status,
+.dvads-multi-table td.dvads-multi-td-status {
+  width: 130px;
+  padding: 12px 12px;
+  text-align: left;
+  color: #6B7280;
+  font-size: 12.5px;
+}
+/* ID 컬럼 — 좌측 정렬, tabular-nums, 보조 색상. 상태와 동일 폭(130px). */
+.dvads-multi-table th.dvads-multi-th-search-id,
+.dvads-multi-table td.dvads-multi-td-id {
+  width: 130px;
+  padding: 12px 12px;
+  text-align: left;
+  color: #6B7280;
+  font-variant-numeric: tabular-nums;
+}
+/* 검색 view 작업 컬럼 — 헤더/셀 좌측 정렬(다른 컬럼과 일관). 트리거 자체도 셀 시작점에 정렬. */
+.dvads-multi-search-table th.dvads-multi-th-act,
+.dvads-multi-search-table td.dvads-multi-td-act {
+  text-align: left;
+}
+
+/* 이름 변경 inline edit row — 행 전체를 colspan=4 셀로 치환. 한 줄에 라벨/input/저장/취소.
+   inner div로 flex 처리 (td 자체는 display:table-cell 유지). */
+.dvads-multi-search-edit-cell {
+  padding: 10px 16px;
+  background: #FFF7F1;
+}
+.dvads-multi-search-edit-label {
   font-size: 12px;
   font-weight: 500;
-  cursor: pointer;
-  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  color: #6B7280;
+  flex-shrink: 0;
+  margin-right: 8px;
 }
-.dvads-multi-remove:hover {
-  background: #FEF2F2;
-  border-color: #FCA5A5;
-  color: #DC2626;
+.dvads-multi-search-edit-cell .dvads-multi-alias-input {
+  display: inline-block;
+  width: 240px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.dvads-multi-search-edit-cell .dvads-multi-alias-save,
+.dvads-multi-search-edit-cell .dvads-multi-alias-cancel {
+  vertical-align: middle;
 }
 .dvads-multi-alias-input {
   width: 100%;

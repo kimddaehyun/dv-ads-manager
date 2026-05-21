@@ -38,6 +38,7 @@ import { invalidatePerformance } from "@/lib/performance-cache";
 import { initPeriodCompare } from "@/content/period-compare";
 import { initAssetBulk } from "@/content/asset-bulk";
 import { initMultiAccount } from "@/content/multi-account";
+import { attachTooltip } from "@/content/tooltip";
 
 declare const __APP_VERSION__: string;
 console.log(`[dv-ads] content script loaded · v${__APP_VERSION__}`);
@@ -226,7 +227,7 @@ function renderBadge(m: BadgeMount) {
       m.badge.classList.add("warn", "icon");
       m.badge.textContent = "⚠";
       m.badge.title = lastError; // fallback (a11y/지원 도구)
-      attachTooltip(m.badge, lastError);
+      attachTooltip(m.badge, lastError, { placement: "bottom" });
       m.badge.onclick = null;
     } else {
       // 로딩 상태는 스피너만 — 텍스트 없음 (CSS ::before가 스피너 렌더)
@@ -995,56 +996,6 @@ async function poll() {
   }
 
   for (const m of mounts.values()) renderBadge(m);
-}
-
-// ─── custom tooltip ───
-// ads.naver.com이 자체 hover 처리(row highlight 등)로 native `title` 속성이
-// 안 뜨는 케이스가 확인되어 자체 구현. 단일 글로벌 element를 재사용.
-
-let tooltipEl: HTMLElement | null = null;
-
-function ensureTooltipEl(): HTMLElement {
-  if (tooltipEl) return tooltipEl;
-  const el = document.createElement("div");
-  el.className = "dvads dvads-tooltip";
-  document.body.appendChild(el);
-  tooltipEl = el;
-  return el;
-}
-
-function showTooltip(anchor: HTMLElement, text: string): void {
-  const el = ensureTooltipEl();
-  el.textContent = text;
-  el.style.display = "block";
-  // 한 프레임 양보해서 측정 — display:block 직후엔 rect가 0일 수 있음
-  requestAnimationFrame(() => {
-    if (!tooltipEl || tooltipEl.style.display === "none") return;
-    if (!anchor.isConnected) {
-      hideTooltip();
-      return;
-    }
-    const rect = anchor.getBoundingClientRect();
-    const tt = el.getBoundingClientRect();
-    // 가로: 배지 중앙에 정렬, viewport 좌우 8px 안쪽으로 clamp
-    let left = rect.left + rect.width / 2 - tt.width / 2;
-    left = Math.max(8, Math.min(left, window.innerWidth - tt.width - 8));
-    // 세로: 기본 배지 아래. 공간 부족하면 배지 위로 flip.
-    let top = rect.bottom + 6;
-    if (top + tt.height > window.innerHeight - 8) {
-      top = Math.max(8, rect.top - tt.height - 6);
-    }
-    el.style.left = `${left}px`;
-    el.style.top = `${top}px`;
-  });
-}
-
-function hideTooltip(): void {
-  if (tooltipEl) tooltipEl.style.display = "none";
-}
-
-function attachTooltip(badge: HTMLElement, text: string): void {
-  badge.onmouseenter = () => showTooltip(badge, text);
-  badge.onmouseleave = hideTooltip;
 }
 
 // ─── F012 — 팝업 새로고침 트리거 ───

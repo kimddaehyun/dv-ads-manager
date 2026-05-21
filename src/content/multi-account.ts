@@ -37,6 +37,7 @@ import type {
   MultiAccountUserMeta,
   MultiAccountSnapshot,
 } from "@/types/storage";
+import { attachActionMenu, type ActionMenuItem } from "./ui-dropdown";
 
 const ADACCT_URL_PATTERN = /\/manage\/ad-accounts\//;
 const BTN_MARK = "data-dvads-multi-btn";
@@ -264,28 +265,12 @@ async function openPopover() {
   wrap.className = "dvads dvads-popover dvads-multi-popover";
   wrap.style.position = "fixed";
   wrap.style.zIndex = "2147483647";
-  // 버튼 바로 아래로 정렬. 버튼 위치를 기준으로 popover 왼쪽 정렬.
-  const btnRect = buttonEl?.getBoundingClientRect();
-  if (btnRect) {
-    const popoverWidth = 1100;
-    const margin = 8;
-    // 가능하면 버튼 좌측 정렬. 화면 우측 밖으로 나가면 우측 정렬로 폴백.
-    const wouldOverflow = btnRect.left + popoverWidth > window.innerWidth - margin;
-    if (wouldOverflow) {
-      wrap.style.right = `${Math.max(margin, window.innerWidth - btnRect.right)}px`;
-      wrap.style.left = "";
-    } else {
-      wrap.style.left = `${btnRect.left}px`;
-      wrap.style.right = "";
-    }
-    wrap.style.top = `${btnRect.bottom + margin}px`;
-  } else {
-    wrap.style.top = "60px";
-    wrap.style.right = "24px";
-  }
+  applyAnchoredPosition(wrap);
   wrap.innerHTML = `<div class="dvads-multi-loading">불러오는 중…</div>`;
   document.body.appendChild(wrap);
   popoverEl = wrap;
+  // 초기 view("list")의 폭으로 시작. switchView가 search로 가면 더 좁혀짐.
+  applyPopoverWidth(popoverView);
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") closePopover();
@@ -334,6 +319,10 @@ function closePopover() {
   popoverEl.remove();
   popoverEl = null;
   popoverView = "list";
+  listSearchQuery = "";
+  popoverFullscreen = false;
+  document.querySelector(".dvads-multi-backdrop")?.remove();
+  selectedAccountNos.clear();
   // close 아이콘 → 햄버거로 복귀
   buttonEl?.classList.remove("is-open");
 }
@@ -341,12 +330,83 @@ function closePopover() {
 type PopoverView = "list" | "search";
 let popoverView: PopoverView = "list";
 
+// 내 계정(list view) 검색 쿼리 — 추가된 계정만 필터링. 행 DOM은 그대로 두고
+// display:none 토글로 visibility 제어 → 입력 중 focus 유지. popover 닫힐 때 초기화.
+let listSearchQuery = "";
+
+// 다중 선택 상태 — 체크박스로 선택한 계정 번호 집합. 두 view 공유 안 함 (view 전환 시 초기화).
+// 헤더 우측 "설정 (N)" 버튼이 N=size를 표시하고, 클릭 시 일괄 액션 메뉴 노출.
+const selectedAccountNos = new Set<number>();
+
+// 크게 보기(전체화면 모달) 모드. 평소엔 anchored popover(640px)로 4컬럼만 노출,
+// 사용자가 kebab에서 "크게 보기" 선택 시 viewport-사이즈 modal로 진입 + 모든 컬럼 + 회색 backdrop.
+// ESC/backdrop click으로 종료 = popover 자체 종료 (단순). 두 view 공통.
+let popoverFullscreen = false;
+
 async function renderPopoverBody(wrap: HTMLElement) {
   if (popoverView === "search") {
     await renderSearchView(wrap);
     return;
   }
   await renderListView(wrap);
+}
+
+/**
+ * Vercel Tabs 패턴 — 두 탭(내 계정 / 전체 계정) + 슬라이딩 active underline + hover 하이라이트.
+ * 같은 popover 안에서 view 전환용. 클릭 시 switchView 호출 후 view 재렌더 — 새 탭바가 다시
+ * 빌드되며 새 active 위치로 indicator 스냅.
+ *
+ * indicator/hover layer는 absolute positioning + offsetLeft/offsetWidth 기반으로 slide.
+ * 초기 위치는 rAF로 layout 후 계산해야 정확.
+ */
+function buildTabsBar(activeView: PopoverView): HTMLElement {
+  const container = document.createElement("div");
+  container.className = "dvads-multi-tabs";
+  container.innerHTML = `
+    <div class="dvads-multi-tabs-list">
+      <div class="dvads-multi-tabs-hover" aria-hidden="true"></div>
+      <div class="dvads-multi-tabs-indicator" aria-hidden="true"></div>
+      <button type="button" class="dvads-multi-tab-item${activeView === "list" ? " is-active" : ""}" data-view="list">내 계정</button>
+      <button type="button" class="dvads-multi-tab-item${activeView === "search" ? " is-active" : ""}" data-view="search">전체 계정</button>
+    </div>
+  `;
+
+  const items = container.querySelectorAll<HTMLButtonElement>(".dvads-multi-tab-item");
+  const indicator = container.querySelector<HTMLElement>(".dvads-multi-tabs-indicator")!;
+  const hover = container.querySelector<HTMLElement>(".dvads-multi-tabs-hover")!;
+
+  const positionIndicator = (el: HTMLElement) => {
+    indicator.style.left = `${el.offsetLeft}px`;
+    indicator.style.width = `${el.offsetWidth}px`;
+  };
+
+  // 초기 active 위치 — layout 끝나고 offsetLeft/Width 계산 (rAF).
+  requestAnimationFrame(() => {
+    const active = container.querySelector<HTMLElement>(".dvads-multi-tab-item.is-active");
+    if (active) positionIndicator(active);
+  });
+
+  items.forEach((item) => {
+    item.addEventListener("mouseenter", () => {
+      hover.style.left = `${item.offsetLeft}px`;
+      hover.style.width = `${item.offsetWidth}px`;
+      hover.style.opacity = "1";
+    });
+    item.addEventListener("mouseleave", () => {
+      hover.style.opacity = "0";
+    });
+    item.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const view = item.dataset.view as PopoverView | undefined;
+      if (!view || view === activeView) return;
+      // 즉각 시각 피드백 — switchView await 동안 indicator/text가 새 위치로 슬라이드.
+      items.forEach((i) => i.classList.toggle("is-active", i === item));
+      positionIndicator(item);
+      void switchView(view);
+    });
+  });
+
+  return container;
 }
 
 type SortKey =
@@ -400,26 +460,26 @@ async function renderListView(wrap: HTMLElement) {
   // ─── 2단계: 메모리에 새 DOM 트리 빌드 ───
   const fragment = document.createDocumentFragment();
 
+  // 헤더 = 탭바(좌) + 검색 wrap + ⋮ kebab 메뉴(우). 옛 설정/펼치기/↻ 버튼은 kebab 안으로 흡수.
   const hdr = document.createElement("div");
   hdr.className = "dvads-multi-hdr";
-  hdr.innerHTML = `
-    <div class="dvads-multi-title-wrap">
-      <div class="dvads-multi-title">광고계정</div>
-    </div>
-    <div class="dvads-multi-hdr-actions">
-      <button class="dvads-multi-add-btn" type="button" title="광고계정 추가">+ 추가</button>
-      <button class="dvads-multi-refresh-all" type="button" title="모든 계정 새로고침">↻ 전체</button>
-    </div>
-  `;
+  hdr.appendChild(buildTabsBar("list"));
+  const actions = document.createElement("div");
+  actions.className = "dvads-multi-hdr-actions";
+  actions.appendChild(buildSearchInput("list"));
+  const settingsBtn = document.createElement("button");
+  settingsBtn.type = "button";
+  settingsBtn.className = "dvads-multi-settings-btn";
+  settingsBtn.textContent = "설정";
+  actions.appendChild(settingsBtn);
+  hdr.appendChild(actions);
   fragment.appendChild(hdr);
 
-  hdr.querySelector<HTMLButtonElement>(".dvads-multi-add-btn")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    switchView("search");
-  });
-  hdr.querySelector<HTMLButtonElement>(".dvads-multi-refresh-all")?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    void refreshAllStale(entries);
+  attachActionMenu({
+    trigger: settingsBtn,
+    ariaLabel: "내 계정 메뉴",
+    // 함수형 — open할 때마다 다시 빌드해서 선택 상태(disabled 등) 반영.
+    items: () => listKebabItems(entries),
   });
 
   if (entries.length === 0) {
@@ -441,9 +501,10 @@ async function renderListView(wrap: HTMLElement) {
   const tableWrap = document.createElement("div");
   tableWrap.className = "dvads-multi-table-wrap";
   const table = document.createElement("table");
-  table.className = "dvads-bid-table dvads-multi-table";
+  table.className = "dvads-bid-table dvads-multi-table" + (popoverFullscreen ? "" : " is-collapsed");
   table.innerHTML = `
     <thead><tr>
+      <th class="dvads-multi-th-cb">${checkboxHTML(false, "전체 선택", "dvads-multi-cb-all")}</th>
       ${COLUMN_DEFS.map((c) => {
         const numCls = c.numeric ? "dvads-multi-th-num" : "";
         const active = sortState.key === c.key;
@@ -457,7 +518,7 @@ async function renderListView(wrap: HTMLElement) {
           <span>${c.label}</span><span class="dvads-multi-sort-ind">${sortInd}</span>
         </th>`;
       }).join("")}
-      <th class="dvads-multi-th-act"></th>
+      <th class="dvads-multi-th-act">작업</th>
     </tr></thead>
     <tbody></tbody>
   `;
@@ -495,10 +556,31 @@ async function renderListView(wrap: HTMLElement) {
     else paintRowEmpty(entry.adAccountNo);
   }
 
+  // 기존 검색 쿼리가 있으면(예: sort 변경 후 재렌더) 적용.
+  if (listSearchQuery) applyListSearchFilter(wrap, listSearchQuery);
+
+  // select-all 헤더 체크박스 wire + 초기 UI(설정 버튼 라벨/select-all 상태) 동기화.
+  wireSelectAll(wrap);
+  updateBulkActionUI(wrap);
+
   // 백그라운드 stale refresh — 화면은 캐시로 즉시 표시되었고, TTL 지난 행만 silent
   // refresh. force:false라 fresh 행은 자동 skip. 결과 도착하는 대로 paintRow가 행 업데이트.
   // popover 닫혀도 fetch는 끝까지 진행되어 다음 진입 시 fresh 캐시 보장.
   void backgroundRefreshStale(entries, snapshots);
+}
+
+/**
+ * 추가된 계정 명단 안에서 substring 필터 적용. 행 DOM을 재빌드하지 않고 display:none 토글
+ * → input focus/cursor 유지. tr.dataset.searchHaystack(renderTableRow에서 세팅)을 활용.
+ */
+function applyListSearchFilter(wrap: HTMLElement, query: string): void {
+  const q = query.trim().toLowerCase();
+  const rows = wrap.querySelectorAll<HTMLTableRowElement>("tr.dvads-multi-tr");
+  rows.forEach((row) => {
+    const hay = row.dataset.searchHaystack || "";
+    const match = !q || hay.includes(q);
+    row.style.display = match ? "" : "none";
+  });
 }
 
 /**
@@ -600,31 +682,48 @@ async function renderSearchView(wrap: HTMLElement) {
 
   const fragment = document.createDocumentFragment();
 
+  // 헤더 = 탭바(좌) + 검색 wrap + ⋮ kebab. list view와 동일 레이아웃, items만 다름.
   const hdr = document.createElement("div");
-  hdr.className = "dvads-multi-hdr dvads-multi-hdr-search";
-  hdr.innerHTML = `
-    <button class="dvads-multi-back-btn" type="button" title="뒤로가기">‹</button>
-    <input class="dvads-multi-search-input" type="text" placeholder="계정명 또는 계정번호 검색" />
-    <button class="dvads-multi-done-btn" type="button">완료</button>
-  `;
+  hdr.className = "dvads-multi-hdr";
+  hdr.appendChild(buildTabsBar("search"));
+  const actions = document.createElement("div");
+  actions.className = "dvads-multi-hdr-actions";
+  const searchWrap = buildSearchInput("search");
+  actions.appendChild(searchWrap);
+  const settingsBtn = document.createElement("button");
+  settingsBtn.type = "button";
+  settingsBtn.className = "dvads-multi-settings-btn";
+  settingsBtn.textContent = "설정";
+  actions.appendChild(settingsBtn);
+  hdr.appendChild(actions);
   fragment.appendChild(hdr);
+  const input = searchWrap.querySelector<HTMLInputElement>(".dvads-multi-search-input")!;
 
-  const backBtn = hdr.querySelector<HTMLButtonElement>(".dvads-multi-back-btn")!;
-  const doneBtn = hdr.querySelector<HTMLButtonElement>(".dvads-multi-done-btn")!;
-  const input = hdr.querySelector<HTMLInputElement>(".dvads-multi-search-input")!;
-
-  backBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    switchView("list");
-  });
-  doneBtn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    switchView("list");
+  attachActionMenu({
+    trigger: settingsBtn,
+    ariaLabel: "전체 계정 메뉴",
+    items: () => searchKebabItems(),
   });
 
-  const listWrap = document.createElement("div");
-  listWrap.className = "dvads-multi-search-list-wrap";
-  fragment.appendChild(listWrap);
+  // 테이블 구조 — list view와 동일 .dvads-multi-table 베이스. thead는 sticky로 스크롤 시 고정.
+  // 검색 view 컬럼: [cb][계정][상태][ID][작업]. 상태는 roleName(MASTER/OPERATOR/...)을 한글 매핑.
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "dvads-multi-table-wrap";
+  const table = document.createElement("table");
+  table.className = "dvads-bid-table dvads-multi-table dvads-multi-search-table";
+  table.innerHTML = `
+    <thead><tr>
+      <th class="dvads-multi-th-cb">${checkboxHTML(false, "전체 선택", "dvads-multi-cb-all")}</th>
+      <th class="dvads-multi-th-search-name">계정</th>
+      <th class="dvads-multi-th-search-id">ID</th>
+      <th class="dvads-multi-th-search-status">상태</th>
+      <th class="dvads-multi-th-act">작업</th>
+    </tr></thead>
+    <tbody></tbody>
+  `;
+  const tbody = table.querySelector("tbody")!;
+  tableWrap.appendChild(table);
+  fragment.appendChild(tableWrap);
 
   const renderList = (query: string) => {
     const q = query.trim().toLowerCase();
@@ -638,141 +737,478 @@ async function renderSearchView(wrap: HTMLElement) {
           );
         })
       : all;
-    listWrap.innerHTML = "";
+    tbody.innerHTML = "";
     if (filtered.length === 0) {
-      const empty = document.createElement("div");
-      empty.className = "dvads-multi-search-empty";
-      empty.textContent = "검색 결과가 없어요.";
-      listWrap.appendChild(empty);
+      tbody.innerHTML = `<tr class="dvads-multi-search-empty-row"><td colspan="5" class="dvads-multi-search-empty">검색 결과가 없어요.</td></tr>`;
+      if (popoverEl) updateBulkActionUI(popoverEl);
       return;
     }
-    const ul = document.createElement("ul");
-    ul.className = "dvads-multi-search-list";
     for (const entry of filtered) {
-      ul.appendChild(renderSearchRow(entry, meta[entry.adAccountNo], addedSet));
+      tbody.appendChild(renderSearchRow(entry, meta[entry.adAccountNo], addedSet));
     }
-    listWrap.appendChild(ul);
+    if (popoverEl) updateBulkActionUI(popoverEl);
   };
 
   renderList("");
   input.addEventListener("input", () => renderList(input.value));
   // atomic swap — fragment 빌드 완료 후 한 번에 popover에 mount.
   wrap.replaceChildren(fragment);
+  // select-all 헤더 체크박스 wire + 초기 헤더 동기화.
+  wireSelectAll(wrap);
+  updateBulkActionUI(wrap);
   setTimeout(() => input.focus(), 30);
+}
+
+// 광고관리자 권한 코드 → 사용자 친화 한글 라벨. 네이버 호스트 페이지(`광고 계정` 모달)와 동일한 표기.
+// MASTER/OWNER는 대행사 컨텍스트에서 위임 운영 권한 — 네이버 라벨 "운영 관리".
+const ROLE_LABEL: Record<string, string> = {
+  MASTER: "운영 관리",
+  OWNER: "운영 관리",
+  MANAGER: "관리자",
+  OPERATOR: "운영 관리",
+  VIEWER: "조회",
+  READ_ONLY: "조회",
+  READONLY: "조회",
+  READ_WRITE: "편집",
+  WRITE: "편집",
+  ADMIN: "관리자",
+};
+function roleLabel(roleName: string | undefined): string {
+  if (!roleName) return "-";
+  return ROLE_LABEL[roleName] ?? roleName;
 }
 
 function renderSearchRow(
   entry: MultiAccountDirectoryEntry,
   meta: MultiAccountUserMeta | undefined,
   addedSet: Set<number>,
-): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className = "dvads-multi-search-row";
-  li.dataset.adAccountNo = String(entry.adAccountNo);
+): HTMLTableRowElement {
+  const tr = document.createElement("tr");
+  tr.className = "dvads-multi-tr";
+  tr.dataset.adAccountNo = String(entry.adAccountNo);
+  tr.dataset.searchHaystack = (
+    `${entry.name} ${entry.adAccountNo} ${meta?.displayName ?? ""}`
+  ).toLowerCase();
 
   const isAdded = addedSet.has(entry.adAccountNo);
+  if (isAdded) tr.classList.add("is-added");
   const displayName = meta?.displayName?.trim() || entry.name;
 
-  li.innerHTML = `
-    <div class="dvads-multi-search-info">
-      <div class="dvads-multi-search-name">${escapeHtml(displayName)}</div>
-      <div class="dvads-multi-search-meta">
-        ${meta?.displayName ? `<span class="dvads-multi-search-origin">원래 ${escapeHtml(entry.name)}</span> · ` : ""}
-        <span class="dvads-multi-search-no">${entry.adAccountNo}</span>
-      </div>
-    </div>
-    <div class="dvads-multi-search-actions">
-      ${
-        isAdded
-          ? `
-            <button class="dvads-multi-edit-alias" type="button" title="별칭 편집">✎</button>
-            <button class="dvads-multi-remove" type="button" title="추가 해제">삭제</button>
-          `
-          : `<button class="dvads-multi-add-one" type="button">+ 추가</button>`
-      }
-    </div>
+  tr.innerHTML = `
+    <td class="dvads-multi-td-cb">${checkboxHTML(false, `${displayName} 선택`)}</td>
+    <td class="dvads-multi-td-name">
+      <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
+      ${meta?.displayName ? `<div class="dvads-multi-no">원래 ${escapeHtml(entry.name)}</div>` : ""}
+    </td>
+    <td class="dvads-multi-td-id">${entry.adAccountNo}</td>
+    <td class="dvads-multi-td-status">${escapeHtml(roleLabel(entry.roleName))}</td>
+    <td class="dvads-multi-td-act">
+      <button class="dvads-multi-action-trigger" type="button" aria-label="작업 메뉴">⋯</button>
+    </td>
   `;
 
-  if (!isAdded) {
-    li.querySelector<HTMLButtonElement>(".dvads-multi-add-one")?.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const next = await addAccountToList(entry.adAccountNo);
-      addedSet.clear();
-      next.forEach((n) => addedSet.add(n));
-      replaceSearchRow(li, entry);
-    });
-  } else {
-    li.querySelector<HTMLButtonElement>(".dvads-multi-remove")?.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      const next = await removeAccountFromList(entry.adAccountNo);
-      addedSet.clear();
-      next.forEach((n) => addedSet.add(n));
-      replaceSearchRow(li, entry);
-    });
-    li.querySelector<HTMLButtonElement>(".dvads-multi-edit-alias")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      startInlineEdit(li, entry, meta);
-    });
-  }
+  wireRowCheckbox(tr, entry.adAccountNo);
 
-  return li;
-}
-
-async function replaceSearchRow(li: HTMLLIElement, entry: MultiAccountDirectoryEntry) {
-  const [meta, addedList] = await Promise.all([loadAllUserMeta(), loadAddedList()]);
-  const addedSet = new Set(addedList);
-  const newRow = renderSearchRow(entry, meta[entry.adAccountNo], addedSet);
-  li.replaceWith(newRow);
-}
-
-function startInlineEdit(
-  li: HTMLLIElement,
-  entry: MultiAccountDirectoryEntry,
-  meta: MultiAccountUserMeta | undefined,
-) {
-  const info = li.querySelector<HTMLElement>(".dvads-multi-search-info");
-  if (!info) return;
-  const initial = meta?.displayName?.trim() ?? "";
-  info.innerHTML = `
-    <input class="dvads-multi-alias-input" type="text" placeholder="별칭 (없으면 ${escapeHtml(entry.name)})" maxlength="24" />
-    <div class="dvads-multi-search-meta">${entry.adAccountNo}</div>
-  `;
-  const input = info.querySelector<HTMLInputElement>(".dvads-multi-alias-input")!;
-  input.value = initial;
-  const actions = li.querySelector<HTMLElement>(".dvads-multi-search-actions");
-  if (actions) {
-    actions.innerHTML = `
-      <button class="dvads-multi-alias-save" type="button">저장</button>
-      <button class="dvads-multi-alias-cancel" type="button">취소</button>
-    `;
-    actions.querySelector<HTMLButtonElement>(".dvads-multi-alias-save")?.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await updateUserMeta(entry.adAccountNo, { displayName: input.value.trim().slice(0, 24) });
-      await replaceSearchRow(li, entry);
-    });
-    actions.querySelector<HTMLButtonElement>(".dvads-multi-alias-cancel")?.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await replaceSearchRow(li, entry);
-    });
-  }
-  input.focus();
-  input.select();
-  input.addEventListener("keydown", async (e) => {
-    if (e.key === "Enter") {
-      e.preventDefault();
-      await updateUserMeta(entry.adAccountNo, { displayName: input.value.trim().slice(0, 24) });
-      await replaceSearchRow(li, entry);
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      await replaceSearchRow(li, entry);
+  // 행 click → 체크박스 토글. 액션 트리거/체크박스 자체는 제외(각자 핸들러).
+  // 내 계정과 달리 이름 셀 별도 클릭 없음 (전체 계정 view에선 바로가기가 메뉴 항목에 있음).
+  tr.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement | null;
+    if (!t) return;
+    if (t.closest(".dvads-multi-action-trigger")) return;
+    if (t.closest(".dvads-multi-cb")) return;
+    const cb = tr.querySelector<HTMLInputElement>(".dvads-multi-cb input");
+    if (cb) {
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event("change"));
     }
   });
+
+  const actionTrigger = tr.querySelector<HTMLButtonElement>(".dvads-multi-action-trigger");
+  if (actionTrigger) {
+    attachActionMenu({
+      trigger: actionTrigger,
+      ariaLabel: `${displayName} 작업 메뉴`,
+      // 함수형 — 열 때마다 최신 addedSet 기반으로 항목 결정(추가/삭제 후 다음 열림에 반영).
+      items: () => searchRowActionItems(entry, addedSet, tr),
+    });
+  }
+
+  return tr;
+}
+
+// 검색 행 작업 메뉴 — 추가 여부에 따라 항목 다름. 사용자 요구사항:
+//   미추가: 계정 추가 / 바로가기
+//   추가됨: 이름 변경 / 바로가기 / 삭제
+function searchRowActionItems(
+  entry: MultiAccountDirectoryEntry,
+  addedSet: Set<number>,
+  tr: HTMLTableRowElement,
+): ActionMenuItem[] {
+  const isAdded = addedSet.has(entry.adAccountNo);
+  const goTo = () => {
+    // 새 탭으로 — popover 유지 (사용자가 분석 흐름 끊기지 않게).
+    window.open(`/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`, "_blank");
+  };
+  const items: ActionMenuItem[] = [];
+  if (!isAdded) {
+    items.push({
+      label: "계정 추가",
+      onClick: () => {
+        void (async () => {
+          const next = await addAccountToList(entry.adAccountNo);
+          addedSet.clear();
+          next.forEach((n) => addedSet.add(n));
+          await replaceSearchRow(tr, entry, addedSet);
+        })();
+      },
+    });
+  } else {
+    items.push({
+      label: "이름 변경",
+      onClick: () => startInlineEdit(tr, entry, addedSet),
+    });
+  }
+  items.push({ label: "바로가기", onClick: goTo });
+  if (isAdded) {
+    items.push({
+      label: "삭제",
+      danger: true,
+      onClick: () => {
+        void (async () => {
+          const next = await removeAccountFromList(entry.adAccountNo);
+          addedSet.clear();
+          next.forEach((n) => addedSet.add(n));
+          await replaceSearchRow(tr, entry, addedSet);
+        })();
+      },
+    });
+  }
+  return items;
+}
+
+async function replaceSearchRow(
+  tr: HTMLTableRowElement,
+  entry: MultiAccountDirectoryEntry,
+  addedSet: Set<number>,
+) {
+  const meta = await loadAllUserMeta();
+  const newRow = renderSearchRow(entry, meta[entry.adAccountNo], addedSet);
+  tr.replaceWith(newRow);
+}
+
+// 이름 변경 inline edit — 행 전체를 입력 폼으로 교체. 저장/취소 후 새 데이터로 행 재렌더.
+function startInlineEdit(
+  tr: HTMLTableRowElement,
+  entry: MultiAccountDirectoryEntry,
+  addedSet: Set<number>,
+) {
+  const originalContent = tr.innerHTML;
+  const meta = (async () => (await loadAllUserMeta())[entry.adAccountNo])();
+  void meta.then((m) => {
+    const initial = m?.displayName?.trim() ?? "";
+    tr.innerHTML = `
+      <td colspan="5" class="dvads-multi-search-edit-cell">
+        <span class="dvads-multi-search-edit-label">이름 변경</span>
+        <input class="dvads-multi-alias-input" type="text" placeholder="별칭 (없으면 ${escapeHtml(entry.name)})" maxlength="24" />
+        <button class="dvads-multi-alias-save" type="button">저장</button>
+        <button class="dvads-multi-alias-cancel" type="button">취소</button>
+      </td>
+    `;
+    const input = tr.querySelector<HTMLInputElement>(".dvads-multi-alias-input")!;
+    input.value = initial;
+    const save = async () => {
+      await updateUserMeta(entry.adAccountNo, { displayName: input.value.trim().slice(0, 24) });
+      await replaceSearchRow(tr, entry, addedSet);
+    };
+    const cancel = () => {
+      tr.innerHTML = originalContent;
+      // 원래 행 DOM 복원 후 wireRowCheckbox 등 listener는 잃은 상태 — 새 행으로 다시 렌더.
+      void replaceSearchRow(tr, entry, addedSet);
+    };
+    tr.querySelector<HTMLButtonElement>(".dvads-multi-alias-save")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      void save();
+    });
+    tr.querySelector<HTMLButtonElement>(".dvads-multi-alias-cancel")?.addEventListener("click", (e) => {
+      e.stopPropagation();
+      cancel();
+    });
+    input.focus();
+    input.select();
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); void save(); }
+      if (e.key === "Escape") { e.preventDefault(); cancel(); }
+    });
+  });
+}
+
+// ─── 다중 선택 + 일괄 액션 ───
+// 각 행 좌측 체크박스 + 헤더 "설정 (N)" 버튼. selectedAccountNos는 모듈 전역.
+
+function checkboxHTML(checked: boolean, ariaLabel: string, extraClass = ""): string {
+  return (
+    `<label class="dvads-multi-cb ${extraClass}" aria-label="${escapeHtml(ariaLabel)}">` +
+    `<input type="checkbox" ${checked ? "checked" : ""} />` +
+    `<span class="dvads-multi-cb-box" aria-hidden="true"></span>` +
+    `</label>`
+  );
+}
+
+function wireRowCheckbox(rowEl: HTMLElement, accountNo: number): void {
+  const cb = rowEl.querySelector<HTMLInputElement>(".dvads-multi-cb input");
+  if (!cb) return;
+  cb.checked = selectedAccountNos.has(accountNo);
+  // 체크박스 클릭이 행 click(이름 셀 네비게이션 등)으로 버블링되지 않게.
+  cb.addEventListener("click", (e) => e.stopPropagation());
+  cb.addEventListener("change", () => {
+    if (cb.checked) selectedAccountNos.add(accountNo);
+    else selectedAccountNos.delete(accountNo);
+    if (popoverEl) updateBulkActionUI(popoverEl);
+  });
+}
+
+// 현재 view에서 화면에 보이는(display 켜진) 행의 adAccountNo. select-all 동기화에 사용.
+function getVisibleAccountNos(wrap: HTMLElement): number[] {
+  const items = wrap.querySelectorAll<HTMLElement>("[data-ad-account-no]");
+  const out: number[] = [];
+  items.forEach((el) => {
+    if (el.style.display === "none") return;
+    const no = Number(el.dataset.adAccountNo);
+    if (no) out.push(no);
+  });
+  return out;
+}
+
+// 헤더 select-all 체크박스 상태 + 설정 버튼 라벨 동기화. 메뉴 항목 자체는 dynamic resolve.
+function updateBulkActionUI(wrap: HTMLElement): void {
+  const count = selectedAccountNos.size;
+  const settingsBtn = wrap.querySelector<HTMLButtonElement>(".dvads-multi-settings-btn");
+  if (settingsBtn) {
+    // 폭 안정성은 CSS min-width로 보장 — 라벨만 갈아끼움.
+    settingsBtn.textContent = count > 0 ? `설정 (${count})` : "설정";
+    settingsBtn.classList.toggle("has-selection", count > 0);
+  }
+  const selectAll = wrap.querySelector<HTMLInputElement>(".dvads-multi-cb-all input");
+  if (selectAll) {
+    const visible = getVisibleAccountNos(wrap);
+    const allSelected = visible.length > 0 && visible.every((no) => selectedAccountNos.has(no));
+    const someSelected = visible.some((no) => selectedAccountNos.has(no));
+    selectAll.checked = allSelected;
+    selectAll.indeterminate = !allSelected && someSelected;
+  }
+}
+
+// 헤더 select-all 토글 — 현재 보이는 행 전부 선택/해제.
+function wireSelectAll(wrap: HTMLElement): void {
+  const selectAll = wrap.querySelector<HTMLInputElement>(".dvads-multi-cb-all input");
+  if (!selectAll) return;
+  selectAll.addEventListener("click", (e) => e.stopPropagation());
+  selectAll.addEventListener("change", () => {
+    const visible = getVisibleAccountNos(wrap);
+    if (selectAll.checked) visible.forEach((no) => selectedAccountNos.add(no));
+    else visible.forEach((no) => selectedAccountNos.delete(no));
+    // 보이는 각 행의 체크박스 동기화
+    visible.forEach((no) => {
+      const row = wrap.querySelector<HTMLElement>(`[data-ad-account-no="${no}"]`);
+      const cb = row?.querySelector<HTMLInputElement>(".dvads-multi-cb input");
+      if (cb) cb.checked = selectAll.checked;
+    });
+    updateBulkActionUI(wrap);
+  });
+}
+
+/**
+ * 검색 input 빌더 — 양쪽에 아이콘 슬롯(돋보기/x). 두 view 공통 (list/search 모두).
+ * value 있을 땐 wrapper에 has-value 클래스로 x 버튼 노출. x 클릭 시 값 비우고 필터 재적용.
+ * view별 다른 점: list는 listSearchQuery(추가된 명단 필터) wire, search는 caller가 input 참조해
+ * 자체 renderList 콜백 wire.
+ */
+function buildSearchInput(view: PopoverView): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "dvads-multi-search-wrap";
+  wrap.innerHTML = `
+    <svg class="dvads-multi-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="7" cy="7" r="5"/><path d="M11 11 L14 14"/>
+    </svg>
+    <input class="dvads-multi-search-input" type="text" placeholder="계정명 또는 계정번호 검색" />
+    <button class="dvads-multi-search-clear" type="button" aria-label="검색어 지우기" tabindex="-1">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M3 3 L13 13 M13 3 L3 13"/>
+      </svg>
+    </button>
+  `;
+  const input = wrap.querySelector<HTMLInputElement>("input")!;
+  const clearBtn = wrap.querySelector<HTMLButtonElement>(".dvads-multi-search-clear")!;
+  const syncHasValue = () => wrap.classList.toggle("has-value", input.value.length > 0);
+
+  if (view === "list") {
+    input.value = listSearchQuery;
+    syncHasValue();
+    input.addEventListener("input", () => {
+      listSearchQuery = input.value;
+      syncHasValue();
+      if (popoverEl) {
+        applyListSearchFilter(popoverEl, listSearchQuery);
+        updateBulkActionUI(popoverEl);
+      }
+    });
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      input.value = "";
+      listSearchQuery = "";
+      syncHasValue();
+      if (popoverEl) {
+        applyListSearchFilter(popoverEl, "");
+        updateBulkActionUI(popoverEl);
+      }
+      input.focus();
+    });
+  } else {
+    // search view: caller가 input 참조해 renderList 콜백 wire함. 여기선 x 처리 + has-value 동기화만.
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      input.value = "";
+      syncHasValue();
+      // input 이벤트 강제 발화 — search view의 renderList 콜백 트리거.
+      input.dispatchEvent(new Event("input"));
+      input.focus();
+    });
+    input.addEventListener("input", syncHasValue);
+  }
+
+  return wrap;
+}
+
+// 내 계정(list view) ⋮ kebab 메뉴 — 크게 보기 / 새로고침 / 알림 2종 / 삭제. 알림·삭제는 선택 필요.
+// 첫 항목은 fullscreen 상태 토글 — 평소 "크게 보기", 진입 후엔 "작게 보기"로 라벨 바뀜.
+function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[] {
+  const hasSelection = selectedAccountNos.size > 0;
+  return [
+    {
+      label: popoverFullscreen ? "작게 보기" : "크게 보기",
+      onClick: () => setFullscreen(!popoverFullscreen),
+    },
+    { label: "새로고침", onClick: () => void refreshAllStale(entries) },
+    { separator: true },
+    { label: "비즈머니 알림", disabled: !hasSelection },
+    { label: "브랜드검색 알림", disabled: !hasSelection },
+    { separator: true },
+    {
+      label: "삭제",
+      danger: true,
+      disabled: !hasSelection,
+      onClick: () => {
+        const nos = Array.from(selectedAccountNos);
+        if (nos.length === 0) return;
+        void (async () => {
+          for (const no of nos) await removeAccountFromList(no);
+          selectedAccountNos.clear();
+          if (popoverEl) await renderListView(popoverEl);
+        })();
+      },
+    },
+  ];
+}
+
+// 전체 계정(search view) ⋮ kebab 메뉴 — 사용자 요구대로 단순히 계정 추가 / 삭제만.
+function searchKebabItems(): ActionMenuItem[] {
+  const hasSelection = selectedAccountNos.size > 0;
+  return [
+    {
+      label: "계정 추가",
+      disabled: !hasSelection,
+      onClick: () => {
+        const nos = Array.from(selectedAccountNos);
+        if (nos.length === 0) return;
+        void (async () => {
+          for (const no of nos) await addAccountToList(no);
+          selectedAccountNos.clear();
+          if (popoverEl) await renderSearchView(popoverEl);
+        })();
+      },
+    },
+    {
+      label: "삭제",
+      danger: true,
+      disabled: !hasSelection,
+      onClick: () => {
+        const nos = Array.from(selectedAccountNos);
+        if (nos.length === 0) return;
+        void (async () => {
+          for (const no of nos) await removeAccountFromList(no);
+          selectedAccountNos.clear();
+          if (popoverEl) await renderSearchView(popoverEl);
+        })();
+      },
+    },
+  ];
+}
+
+// popover 기본 폭 — 두 탭 동일 760px (계정 컬럼 200px 수용 위해 720 → 760으로 살짝 키움).
+// 크게 보기 모드에선 CSS가 폭 무시하고 viewport 채움.
+function applyPopoverWidth(_view: PopoverView): void {
+  popoverEl?.style.setProperty("--dvads-multi-popover-width", "760px");
+}
+
+/**
+ * popover 좌표를 트리거 버튼 기준으로 잡음 (anchored 모드). openPopover 초기 진입과
+ * 크게 보기 종료 시 재호출. buttonEl 못 찾으면 우상단 고정.
+ */
+function applyAnchoredPosition(wrap: HTMLElement): void {
+  const btnRect = buttonEl?.getBoundingClientRect();
+  if (btnRect) {
+    const popoverWidth = 1100;
+    const margin = 8;
+    const wouldOverflow = btnRect.left + popoverWidth > window.innerWidth - margin;
+    if (wouldOverflow) {
+      wrap.style.right = `${Math.max(margin, window.innerWidth - btnRect.right)}px`;
+      wrap.style.left = "";
+    } else {
+      wrap.style.left = `${btnRect.left}px`;
+      wrap.style.right = "";
+    }
+    wrap.style.top = `${btnRect.bottom + margin}px`;
+  } else {
+    wrap.style.top = "60px";
+    wrap.style.right = "24px";
+  }
+}
+
+/**
+ * 크게 보기 모드 진입/종료. 진입 시 inline 위치 클리어 → CSS inset 인계, backdrop 추가, 테이블
+ * is-collapsed 해제. 종료 시 anchored 위치 재계산 + backdrop 제거.
+ */
+function setFullscreen(on: boolean): void {
+  popoverFullscreen = on;
+  if (!popoverEl) return;
+  popoverEl.classList.toggle("is-fullscreen", on);
+  popoverEl.querySelector(".dvads-multi-table")?.classList.toggle("is-collapsed", !on);
+  if (on) {
+    // anchored 좌표 inline 스타일 비우면 CSS .is-fullscreen의 inset이 인계받음.
+    popoverEl.style.top = "";
+    popoverEl.style.left = "";
+    popoverEl.style.right = "";
+    let backdrop = document.querySelector<HTMLDivElement>(".dvads-multi-backdrop");
+    if (!backdrop) {
+      backdrop = document.createElement("div");
+      backdrop.className = "dvads dvads-multi-backdrop";
+      backdrop.addEventListener("click", () => closePopover());
+      document.body.appendChild(backdrop);
+    }
+  } else {
+    document.querySelector(".dvads-multi-backdrop")?.remove();
+    // 작게 복귀 — 버튼 기준 anchored 위치로 다시 잡음.
+    applyAnchoredPosition(popoverEl);
+  }
 }
 
 async function switchView(next: PopoverView) {
   if (!popoverEl) return;
   popoverView = next;
+  // view마다 선택 컨텍스트가 달라 (내 계정 vs 전체 계정) — 전환 시 선택 초기화.
+  selectedAccountNos.clear();
+  // width 변경을 먼저 트리거 — render 중 transition이 시작되어 새 폭으로 슬라이드.
+  applyPopoverWidth(next);
   await renderPopoverBody(popoverEl);
 }
 
@@ -799,6 +1235,10 @@ function renderTableRow(
   const tr = document.createElement("tr");
   tr.className = "dvads-multi-tr";
   tr.dataset.adAccountNo = String(entry.adAccountNo);
+  // 검색 haystack — 계정명/번호/별칭을 하나로 합쳐 lowercase. listSearchQuery substring match.
+  tr.dataset.searchHaystack = (
+    `${entry.name} ${entry.adAccountNo} ${meta?.displayName ?? ""}`
+  ).toLowerCase();
 
   const displayName = meta?.displayName?.trim() || entry.name;
   const isActive =
@@ -806,6 +1246,7 @@ function renderTableRow(
   if (isActive) tr.classList.add("dvads-multi-tr-active");
 
   tr.innerHTML = `
+    <td class="dvads-multi-td-cb">${checkboxHTML(false, `${displayName} 선택`)}</td>
     <td class="dvads-multi-td-name">
       <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
       <div class="dvads-multi-no">${entry.adAccountNo}</div>
@@ -820,25 +1261,65 @@ function renderTableRow(
     <td class="dvads-multi-td-num" data-k="conversions">-</td>
     <td class="dvads-multi-td-num" data-k="roas">-</td>
     <td class="dvads-multi-td-act">
-      <button class="dvads-multi-row-refresh" type="button" title="이 계정 새로고침">↻</button>
+      <button class="dvads-multi-action-trigger" type="button" aria-label="작업 메뉴">⋯</button>
     </td>
   `;
 
-  const refreshBtn = tr.querySelector<HTMLButtonElement>(".dvads-multi-row-refresh");
-  refreshBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    void refreshRow(entry, extractActiveAdAccountNo(), { force: true });
+  // 이름 셀(계정명+계정번호) 클릭 → 해당 계정 페이지를 새 탭으로. popover는 유지(원본 탭).
+  const goTo = () => {
+    if (isActive) return;
+    const url = `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`;
+    window.open(url, "_blank");
+  };
+
+  const nameTd = tr.querySelector<HTMLTableCellElement>(".dvads-multi-td-name");
+  nameTd?.classList.add("dvads-multi-td-name-clickable");
+  nameTd?.addEventListener("click", goTo);
+
+  // 체크박스 wire — 선택 토글 + 헤더 카운트 동기화.
+  wireRowCheckbox(tr, entry.adAccountNo);
+
+  // 행 click → 체크박스 토글. 단 이름 셀(바로가기)과 액션 트리거/체크박스 자체는 제외 (각자 핸들러).
+  tr.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement | null;
+    if (!t) return;
+    if (t.closest(".dvads-multi-td-name")) return;
+    if (t.closest(".dvads-multi-action-trigger")) return;
+    if (t.closest(".dvads-multi-cb")) return;
+    const cb = tr.querySelector<HTMLInputElement>(".dvads-multi-cb input");
+    if (cb) {
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event("change"));
+    }
   });
 
-  tr.addEventListener("click", () => {
-    if (isActive) {
-      closePopover();
-      return;
-    }
-    closePopover();
-    const url = `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`;
-    location.assign(url);
-  });
+  // 작업 메뉴 — kebab "..." 트리거 + 4개 항목.
+  // 바로가기·삭제만 wire. 알림 2개는 placeholder — 클릭 시 메뉴 닫히기만 함.
+  const actionTrigger = tr.querySelector<HTMLButtonElement>(".dvads-multi-action-trigger");
+  if (actionTrigger) {
+    attachActionMenu({
+      trigger: actionTrigger,
+      ariaLabel: `${displayName} 작업 메뉴`,
+      items: [
+        { label: "바로가기", onClick: goTo },
+        { label: "비즈머니 알림" },
+        { label: "브랜드검색 알림" },
+        {
+          label: "삭제",
+          danger: true,
+          onClick: () => {
+            // 검색 뷰의 ".dvads-multi-remove"와 동일한 흐름 — confirm 없이 즉시 제거.
+            // 광고계정 자체가 삭제되는 게 아니라 사용자 추가 목록에서만 빠지는 거라
+            // 안전 측 (재추가는 검색 뷰에서 가능).
+            void (async () => {
+              await removeAccountFromList(entry.adAccountNo);
+              if (popoverEl) await renderListView(popoverEl);
+            })();
+          },
+        },
+      ],
+    });
+  }
 
   return tr;
 }
