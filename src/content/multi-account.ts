@@ -38,6 +38,7 @@ import type {
   MultiAccountSnapshot,
 } from "@/types/storage";
 import { attachActionMenu, type ActionMenuItem } from "./ui-dropdown";
+import { openInputDialog } from "./input-dialog";
 
 const ADACCT_URL_PATTERN = /\/manage\/ad-accounts\//;
 const BTN_MARK = "data-dvads-multi-btn";
@@ -54,6 +55,7 @@ export function initMultiAccount() {
   w.__dvadsMultiAccountInit = true;
 
   registerMessageListener();
+  registerStorageListener();
 
   let lastUrl = location.href;
   const onTick = () => {
@@ -104,7 +106,11 @@ async function autoUpdateActiveAccount() {
       fetched_at: new Date().toISOString(),
     };
     await saveSnapshot(snap);
-    if (popoverEl) paintRow(activeNo, snap);
+    if (popoverEl) {
+      const all = await loadAllUserMeta();
+      paintRow(activeNo, snap, all[activeNo]);
+    }
+    void refreshBadge();
   } catch (e) {
     console.warn("[dv-ads/multi-account] 자연 캐싱 실패", e);
   }
@@ -207,9 +213,18 @@ function syncMount() {
     else void openPopover();
   });
 
+  // iOS 스타일 알림 배지 — 사용자가 설정한 임계값(비즈머니/브랜드검색) 알림 카운트.
+  // 초기엔 숨겨두고 refreshBadge가 카운트>0일 때 노출.
+  const badge = document.createElement("span");
+  badge.className = "dvads-multi-btn-badge";
+  badge.setAttribute("aria-hidden", "true");
+  badge.style.display = "none";
+  btn.appendChild(badge);
+
   chip.parentElement.insertBefore(btn, chip);
   buttonEl = btn;
   lastButtonContainer = chip.parentElement;
+  void refreshBadge();
 }
 
 function unmountButton() {
@@ -272,8 +287,19 @@ async function openPopover() {
   // 초기 view("list")의 폭으로 시작. switchView가 search로 가면 더 좁혀짐.
   applyPopoverWidth(popoverView);
 
+  // popover-attached 보조 모달이 열려있는지 — 이름 수정 등. 이게 떠 있을 동안엔
+  // 외부 클릭/ESC가 popover를 닫지 않도록 모든 dismiss 트리거를 가드.
+  const auxModalOpen = (): boolean =>
+    !!document.querySelector(".dvads-rename-backdrop");
+  const inAuxModal = (t: Node): boolean =>
+    !!document.querySelector(".dvads-rename-backdrop")?.contains(t);
+
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") closePopover();
+    if (e.key === "Escape") {
+      // 보조 모달이 떠 있으면 모달 자체 핸들러에 맡김. popover 닫지 않음.
+      if (auxModalOpen()) return;
+      closePopover();
+    }
   };
   // popover 안에서 시작한 mousedown 추적 — 드래그하다가 밖에서 release하면 click이
   // 외부에서 발화해서 popover를 닫아버리는 사고 방지. mousedown 시작점이 popover 내부면
@@ -283,7 +309,9 @@ async function openPopover() {
     if (!popoverEl) return;
     const t = e.target as Node;
     mousedownInsidePopover =
-      popoverEl.contains(t) || (buttonEl?.contains(t) ?? false);
+      popoverEl.contains(t) ||
+      (buttonEl?.contains(t) ?? false) ||
+      inAuxModal(t);
   };
   const onClickOutside = (e: MouseEvent) => {
     if (!popoverEl) return;
@@ -294,6 +322,8 @@ async function openPopover() {
     }
     if (popoverEl.contains(e.target as Node)) return;
     if (buttonEl?.contains(e.target as Node)) return;
+    // 보조 모달(이름 수정 등) 내부 클릭은 popover 외부지만 닫지 않음.
+    if (inAuxModal(e.target as Node)) return;
     closePopover();
   };
   document.addEventListener("keydown", onKey);
@@ -552,9 +582,10 @@ async function renderListView(wrap: HTMLElement) {
 
   // ─── 4단계: paint (이제 table이 popoverEl 서브트리에 있어 findRow 동작) ───
   for (const { entry, snap } of sorted) {
-    if (snap) paintRow(entry.adAccountNo, snap);
+    if (snap) paintRow(entry.adAccountNo, snap, meta[entry.adAccountNo]);
     else paintRowEmpty(entry.adAccountNo);
   }
+  void refreshBadge();
 
   // 기존 검색 쿼리가 있으면(예: sort 변경 후 재렌더) 적용.
   if (listSearchQuery) applyListSearchFilter(wrap, listSearchQuery);
@@ -798,7 +829,7 @@ function renderSearchRow(
     <td class="dvads-multi-td-cb">${checkboxHTML(false, `${displayName} 선택`)}</td>
     <td class="dvads-multi-td-name">
       <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
-      ${meta?.displayName ? `<div class="dvads-multi-no">원래 ${escapeHtml(entry.name)}</div>` : ""}
+      ${meta?.displayName ? `<div class="dvads-multi-no">${escapeHtml(entry.name)}</div>` : ""}
     </td>
     <td class="dvads-multi-td-id">${entry.adAccountNo}</td>
     <td class="dvads-multi-td-status">${escapeHtml(roleLabel(entry.roleName))}</td>
@@ -846,11 +877,23 @@ function searchRowActionItems(
 ): ActionMenuItem[] {
   const isAdded = addedSet.has(entry.adAccountNo);
   const goTo = () => {
-    // 새 탭으로 — popover 유지 (사용자가 분석 흐름 끊기지 않게).
-    window.open(`/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`, "_blank");
+    // anchor click 패턴 — window.open 차단 회피, 사용자 제스처 직결로 새 탭 안정적 오픈.
+    const url = `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.click();
   };
   const items: ActionMenuItem[] = [];
-  if (!isAdded) {
+  // 순서: 바로가기 → (이름 수정 / 계정 추가) → 삭제. 사용자 빈도 순 + 파괴적 액션은 맨 아래.
+  items.push({ label: "바로가기", onClick: goTo });
+  if (isAdded) {
+    items.push({
+      label: "이름 수정",
+      onClick: () => openRenameDialog(entry, () => replaceSearchRow(tr, entry, addedSet)),
+    });
+  } else {
     items.push({
       label: "계정 추가",
       onClick: () => {
@@ -862,13 +905,7 @@ function searchRowActionItems(
         })();
       },
     });
-  } else {
-    items.push({
-      label: "이름 변경",
-      onClick: () => startInlineEdit(tr, entry, addedSet),
-    });
   }
-  items.push({ label: "바로가기", onClick: goTo });
   if (isAdded) {
     items.push({
       label: "삭제",
@@ -896,50 +933,88 @@ async function replaceSearchRow(
   tr.replaceWith(newRow);
 }
 
-// 이름 변경 inline edit — 행 전체를 입력 폼으로 교체. 저장/취소 후 새 데이터로 행 재렌더.
-function startInlineEdit(
+// 내 계정 list view 행 재렌더 — 별칭 변경 후 fresh 데이터로 갈아끼움. 이후 paintRow로 지표 복원.
+async function replaceListRow(
   tr: HTMLTableRowElement,
   entry: MultiAccountDirectoryEntry,
-  addedSet: Set<number>,
 ) {
-  const originalContent = tr.innerHTML;
-  const meta = (async () => (await loadAllUserMeta())[entry.adAccountNo])();
-  void meta.then((m) => {
-    const initial = m?.displayName?.trim() ?? "";
-    tr.innerHTML = `
-      <td colspan="5" class="dvads-multi-search-edit-cell">
-        <span class="dvads-multi-search-edit-label">이름 변경</span>
-        <input class="dvads-multi-alias-input" type="text" placeholder="별칭 (없으면 ${escapeHtml(entry.name)})" maxlength="24" />
-        <button class="dvads-multi-alias-save" type="button">저장</button>
-        <button class="dvads-multi-alias-cancel" type="button">취소</button>
-      </td>
-    `;
-    const input = tr.querySelector<HTMLInputElement>(".dvads-multi-alias-input")!;
-    input.value = initial;
-    const save = async () => {
-      await updateUserMeta(entry.adAccountNo, { displayName: input.value.trim().slice(0, 24) });
-      await replaceSearchRow(tr, entry, addedSet);
-    };
-    const cancel = () => {
-      tr.innerHTML = originalContent;
-      // 원래 행 DOM 복원 후 wireRowCheckbox 등 listener는 잃은 상태 — 새 행으로 다시 렌더.
-      void replaceSearchRow(tr, entry, addedSet);
-    };
-    tr.querySelector<HTMLButtonElement>(".dvads-multi-alias-save")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void save();
-    });
-    tr.querySelector<HTMLButtonElement>(".dvads-multi-alias-cancel")?.addEventListener("click", (e) => {
-      e.stopPropagation();
-      cancel();
-    });
+  const [meta, snap] = await Promise.all([
+    loadAllUserMeta(),
+    loadSnapshot(entry.adAccountNo),
+  ]);
+  const newRow = renderTableRow(entry, meta[entry.adAccountNo]);
+  tr.replaceWith(newRow);
+  if (snap) paintRow(entry.adAccountNo, snap, meta[entry.adAccountNo]);
+  else paintRowEmpty(entry.adAccountNo);
+}
+
+// 이름 수정 모달 — 배경 dim + 중앙 카드. inline edit(table colspan)이 컬럼 reflow 이슈가
+// 있어 별도 모달로 전환. backdrop click/ESC/취소로 닫힘, 저장 시 updateUserMeta + replaceRow.
+function openRenameDialog(
+  entry: MultiAccountDirectoryEntry,
+  replaceRow: () => Promise<void>,
+): void {
+  closeRenameDialog();
+  const backdrop = document.createElement("div");
+  backdrop.className = "dvads dvads-rename-backdrop";
+  const card = document.createElement("div");
+  card.className = "dvads-rename-card";
+  card.innerHTML = `
+    <div class="dvads-rename-title">이름 수정</div>
+    <div class="dvads-rename-input-wrap">
+      <input class="dvads-rename-input" type="text" maxlength="24" placeholder="이름 입력" />
+      <button class="dvads-rename-clear" type="button" aria-label="입력 지우기">×</button>
+    </div>
+    <div class="dvads-rename-actions">
+      <button class="dvads-rename-cancel" type="button">취소</button>
+      <button class="dvads-rename-save" type="button">저장</button>
+    </div>
+  `;
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const input = card.querySelector<HTMLInputElement>(".dvads-rename-input")!;
+  // 초기 표시 — 기존 별칭이 있으면 그걸, 없으면 서버측 원본 이름.
+  void (async () => {
+    const m = (await loadAllUserMeta())[entry.adAccountNo];
+    input.value = m?.displayName?.trim() || entry.name;
     input.focus();
     input.select();
-    input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") { e.preventDefault(); void save(); }
-      if (e.key === "Escape") { e.preventDefault(); cancel(); }
-    });
+  })();
+
+  const cleanup = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const save = async () => {
+    await updateUserMeta(entry.adAccountNo, { displayName: input.value.trim().slice(0, 24) });
+    cleanup();
+    await replaceRow();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void save(); }
+  };
+
+  // 모달 내부 click이 document로 전파되면 popover의 outside-click 핸들러가 popover를 닫음.
+  // 모든 핸들러에서 stopPropagation으로 차단. backdrop 자신은 target=backdrop인 경우만 닫기.
+  backdrop.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (e.target === backdrop) cleanup();
   });
+  // 카드 내부 모든 click도 stopPropagation — 입력칸 클릭/포커스 등이 popover dismiss 안 일으키게.
+  card.addEventListener("click", (e) => e.stopPropagation());
+  card.querySelector<HTMLButtonElement>(".dvads-rename-cancel")?.addEventListener("click", cleanup);
+  card.querySelector<HTMLButtonElement>(".dvads-rename-save")?.addEventListener("click", () => void save());
+  card.querySelector<HTMLButtonElement>(".dvads-rename-clear")?.addEventListener("click", () => {
+    input.value = "";
+    input.focus();
+  });
+  document.addEventListener("keydown", onKey, true);
+}
+
+function closeRenameDialog(): void {
+  document.querySelector(".dvads-rename-backdrop")?.remove();
 }
 
 // ─── 다중 선택 + 일괄 액션 ───
@@ -1090,8 +1165,16 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
     },
     { label: "새로고침", onClick: () => void refreshAllStale(entries) },
     { separator: true },
-    { label: "비즈머니 알림", disabled: !hasSelection },
-    { label: "브랜드검색 알림", disabled: !hasSelection },
+    {
+      label: "비즈머니 알림",
+      disabled: !hasSelection,
+      onClick: () => openBizMoneyDialogFor(Array.from(selectedAccountNos)),
+    },
+    {
+      label: "브랜드검색 알림",
+      disabled: !hasSelection,
+      onClick: () => openBrandSearchDialogFor(Array.from(selectedAccountNos)),
+    },
     { separator: true },
     {
       label: "삭제",
@@ -1144,10 +1227,10 @@ function searchKebabItems(): ActionMenuItem[] {
   ];
 }
 
-// popover 기본 폭 — 두 탭 동일 760px (계정 컬럼 200px 수용 위해 720 → 760으로 살짝 키움).
+// popover 기본 폭 — 두 탭 동일 776px (큰 수치 표시 시 행이 짤리지 않게 좌우 8px씩 추가).
 // 크게 보기 모드에선 CSS가 폭 무시하고 viewport 채움.
 function applyPopoverWidth(_view: PopoverView): void {
-  popoverEl?.style.setProperty("--dvads-multi-popover-width", "760px");
+  popoverEl?.style.setProperty("--dvads-multi-popover-width", "776px");
 }
 
 /**
@@ -1266,10 +1349,15 @@ function renderTableRow(
   `;
 
   // 이름 셀(계정명+계정번호) 클릭 → 해당 계정 페이지를 새 탭으로. popover는 유지(원본 탭).
+  // anchor click 패턴 — window.open은 일부 콘텐츠 스크립트 컨텍스트에서 차단될 수 있어,
+  // 임시 <a target="_blank">.click()이 가장 신뢰성 높음 (사용자 제스처 직결).
   const goTo = () => {
-    if (isActive) return;
     const url = `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`;
-    window.open(url, "_blank");
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.click();
   };
 
   const nameTd = tr.querySelector<HTMLTableCellElement>(".dvads-multi-td-name");
@@ -1293,8 +1381,7 @@ function renderTableRow(
     }
   });
 
-  // 작업 메뉴 — kebab "..." 트리거 + 4개 항목.
-  // 바로가기·삭제만 wire. 알림 2개는 placeholder — 클릭 시 메뉴 닫히기만 함.
+  // 작업 메뉴 — kebab "..." 트리거 + 항목.
   const actionTrigger = tr.querySelector<HTMLButtonElement>(".dvads-multi-action-trigger");
   if (actionTrigger) {
     attachActionMenu({
@@ -1302,8 +1389,18 @@ function renderTableRow(
       ariaLabel: `${displayName} 작업 메뉴`,
       items: [
         { label: "바로가기", onClick: goTo },
-        { label: "비즈머니 알림" },
-        { label: "브랜드검색 알림" },
+        {
+          label: "이름 수정",
+          onClick: () => openRenameDialog(entry, () => replaceListRow(tr, entry)),
+        },
+        {
+          label: "비즈머니 알림",
+          onClick: () => openBizMoneyDialogFor([entry.adAccountNo]),
+        },
+        {
+          label: "브랜드검색 알림",
+          onClick: () => openBrandSearchDialogFor([entry.adAccountNo]),
+        },
         {
           label: "삭제",
           danger: true,
@@ -1402,7 +1499,9 @@ async function refreshRow(
       fetched_at: new Date().toISOString(),
     };
     await saveSnapshot(snap);
-    paintRow(entry.adAccountNo, snap);
+    const all = await loadAllUserMeta();
+    paintRow(entry.adAccountNo, snap, all[entry.adAccountNo]);
+    void refreshBadge();
   } catch (e) {
     paintRowError(entry.adAccountNo, friendlyMessage(e));
   }
@@ -1423,7 +1522,136 @@ function paintRowLoading(adAccountNo: number) {
   row.classList.remove("dvads-multi-tr-empty");
 }
 
-function paintRow(adAccountNo: number, snap: MultiAccountSnapshot) {
+// ─── 알림 임계값 다이얼로그 + 배지 갱신 ─────────────────────────────────
+//
+// 행/헤더 메뉴에서 "비즈머니 알림" / "브랜드검색 알림" 클릭 시 호출.
+// 단일 계정이면 기존 값을 prefill, 다중 선택(헤더 kebab)이면 일괄 적용.
+// 저장 후 popover 재렌더 + 페이지 우상단 버튼 배지 갱신.
+
+async function openBizMoneyDialogFor(nos: number[]) {
+  if (nos.length === 0) return;
+  const metaMap = await loadAllUserMeta();
+  const initial = nos.length === 1 ? (metaMap[nos[0]]?.bizMoneyThreshold ?? null) : null;
+  // 해제 버튼 노출 조건:
+  //  - 단일 선택: 기존 임계값이 있을 때만 (이미 해제 상태인 계정엔 의미 없음)
+  //  - 다중 선택: 선택 계정 중 일부만 설정돼 있을 수 있어 항상 일괄 해제 가능
+  const anyConfigured = nos.some((no) => metaMap[no]?.bizMoneyThreshold != null);
+  const showClear = nos.length === 1 ? initial != null : anyConfigured;
+  openInputDialog({
+    title: "비즈머니 알림 설정",
+    description: nos.length === 1
+      ? "비즈머니가 이 금액 이하로 떨어지면 알림"
+      : `선택된 ${nos.length}개 계정에 일괄 적용 - 비즈머니가 이 금액 이하면 알림`,
+    initialValue: initial,
+    suffix: "원",
+    placeholder: "예: 100000",
+    onConfirm: async (value) => {
+      for (const no of nos) await updateUserMeta(no, { bizMoneyThreshold: value });
+      if (popoverEl) await renderListView(popoverEl);
+      void refreshBadge();
+    },
+    onClear: showClear ? async () => {
+      for (const no of nos) await updateUserMeta(no, { bizMoneyThreshold: undefined });
+      if (popoverEl) await renderListView(popoverEl);
+      void refreshBadge();
+    } : undefined,
+  });
+}
+
+async function openBrandSearchDialogFor(nos: number[]) {
+  if (nos.length === 0) return;
+  const metaMap = await loadAllUserMeta();
+  const initial = nos.length === 1 ? (metaMap[nos[0]]?.brandSearchDaysThreshold ?? null) : null;
+  const anyConfigured = nos.some((no) => metaMap[no]?.brandSearchDaysThreshold != null);
+  const showClear = nos.length === 1 ? initial != null : anyConfigured;
+  openInputDialog({
+    title: "브랜드검색 알림 설정",
+    description: nos.length === 1
+      ? "브랜드검색 계약 만료가 이 일수 이하로 남으면 알림"
+      : `선택된 ${nos.length}개 계정에 일괄 적용 - 브랜드검색 만료가 이 일수 이하면 알림`,
+    initialValue: initial,
+    suffix: "일",
+    placeholder: "예: 7",
+    onConfirm: async (value) => {
+      for (const no of nos) await updateUserMeta(no, { brandSearchDaysThreshold: value });
+      if (popoverEl) await renderListView(popoverEl);
+      void refreshBadge();
+    },
+    onClear: showClear ? async () => {
+      for (const no of nos) await updateUserMeta(no, { brandSearchDaysThreshold: undefined });
+      if (popoverEl) await renderListView(popoverEl);
+      void refreshBadge();
+    } : undefined,
+  });
+}
+
+/**
+ * 페이지 우상단 햄버거 버튼의 알림 배지를 갱신. 사용자가 설정한 임계값을 가진 계정 중
+ * 비즈머니가 임계 이하이거나 브랜드검색 D-day가 임계 이하인 계정 수를 합산해 표시.
+ *
+ * 호출 시점: syncMount 직후, popover 렌더 후, snapshot 갱신 후, 다이얼로그 onConfirm/onClear,
+ * 그리고 storage onChanged 콜백.
+ */
+async function refreshBadge() {
+  if (!buttonEl) return;
+  const badge = buttonEl.querySelector<HTMLSpanElement>(".dvads-multi-btn-badge");
+  if (!badge) return;
+  const addedList = await loadAddedList();
+  const metaMap = await loadAllUserMeta();
+  let count = 0;
+  for (const no of addedList) {
+    const meta = metaMap[no];
+    if (!meta) continue;
+    if (meta.bizMoneyThreshold == null && meta.brandSearchDaysThreshold == null) continue;
+    const snap = await loadSnapshot(no);
+    if (!snap) continue;
+    let alerted = false;
+    if (meta.bizMoneyThreshold != null && snap.bizMoney != null && snap.bizMoney <= meta.bizMoneyThreshold) {
+      alerted = true;
+    }
+    if (!alerted && meta.brandSearchDaysThreshold != null) {
+      const dday = computeMinDday(snap.contracts);
+      if (dday !== null && dday <= meta.brandSearchDaysThreshold) alerted = true;
+    }
+    if (alerted) count++;
+  }
+  if (count > 0) {
+    const text = count > 99 ? "99+" : String(count);
+    badge.textContent = text;
+    badge.style.display = "";
+    // 자릿수에 따라 font-size 축소 클래스 — 정원 유지하면서 글자 fit.
+    badge.classList.toggle("is-two-digit", text.length === 2);
+    badge.classList.toggle("is-three-digit", text.length >= 3);
+    buttonEl.title = `광고계정 명단 (알림 ${count}건)`;
+  } else {
+    badge.textContent = "";
+    badge.style.display = "none";
+    badge.classList.remove("is-two-digit", "is-three-digit");
+    buttonEl.title = "광고계정 명단";
+  }
+}
+
+/**
+ * 다른 탭에서 임계값/추가목록/스냅샷이 바뀐 경우도 배지 동기화하려면 storage 변경 구독 필요.
+ * `initMultiAccount`에서 1회 등록. 콘텐츠 스크립트당 1회 리스너만 유지(중복 등록은 init 가드).
+ */
+function registerStorageListener() {
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+    for (const k of Object.keys(changes)) {
+      if (
+        k === "multi_account_user_meta" ||
+        k === "multi_account_added_list" ||
+        k.startsWith("multi_account_snapshot:")
+      ) {
+        void refreshBadge();
+        return;
+      }
+    }
+  });
+}
+
+function paintRow(adAccountNo: number, snap: MultiAccountSnapshot, meta?: MultiAccountUserMeta) {
   if (!popoverEl) return;
   const row = findRow(adAccountNo);
   if (!row) return;
@@ -1464,6 +1692,25 @@ function paintRow(adAccountNo: number, snap: MultiAccountSnapshot) {
       row.classList.add("dvads-multi-tr-contract-warning");
       row.title = `브랜드검색 D-${dday} - 계약 종료 임박`;
     }
+  }
+
+  // ─── 사용자 임계값 알림 cue ───
+  // 비즈머니 셀 빨강 — 임계값 설정되어 있고 잔액이 그 이하일 때.
+  const bizCell = row.querySelector<HTMLTableCellElement>(`td[data-k="bizMoney"]`);
+  const bizAlert = meta?.bizMoneyThreshold != null
+    && snap.bizMoney != null
+    && snap.bizMoney <= meta.bizMoneyThreshold;
+  bizCell?.classList.toggle("dvads-multi-td-biz-alert", bizAlert);
+
+  // 브랜드검색 임계 도달 — 행 좌측 보더 + 계정명 빨강(펄스). 기존 hardcoded ≤5일 cue와는
+  // 별개 클래스로 동작. 둘 다 맞으면 CSS 단일 색이라 한 번만 그려짐.
+  const brandAlert = meta?.brandSearchDaysThreshold != null
+    && dday !== null
+    && dday <= meta.brandSearchDaysThreshold;
+  row.classList.toggle("dvads-multi-tr-brand-alert", brandAlert);
+  if (brandAlert) {
+    // 임계 도달이 hardcoded cue보다 강한 신호 — title 덮어쓴다.
+    row.title = dday! <= 0 ? "브랜드검색 만료" : `브랜드검색 만료 ${dday}일 전`;
   }
 }
 

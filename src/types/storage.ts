@@ -167,6 +167,10 @@ export interface MultiAccountUserMeta {
   displayName?: string;
   /** 즐겨찾기 — true면 1시간마다 자동 갱신 + 리스트 상단 정렬 */
   favorite?: boolean;
+  /** 비즈머니 알림 임계값 (원). 비즈머니가 이 값 이하면 알림. undefined = 비활성 */
+  bizMoneyThreshold?: number;
+  /** 브랜드검색 최소 D-day 알림 임계값 (일). 최소 dday가 이 값 이하면 알림. undefined = 비활성 */
+  brandSearchDaysThreshold?: number;
 }
 
 /**

@@ -1984,10 +1984,17 @@ td.dvads-period-delta-down {
   }
 }
 
-/* 컬럼 폭/높이 — 좌우 12px + 상하 12px(이전 7px → 행 시각 간격 늘림). */
+/* 컬럼 폭/높이 — 좌우 12px + 상하 12px(행 시각 간격). */
 .dvads-multi-table td.dvads-multi-td-num,
 .dvads-multi-table th.dvads-multi-th-num {
   padding: 12px 12px;
+}
+/* 접힘(작게보기) 모드에서만 num 셀 explicit width — inline edit colspan 행이 들어와도 컬럼이 squash 안 됨.
+   크게보기에선 width 제거해 num 컬럼이 가용 공간으로 자연스럽게 펴짐(계정 컬럼이 혼자 흡수 X). */
+.dvads-multi-table.is-collapsed td.dvads-multi-td-num,
+.dvads-multi-table.is-collapsed th.dvads-multi-th-num {
+  width: 110px;
+  min-width: 110px;
 }
 .dvads-multi-table td.dvads-multi-td-name {
   padding: 12px;
@@ -2000,9 +2007,9 @@ td.dvads-period-delta-down {
 .dvads-multi-table td.dvads-multi-td-name,
 .dvads-multi-table th:first-child {
   padding: 7px 12px;
-  min-width: 200px;
-  width: 200px;
-  max-width: 200px;
+  min-width: 180px;
+  width: 180px;
+  max-width: 180px;
   text-align: left;
 }
 /* 내 계정 헤더 "계정" th도 좌측 정렬 — base의 th text-align(우정렬) 덮음. */
@@ -2106,6 +2113,78 @@ td.dvads-period-delta-down {
   bottom: 0;
   width: 3px;
   background: #9CA3AF;
+}
+
+/* ─── 알림 cue (사용자 임계값 도달) ───────────────────────────────────── */
+
+/* 비즈머니 임계 미만 셀 — specificity 0,2,1 (기존 .dvads-bid-table td 베이스 0,1,1 덮음) */
+.dvads-multi-table td.dvads-multi-td-biz-alert {
+  color: #DC2626;
+  font-weight: 600;
+}
+
+/* 브랜드검색 임계 도달 행 — 좌측 빨간 보더(펄스) + 계정명 빨강(펄스).
+   기존 .dvads-multi-tr-contract-warning과 동일 패턴이되 별도 클래스로 추가. */
+.dvads-multi-tr.dvads-multi-tr-brand-alert td:first-child {
+  position: relative;
+}
+.dvads-multi-tr.dvads-multi-tr-brand-alert td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #DC2626;
+  animation: dvads-brand-alert-pulse 1.8s ease-in-out infinite;
+}
+.dvads-multi-tr.dvads-multi-tr-brand-alert .dvads-multi-name {
+  color: #DC2626;
+  animation: dvads-brand-alert-pulse 1.8s ease-in-out infinite;
+}
+@keyframes dvads-brand-alert-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-tr.dvads-multi-tr-brand-alert td:first-child::before,
+  .dvads-multi-tr.dvads-multi-tr-brand-alert .dvads-multi-name {
+    animation: none;
+  }
+}
+
+/* 페이지 우상단 햄버거 버튼 알림 배지 (iOS 스타일) — 가로/세로 동일한 정원 고정.
+   숫자 자릿수가 늘면 font-size를 줄여 원형 유지 (글자가 원을 깨지 않게). */
+.dvads-multi-btn { position: relative; }
+.dvads-multi-btn-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: #DC2626;
+  color: #ffffff;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  border: 2px solid #ffffff;
+  box-sizing: content-box;
+  pointer-events: none;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+/* 두 자리(10~99) — 정원 유지하되 글자 살짝 축소 */
+.dvads-multi-btn-badge.is-two-digit {
+  font-size: 9px;
+  letter-spacing: -0.5px;
+}
+/* "99+" 등 세 자리 — 더 축소 */
+.dvads-multi-btn-badge.is-three-digit {
+  font-size: 8px;
+  letter-spacing: -0.5px;
 }
 
 .dvads-multi-hdr {
@@ -2477,69 +2556,119 @@ td.dvads-period-delta-down {
   text-align: left;
 }
 
-/* 이름 변경 inline edit row — 행 전체를 colspan=4 셀로 치환. 한 줄에 라벨/input/저장/취소.
-   inner div로 flex 처리 (td 자체는 display:table-cell 유지). */
-.dvads-multi-search-edit-cell {
-  padding: 10px 16px;
-  background: #FFF7F1;
+/* 이름 수정 모달 — backdrop dim + 중앙 카드. inline edit(colspan) 대신 별도 모달로 전환해
+   table reflow 이슈 회피. confirm-dialog와 유사한 패턴이지만 rename 전용으로 독립 분리. */
+.dvads-rename-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: dvads-rename-backdrop-fade 200ms ease-out both;
 }
-.dvads-multi-search-edit-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: #6B7280;
-  flex-shrink: 0;
-  margin-right: 8px;
+@keyframes dvads-rename-backdrop-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
-.dvads-multi-search-edit-cell .dvads-multi-alias-input {
-  display: inline-block;
-  width: 240px;
-  margin-right: 6px;
-  vertical-align: middle;
-}
-.dvads-multi-search-edit-cell .dvads-multi-alias-save,
-.dvads-multi-search-edit-cell .dvads-multi-alias-cancel {
-  vertical-align: middle;
-}
-.dvads-multi-alias-input {
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
+.dvads-rename-card {
   background: #ffffff;
-  border: 1px solid #E6783B;
-  border-radius: 8px;
-  font-size: 13px;
-  color: #171717;
-  font-family: inherit;
-  outline: none;
-  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.2);
+  border-radius: 14px;
+  padding: 22px 24px 20px;
+  min-width: 380px;
+  max-width: 92vw;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  animation: dvads-rename-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
 }
-.dvads-multi-alias-save {
-  height: 28px;
-  padding: 0 10px;
-  background: #E6783B;
-  color: #ffffff;
+@keyframes dvads-rename-card-enter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.dvads-rename-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #171717;
+  margin-bottom: 14px;
+}
+.dvads-rename-input-wrap {
+  position: relative;
+  margin-bottom: 16px;
+}
+.dvads-rename-input {
+  display: block;
+  width: 100%;
+  height: 40px;
+  padding: 0 36px 0 14px;
+  background: #F3F4F6;
   border: 0;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #171717;
+  outline: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-rename-input:focus {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.30);
+}
+.dvads-rename-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: #9CA3AF;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-rename-clear:hover {
+  background: #E5E7EB;
+  color: #171717;
+}
+.dvads-rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.dvads-rename-cancel,
+.dvads-rename-save {
+  height: 36px;
+  padding: 0 16px;
   border-radius: 8px;
-  font-size: 12px;
+  font-family: inherit;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, filter 120ms ease;
 }
-.dvads-multi-alias-save:hover {
-  filter: brightness(0.95);
-}
-.dvads-multi-alias-cancel {
-  height: 28px;
-  padding: 0 10px;
+.dvads-rename-cancel {
   border: 1px solid #E5E7EB;
   background: #ffffff;
   color: #6B7280;
-  border-radius: 8px;
-  font-size: 12px;
-  font-weight: 500;
-  cursor: pointer;
 }
-.dvads-multi-alias-cancel:hover {
-  background: #FAFAF9;
+.dvads-rename-cancel:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-rename-save {
+  border: 0;
+  background: #E6783B;
+  color: #ffffff;
+}
+.dvads-rename-save:hover {
+  filter: brightness(0.95);
 }
 .dvads-multi-search-empty {
   padding: 32px 16px;
@@ -2697,5 +2826,95 @@ td.dvads-period-delta-down {
   border: 1.5px solid currentColor;
   border-top-color: transparent;
   animation: dvads-spin 0.8s linear infinite;
+}
+
+/* ─── 숫자 입력 다이얼로그 (input-dialog.ts) ─────────────────────────
+   비즈머니/브랜드검색 알림 임계값 입력. rename 모달과 동일 톤. */
+.dvads-input-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: dvads-input-backdrop-fade 200ms ease-out both;
+}
+@keyframes dvads-input-backdrop-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.dvads-input-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 22px 24px 20px;
+  min-width: 380px;
+  max-width: 92vw;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  animation: dvads-input-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  color: #171717;
+}
+@keyframes dvads-input-card-enter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.dvads-input-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #171717;
+  margin-bottom: 6px;
+}
+.dvads-input-desc {
+  font-size: 12.5px;
+  color: #6B7280;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+.dvads-input-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #F3F4F6;
+  border-radius: 10px;
+  padding: 0 14px;
+  height: 40px;
+  margin-bottom: 16px;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-input-input-wrap:focus-within {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.30);
+}
+.dvads-input-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: #171717;
+  outline: none;
+}
+.dvads-input-suffix {
+  font-size: 13px;
+  color: #6B7280;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+.dvads-input-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-input-actions-spacer {
+  flex: 1;
+}
+.dvads-input-clear {
+  /* 해제 버튼은 위험성보다는 "되돌리기" 톤이라 secondary 그대로 — 다만 좌측에 단독 배치. */
 }
 

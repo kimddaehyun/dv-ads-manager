@@ -180,14 +180,22 @@ export async function fetchBizMoney(adAccountNo: number): Promise<number | null>
 // ─── 캠페인 ID 리스트 (campaignType별 호출 필요) ───
 
 // 정찰 결과: `/apis/sa/api/ncc/campaigns`는 `campaignType` 파라미터 필수.
-// 광고관리자 페이지가 매체별 따로 호출. 5개 타입 병렬 호출해서 합산.
+// 광고관리자 페이지가 매체별 따로 호출. 타입 병렬 호출해서 합산.
+//
+// `BRAND`/`NEW_PROD`만 time-contracts 대상이라 브랜드검색 알림 D-day 계산에 쓰임.
+// 응답의 `campaignTp` 필드는 더 구체적인 값(`BRAND_SEARCH`, `NEW_PRODUCT_SEARCH` 등)으로
+// 돌아올 수 있어 호출 측 필터(`=== "BRAND"`)와 어긋남 → 출처(URL의 campaignType)로 강제 태깅.
 const CAMPAIGN_TYPES = [
   "WEB_SITE",       // 파워링크
   "SHOPPING_NS",    // 쇼핑검색
-  "BRAND",          // 브랜드검색/신제품검색 (time-contracts 대상)
+  "BRAND",          // 브랜드검색
+  "NEW_PROD",       // 신제품검색 (브랜드와 별도 campaignType)
   "POWER_CONTENTS", // 파워컨텐츠
   "PLACE",          // 플레이스
 ] as const;
+
+// 브랜드검색 알림 D-day 대상 — 두 캠페인 타입의 광고그룹에 time-contracts 존재.
+const BRAND_LIKE_TYPES: ReadonlyArray<(typeof CAMPAIGN_TYPES)[number]> = ["BRAND", "NEW_PROD"];
 
 export async function fetchCampaignRows(customerId: number): Promise<NccCampaignRow[]> {
   const results = await Promise.allSettled(
@@ -214,7 +222,10 @@ export async function fetchCampaignRows(customerId: number): Promise<NccCampaign
       }
       for (const row of r.value) {
         if (row?.nccCampaignId) {
-          out.push({ nccCampaignId: row.nccCampaignId, campaignTp: row.campaignTp ?? tp });
+          // 응답 campaignTp는 그대로 안 쓰고 요청 URL의 tp로 태깅 — 호출 측 필터가
+          // "BRAND" 같은 카테고리 키로 매칭할 수 있도록 보장 (응답이 BRAND_SEARCH 등
+          // 더 구체적인 서브타입이라 직접 비교하면 누락).
+          out.push({ nccCampaignId: row.nccCampaignId, campaignTp: tp });
         }
       }
     }
@@ -347,7 +358,7 @@ export async function collectAccount(
     .map((c) => c.nccCampaignId)
     .filter((id): id is string => !!id);
   const brandCampaignIds = campaignRows
-    .filter((c) => c.campaignTp === "BRAND")
+    .filter((c) => BRAND_LIKE_TYPES.includes(c.campaignTp as (typeof CAMPAIGN_TYPES)[number]))
     .map((c) => c.nccCampaignId)
     .filter((id): id is string => !!id);
 
@@ -366,6 +377,18 @@ export async function collectAccount(
   const contracts = await fetchContracts(brandAdgroupIds, customerId).catch((e) => {
     console.warn("[dv-ads/multi-account] contracts 실패", e);
     return [] as MultiAccountSnapshot["contracts"];
+  });
+
+  // [DEBUG] 브랜드검색 알림 진단용 — 단계별 카운트. 원인 좁힌 뒤 제거 예정.
+  console.log("[dv-ads/multi-account/debug]", {
+    adAccountNo,
+    customerId,
+    totalCampaigns: campaignRows.length,
+    campaignTps: [...new Set(campaignRows.map((c) => c.campaignTp))],
+    brandCampaignIds: brandCampaignIds.length,
+    brandAdgroupIds: brandAdgroupIds.length,
+    contracts: contracts.length,
+    contractsSample: contracts[0],
   });
 
   return { bizMoney, yesterday, contracts };

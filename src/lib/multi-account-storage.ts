@@ -81,6 +81,10 @@ export async function updateUserMeta(
   const next: MultiAccountUserMeta = { ...prev, ...patch, adAccountNo };
   // 빈 값은 키 제거 (저장소 깔끔하게)
   if (next.displayName === "") delete next.displayName;
+  // 임계값 해제: undefined/null이 명시적으로 들어오면 키 자체를 제거.
+  // patch에 키가 들어왔는지로 판정 — patch에 없으면 prev 값 유지.
+  if ("bizMoneyThreshold" in patch && patch.bizMoneyThreshold == null) delete next.bizMoneyThreshold;
+  if ("brandSearchDaysThreshold" in patch && patch.brandSearchDaysThreshold == null) delete next.brandSearchDaysThreshold;
   all[adAccountNo] = next;
   await saveAllUserMeta(all);
   return all;
