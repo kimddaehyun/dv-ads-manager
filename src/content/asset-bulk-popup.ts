@@ -32,7 +32,7 @@ import {
  */
 export interface AssetBulkImagesInput {
   files: File[];
-  /** 사용자가 마지막으로 입력한 페이지 URL/ID — 재펼침·재시도 상태 보존용 */
+  /** 사용자가 마지막으로 입력한 상품 페이지 URL — 재펼침·재시도 상태 보존용 */
   pageUrl: string;
   /** 마지막 가져오기 결과 후보 URL */
   candidates: string[];
@@ -80,6 +80,12 @@ export interface AssetBulkInput {
   headlines: HeadlineSlotInput[];
   descriptions: string[];
   promos: PromoSlotInput[];
+  /**
+   * 수동 자르기 모드 — true면 이미지 등록 시 자동 [저장] 클릭 없이 사용자가
+   * 페이지 모달에서 직접 자르고 저장할 때까지 대기. 각 이미지를 user-paced로 처리.
+   * 다른 항목(추가제목/추가설명/홍보문구)은 영향 없음.
+   */
+  manualCrop: boolean;
 }
 
 export interface AssetBulkPopupOptions {
@@ -158,12 +164,14 @@ export function openAssetBulkPopup(opts: AssetBulkPopupOptions): AssetBulkPopupH
     headlines: [{ text: "", position: "all" }],
     descriptions: [""],
     promos: [{ kind: "none", description: "" }],
+    manualCrop: false,
   };
 
   // 이미지 영역. 페이지 등록 이미지 개수는 외부에서 setExisting으로 늦게 들어올 수 있어
   // mutable holder로 두고 section이 매 카운터 계산 시 최신 값을 본다.
+  // onStateChange — 이미지 추가·제거·후보 선택 시 등록 버튼 활성 재평가.
   const imageExisting = { count: 0 };
-  const imageBlock = buildImageBlock(state, imageExisting, IMAGE_TOTAL_LIMIT);
+  const imageBlock = buildImageBlock(state, imageExisting, IMAGE_TOTAL_LIMIT, () => updateSubmitEnabled());
   body.appendChild(imageBlock.root);
 
   // 외부에서 갱신 가능하도록 Set은 mutable reference로 보관 — section은 이 Set을 참조.
@@ -226,6 +234,25 @@ export function openAssetBulkPopup(opts: AssetBulkPopupOptions): AssetBulkPopupH
   document.body.appendChild(backdrop);
 
   let busy = false;
+
+  // 등록 버튼 활성/비활성 — 4개 영역 중 하나라도 비어있지 않은 입력이 있어야 활성.
+  // 페이지 측 네이버 모달이 빈 상태에서 저장 버튼 disabled로 두는 패턴과 일치.
+  function hasAnyInput(): boolean {
+    if (state.images.files.length > 0) return true;
+    if (state.images.selectedUrls.length > 0) return true;
+    if (state.headlines.some((h) => h.text.trim().length > 0)) return true;
+    if (state.descriptions.some((d) => d.trim().length > 0)) return true;
+    if (state.promos.some((p) => p.description.trim().length > 0)) return true;
+    return false;
+  }
+  function updateSubmitEnabled(): void {
+    submitBtn.disabled = !hasAnyInput();
+  }
+  // 텍스트 영역들의 input/change 이벤트로 자동 재평가. 이미지 영역은 buildImageBlock에
+  // 콜백을 넣어 add/remove/select 시점에 직접 호출.
+  body.addEventListener("input", updateSubmitEnabled);
+  body.addEventListener("change", updateSubmitEnabled);
+  updateSubmitEnabled();
 
   // input 텍스트를 드래그해서 backdrop 위에서 mouseup하면 click 이벤트의 target이
   // backdrop으로 잡혀 의도치 않게 닫히는 버그 방지 — pointerdown이 card 안에서
@@ -298,6 +325,8 @@ export function openAssetBulkPopup(opts: AssetBulkPopupOptions): AssetBulkPopupH
     closeAllOpenDropdowns();
     // 상품 페이지 추출 결과 캐시는 popup 사이클 단위. 닫히면 폐기.
     clearProductPageCache();
+    // 첨부 파일 object URL 일괄 revoke — 메모리 누수 방지.
+    imageBlock.cleanup();
     backdrop.remove();
     if (openCleanup === teardown) openCleanup = null;
   }
@@ -345,7 +374,8 @@ function buildImageBlock(
   state: AssetBulkInput,
   existing: { count: number },
   totalLimit: number,
-): { root: HTMLElement; recompute: () => void } {
+  onStateChange?: () => void,
+): { root: HTMLElement; recompute: () => void; cleanup: () => void } {
   const root = document.createElement("section");
   root.className = "dvads-asset-bulk-section";
 
@@ -353,36 +383,124 @@ function buildImageBlock(
   head.className = "dvads-asset-bulk-section-head";
   const title = document.createElement("h3");
   title.className = "dvads-asset-bulk-section-title";
-  title.textContent = "파워링크 이미지";
+  title.textContent = "이미지";
   head.appendChild(title);
   const counter = document.createElement("span");
   counter.className = "dvads-asset-bulk-counter";
   head.appendChild(counter);
   root.appendChild(head);
 
-  // 파일 첨부 영역
-  const fileRow = document.createElement("div");
-  fileRow.className = "dvads-asset-bulk-file-row";
-  const addFileBtn = document.createElement("button");
-  addFileBtn.type = "button";
-  addFileBtn.className = "dvads-btn dvads-btn-secondary";
-  addFileBtn.textContent = "+ 파일 첨부";
+  // 파일 첨부 영역 — 원형 아이콘 + 2-line hint 드랍존 (클릭/드래그) + 첨부된 썸네일 그리드.
+  // shadcn-style 디자인 패턴을 vanilla DOM에 적용.
+  const dropZone = document.createElement("div");
+  dropZone.className = "dvads-asset-bulk-dropzone";
+  dropZone.setAttribute("role", "button");
+  dropZone.tabIndex = 0;
+  // lucide ImagePlus 아이콘을 inline SVG로 (content script에서 라이브러리 import 불가).
+  const iconWrap = document.createElement("div");
+  iconWrap.className = "dvads-asset-bulk-dropzone-icon";
+  iconWrap.innerHTML = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="14" x2="18" y1="4" y2="4"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`;
+  const textWrap = document.createElement("div");
+  textWrap.className = "dvads-asset-bulk-dropzone-text";
+  const primaryLine = document.createElement("p");
+  primaryLine.className = "dvads-asset-bulk-dropzone-primary";
+  primaryLine.textContent = "클릭해서 선택";
+  const secondaryLine = document.createElement("p");
+  secondaryLine.className = "dvads-asset-bulk-dropzone-secondary";
+  secondaryLine.textContent = "또는 파일을 드래그해서 등록하세요";
+  textWrap.append(primaryLine, secondaryLine);
   const hiddenFileInput = document.createElement("input");
   hiddenFileInput.type = "file";
   hiddenFileInput.multiple = true;
   hiddenFileInput.accept = "image/png,image/jpeg,image/bmp,.png,.jpg,.jpeg,.bmp";
   hiddenFileInput.style.display = "none";
+  dropZone.append(iconWrap, textWrap, hiddenFileInput);
+  root.appendChild(dropZone);
+
   const fileList = document.createElement("ul");
   fileList.className = "dvads-asset-bulk-file-list";
-  fileRow.append(addFileBtn, hiddenFileInput, fileList);
-  root.appendChild(fileRow);
+  root.appendChild(fileList);
 
-  // URL/ID 가져오기 영역
+  // 첨부 파일별 object URL 생애주기 관리. 같은 File 객체는 같은 URL 재사용,
+  // 제거 또는 popup 닫힐 때 revoke. 누수 방지 + 메모리 안전.
+  const fileUrls = new Map<File, string>();
+  const getFileUrl = (f: File): string => {
+    let u = fileUrls.get(f);
+    if (!u) {
+      u = URL.createObjectURL(f);
+      fileUrls.set(f, u);
+    }
+    return u;
+  };
+  const revokeFileUrl = (f: File): void => {
+    const u = fileUrls.get(f);
+    if (u) {
+      URL.revokeObjectURL(u);
+      fileUrls.delete(f);
+    }
+  };
+
+  // 후보 그리드 호버 시 큰 프리뷰 — document.body에 portal로 mount해서 popup의 overflow:auto
+  // 클리핑 회피. position: fixed로 viewport 기준 좌표 계산.
+  const preview = document.createElement("div");
+  preview.className = "dvads-asset-bulk-thumb-preview";
+  preview.hidden = true;
+  const previewImg = document.createElement("img");
+  previewImg.alt = "";
+  previewImg.referrerPolicy = "no-referrer";
+  preview.appendChild(previewImg);
+  document.body.appendChild(preview);
+
+  const PREVIEW_SIZE = 360;
+  const showPreview = (anchor: HTMLElement, url: string): void => {
+    // backdrop과 같은 z-index(max int)이므로 DOM 순서가 stacking을 결정.
+    // 매번 body의 끝으로 re-append해서 backdrop보다 뒤(=위 stacking)에 두기.
+    document.body.appendChild(preview);
+    previewImg.src = url;
+    const rect = anchor.getBoundingClientRect();
+    // 기본 배치: preview의 bottom-left 모서리를 타일의 top-right 모서리에 anchor
+    // (preview는 타일의 위·우측으로 확장).
+    let left = rect.right;
+    let top = rect.top - PREVIEW_SIZE;
+    // top이 viewport 위로 넘치면 → 타일 bottom 기준 아래로 flip.
+    if (top < 8) top = rect.bottom;
+    // right가 viewport 우측 넘치면 → 타일 좌측으로 flip.
+    if (left + PREVIEW_SIZE > window.innerWidth - 8) {
+      left = rect.left - PREVIEW_SIZE;
+    }
+    // 마지막 safety clamp — 어떤 케이스에도 viewport 안에 fit.
+    top = Math.max(8, Math.min(top, window.innerHeight - PREVIEW_SIZE - 8));
+    left = Math.max(8, Math.min(left, window.innerWidth - PREVIEW_SIZE - 8));
+    preview.style.left = `${left}px`;
+    preview.style.top = `${top}px`;
+    preview.style.right = "";
+    preview.hidden = false;
+  };
+  const hidePreview = (): void => {
+    preview.hidden = true;
+    previewImg.removeAttribute("src");
+  };
+  // body 스크롤 중에는 좌표가 stale해지므로 일단 숨김.
+  const onBodyScroll = (): void => hidePreview();
+
+  // 스크롤 발생 시 좌표 stale → 숨김. capture로 listen해서 popup body·페이지 어디 스크롤이든 잡음.
+  document.addEventListener("scroll", onBodyScroll, true);
+  window.addEventListener("resize", onBodyScroll);
+
+  const cleanup = (): void => {
+    fileUrls.forEach((u) => URL.revokeObjectURL(u));
+    fileUrls.clear();
+    preview.remove();
+    document.removeEventListener("scroll", onBodyScroll, true);
+    window.removeEventListener("resize", onBodyScroll);
+  };
+
+  // 상품 링크 입력 영역
   const urlRow = document.createElement("div");
   urlRow.className = "dvads-asset-bulk-url-row";
   const urlInput = document.createElement("input");
   urlInput.type = "text";
-  urlInput.placeholder = "상품 링크 또는 상품ID";
+  urlInput.placeholder = "상품 링크 입력";
   urlInput.className = "dvads-asset-bulk-url-input";
   const fetchBtn = document.createElement("button");
   fetchBtn.type = "button";
@@ -390,6 +508,22 @@ function buildImageBlock(
   fetchBtn.textContent = "가져오기";
   urlRow.append(urlInput, fetchBtn);
   root.appendChild(urlRow);
+
+  // 수동 자르기 토글 — 켜면 각 이미지마다 페이지 모달에서 사용자가 직접 자르고 [저장] 누름.
+  const optionRow = document.createElement("label");
+  optionRow.className = "dvads-asset-bulk-option-row";
+  const cropCheckbox = document.createElement("input");
+  cropCheckbox.type = "checkbox";
+  cropCheckbox.className = "dvads-asset-bulk-checkbox";
+  cropCheckbox.checked = state.manualCrop;
+  const cropText = document.createElement("span");
+  cropText.className = "dvads-asset-bulk-option-label";
+  cropText.textContent = "수동 자르기";
+  optionRow.append(cropCheckbox, cropText);
+  cropCheckbox.addEventListener("change", () => {
+    state.manualCrop = cropCheckbox.checked;
+  });
+  root.appendChild(optionRow);
 
   // 후보 그리드 (가져오기 성공 시 mount)
   const grid = document.createElement("div");
@@ -408,13 +542,58 @@ function buildImageBlock(
   // 한도 초과 토글 안내 일시 표시용 timeout id.
   let limitHintTimeout: number | null = null;
 
-  addFileBtn.addEventListener("click", () => {
+  // 드랍존 클릭(영역 어디든) + 키보드 활성화 — 파일 피커 열기.
+  const triggerFilePicker = (): void => {
     if (remaining() <= 0) return;
     hiddenFileInput.click();
+  };
+  dropZone.addEventListener("click", () => {
+    triggerFilePicker();
+  });
+  dropZone.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      triggerFilePicker();
+    }
   });
 
   hiddenFileInput.addEventListener("change", () => {
     const picked = Array.from(hiddenFileInput.files ?? []);
+    addFiles(picked);
+    hiddenFileInput.value = ""; // 같은 파일 재선택 가능하도록 reset
+  });
+
+  // 드래그 앤 드롭 — 드랍존에 떨어뜨리면 첨부. 시각 하이라이트도 드랍존에 한정해서
+  // 사용자가 어디로 끌어야 하는지 명확히 안내.
+  // dragenter/dragleave는 자식 진입 시마다 발생하므로 counter로 진짜 leave만 잡음.
+  let dragDepth = 0;
+  dropZone.addEventListener("dragenter", (e) => {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    dragDepth++;
+    dropZone.classList.add("dvads-asset-bulk-dropzone-dragover");
+  });
+  dropZone.addEventListener("dragleave", (e) => {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) dropZone.classList.remove("dvads-asset-bulk-dropzone-dragover");
+  });
+  dropZone.addEventListener("dragover", (e) => {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = remaining() > 0 ? "copy" : "none";
+  });
+  dropZone.addEventListener("drop", (e) => {
+    if (!e.dataTransfer?.types.includes("Files")) return;
+    e.preventDefault();
+    dragDepth = 0;
+    dropZone.classList.remove("dvads-asset-bulk-dropzone-dragover");
+    const dropped = Array.from(e.dataTransfer.files ?? []).filter((f) =>
+      /^image\//i.test(f.type),
+    );
+    addFiles(dropped);
+  });
+
+  function addFiles(picked: File[]): void {
     if (picked.length === 0) return;
     // dedup: 파일명+size로 동일한 파일 두 번 첨부 방지.
     const existingKeys = new Set(state.images.files.map((f) => `${f.name}|${f.size}`));
@@ -431,10 +610,10 @@ function buildImageBlock(
     if (added < picked.length) {
       flashLimitHint(`최대 ${totalLimit}장까지 등록할 수 있어요`);
     }
-    hiddenFileInput.value = ""; // 같은 파일 재선택 가능하도록 reset
     renderFiles();
     renderCounter();
-  });
+    onStateChange?.();
+  }
 
   urlInput.addEventListener("input", () => {
     state.images.pageUrl = urlInput.value;
@@ -491,20 +670,30 @@ function buildImageBlock(
     state.images.files.forEach((f, idx) => {
       const li = document.createElement("li");
       li.className = "dvads-asset-bulk-file-item";
-      const name = document.createElement("span");
-      name.className = "dvads-asset-bulk-file-name";
-      name.textContent = f.name;
+      // 썸네일 — object URL로 즉시 프리뷰. 같은 File에는 항상 같은 URL 재사용.
+      const img = document.createElement("img");
+      img.src = getFileUrl(f);
+      img.alt = f.name;
+      img.className = "dvads-asset-bulk-file-thumb";
+      // 우상단 × 배지 — 항상 보이는 제거 버튼. lucide X icon.
       const removeBtn = document.createElement("button");
       removeBtn.type = "button";
-      removeBtn.className = "dvads-asset-bulk-text-clear";
-      removeBtn.setAttribute("aria-label", "파일 제거");
-      removeBtn.textContent = "×";
-      removeBtn.addEventListener("click", () => {
+      removeBtn.className = "dvads-asset-bulk-file-remove";
+      removeBtn.setAttribute("aria-label", `${f.name} 제거`);
+      removeBtn.title = "제거";
+      removeBtn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>`;
+      removeBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        revokeFileUrl(f);
         state.images.files.splice(idx, 1);
         renderFiles();
         renderCounter();
+        onStateChange?.();
       });
-      li.append(name, removeBtn);
+      const name = document.createElement("span");
+      name.className = "dvads-asset-bulk-file-name";
+      name.textContent = f.name;
+      li.append(img, removeBtn, name);
       fileList.appendChild(li);
     });
   }
@@ -529,12 +718,15 @@ function buildImageBlock(
         btn.classList.toggle("dvads-asset-bulk-thumb-selected", isSelected);
       };
       applySelected();
+      btn.addEventListener("mouseenter", () => showPreview(btn, url));
+      btn.addEventListener("mouseleave", () => hidePreview());
       btn.addEventListener("click", () => {
         const i = state.images.selectedUrls.indexOf(url);
         if (i >= 0) {
           state.images.selectedUrls.splice(i, 1);
           applySelected();
           renderCounter();
+          onStateChange?.();
           return;
         }
         if (remaining() <= 0) {
@@ -548,6 +740,7 @@ function buildImageBlock(
         state.images.selectedUrls.push(url);
         applySelected();
         renderCounter();
+        onStateChange?.();
       });
       grid.appendChild(btn);
     });
@@ -588,9 +781,10 @@ function buildImageBlock(
     const noteParts: string[] = [];
     if (ex > 0) noteParts.push(`페이지에 이미 ${ex}장 등록`);
     const note = noteParts.length > 0 ? ` (${noteParts.join(", ")})` : "";
-    counter.textContent = `선택 ${sel}/${Math.max(0, totalLimit - ex)}${note}`;
+    counter.textContent = `${sel}/${Math.max(0, totalLimit - ex)}${note}`;
     const fullyBlocked = totalLimit - ex <= 0;
-    addFileBtn.disabled = fullyBlocked || remaining() <= 0;
+    const noRoom = fullyBlocked || remaining() <= 0;
+    dropZone.classList.toggle("dvads-asset-bulk-dropzone-blocked", noRoom);
     urlInput.disabled = fullyBlocked;
     fetchBtn.disabled = fullyBlocked;
     counter.classList.toggle("dvads-asset-bulk-counter-blocked", fullyBlocked);
@@ -602,7 +796,7 @@ function buildImageBlock(
   renderFiles();
   renderCounter();
 
-  return { root, recompute: renderCounter };
+  return { root, recompute: renderCounter, cleanup };
 }
 
 // ─── 추가제목 섹션 (텍스트 + 노출 위치 dropdown) ───

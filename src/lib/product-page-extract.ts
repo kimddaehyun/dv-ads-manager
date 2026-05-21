@@ -1,12 +1,12 @@
 /**
  * 네이버 스마트스토어·브랜드스토어 상품 페이지에서 이미지 후보를 추출.
  *
- * 사용자가 일괄 등록 팝업의 URL 입력란에 상품 페이지 URL을 붙여넣으면 호출된다.
+ * 사용자가 일괄 등록 팝업의 링크 입력란에 상품 페이지 URL을 붙여넣으면 호출된다.
  * background가 hidden tab으로 페이지를 열고 그 안의 콘텐츠 스크립트(product-page-scrape.ts)가
  * DOM에서 갤러리 이미지를 수집한다. SPA hydration 후 실제 DOM을 보므로 SSR fetch보다 정확.
  *
  * 본 모듈 책임:
- *   - 입력 URL/ID parsing + 검증
+ *   - 입력 URL parsing + 검증
  *   - background에 FETCH_PRODUCT_PAGE 메시지 전달 + 응답 받기
  *   - popup 사이클 단위 메모리 캐시
  */
@@ -28,7 +28,6 @@ const HOST_FOR: Record<ProductPageHost, string> = {
 
 const URL_PATTERN =
   /^https?:\/\/(?:m\.)?(smartstore|brand)\.naver\.com\/([^/?#]+)\/products\/(\d+)/i;
-const ID_PATTERN = /^\d{6,}$/;
 
 interface ParsedUrl {
   host: ProductPageHost;
@@ -46,14 +45,7 @@ export function clearProductPageCache(): void {
 
 export async function resolveAndExtract(rawInput: string): Promise<ExtractResult> {
   const input = (rawInput ?? "").trim();
-  if (!input) throw new Error("상품 주소 또는 상품ID를 입력해 주세요");
-
-  if (ID_PATTERN.test(input)) {
-    // ID-only는 스토어 슬러그 없이 페이지 URL을 만들 수 없음 — 추후 네이버 쇼핑 lookup 추가 예정.
-    throw new Error(
-      "상품ID만으로는 페이지를 찾기 어려워요. 상품 페이지의 전체 주소를 붙여넣어 주세요",
-    );
-  }
+  if (!input) throw new Error("상품 링크를 입력해 주세요");
 
   const parsed = parseUrl(input);
   if (!parsed) {

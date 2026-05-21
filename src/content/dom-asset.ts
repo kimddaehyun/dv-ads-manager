@@ -40,7 +40,16 @@ export interface ExistingAssets {
 export type AssetItemSource =
   | { kind: "headline"; text: string; position: HeadlinePosition }
   | { kind: "description"; text: string }
-  | { kind: "image"; files: File[] }
+  | {
+      kind: "image";
+      files: File[];
+      /**
+       * true면 파일 주입 후 자동으로 저장 버튼을 누르지 않고 사용자가 직접 자르기/검토 후
+       * 페이지의 [저장]을 누를 때까지 대기. 모달이 닫히면 다음 항목으로 진행.
+       * 자동화 1건당 보통 ~1초인데 manual 모드는 사용자 작업 시간만큼 늘어남(최대 5분).
+       */
+      manualCrop?: boolean;
+    }
   | { kind: "promo"; description: string; promoKind: PromoKind };
 
 export type AssetFailure =
@@ -82,6 +91,8 @@ const HEADLINE_INPUT_ID = "headline-adextension";
 const MODAL_WAIT_MS = 2500;
 // 이미지 모달은 5MB 클라이언트 리사이즈/검증 단계가 있어 다른 모달보다 오래 걸림 — 별도 wait.
 const IMAGE_SUBMIT_ENABLE_WAIT_MS = 6000;
+// 수동 자르기 모드 — 사용자가 페이지 모달에서 직접 [저장] 누를 때까지 대기 (최대 5분).
+const MANUAL_CROP_WAIT_MS = 300_000;
 // 저장 버튼 활성화 대기 (validation 통과 + setState 반영).
 const SUBMIT_ENABLE_WAIT_MS = 1500;
 // 저장 클릭 후 모달 unmount 대기. 이미지 업로드 처리가 길 수 있어 넉넉히.
@@ -717,7 +728,10 @@ async function waitForModalClosedRetry(
  * 파워링크 이미지 등록 — 한 모달에서 multiple file을 한 번에 등록 (file input이 multiple).
  * 페이지가 "이미지 라이브러리에 등록합니다" 체크박스 기본 checked로 두는데 우리는 건드리지 않음.
  */
-async function registerImageItem(files: File[]): Promise<AssetResult> {
+async function registerImageItem(
+  files: File[],
+  opts?: { manualCrop?: boolean },
+): Promise<AssetResult> {
   const label = KIND_LABELS.image;
   const validFiles = files.filter((f) => f && f.size > 0);
   if (validFiles.length === 0) {
@@ -759,6 +773,22 @@ async function registerImageItem(files: File[]): Promise<AssetResult> {
   // 페이지의 file picker dismissal 흉내 — blur 후 페이지가 canvas mount 진행.
   await sleep(50);
   fileInput.dispatchEvent(new Event("blur", { bubbles: true }));
+
+  // 수동 자르기 모드 — 자동 [저장] 클릭 없이 사용자가 페이지 모달에서 직접 자르고 저장할 때까지
+  // 대기. 모달이 닫히면 success로 간주(취소·X 클릭도 같은 신호라 v1은 구분 안 함).
+  if (opts?.manualCrop) {
+    const userClosed = await waitFor(() => {
+      if (!modal.isConnected) return true;
+      const r = modal.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return true;
+      return null;
+    }, MANUAL_CROP_WAIT_MS);
+    if (userClosed !== true) {
+      findCloseButton(modal)?.click();
+      return { kind: "image", ok: false, label: displayLabel, reason: "modal-not-closed" };
+    }
+    return { kind: "image", ok: true, label: displayLabel };
+  }
 
   // 페이지가 이미지 업로드 처리(클라이언트 리사이즈/검증)를 마치고 저장 버튼을 활성화할 때까지 대기.
   // 5MB·2000x2000 한도. URL 다운로드 받은 이미지가 큰 경우 리사이즈에 수 초 걸릴 수 있어
@@ -869,7 +899,7 @@ export async function registerAssetItem(item: AssetItemSource): Promise<AssetRes
     if (item.kind === "promo") {
       return await registerPromoItem(item.description, item.promoKind);
     }
-    return await registerImageItem(item.files);
+    return await registerImageItem(item.files, { manualCrop: item.manualCrop });
   } catch (e) {
     console.warn("[dv-ads/asset-bulk] register failed", e);
     return {

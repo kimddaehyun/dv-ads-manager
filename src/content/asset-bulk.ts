@@ -175,7 +175,7 @@ async function runBulkRegistration(
   }
   // 페이지 모달은 single image UI — 1장씩 N번 모달 사이클로 등록.
   for (const f of imageFiles.files) {
-    items.push({ kind: "image", files: [f] });
+    items.push({ kind: "image", files: [f], manualCrop: data.manualCrop });
   }
 
   // 페이지에 이미 등록된 텍스트 + 같은 섹션 내 다른 슬롯과 동일한 텍스트 모두 skip.
@@ -221,22 +221,22 @@ async function runBulkRegistration(
     showToast({
       message:
         skippedDuplicates > 0
-          ? `등록할 항목이 없습니다 (중복 ${skippedDuplicates}건은 자동 skip)`
+          ? "등록할 항목이 없습니다."
           : "입력된 항목이 없어 등록을 건너뛰었습니다",
       variant: "error",
     });
     return;
   }
 
-  const headlineCount = items.filter((it) => it.kind === "headline").length;
-  const descriptionCount = items.filter((it) => it.kind === "description").length;
-  const promoCount = items.filter((it) => it.kind === "promo").length;
-  const dupSuffix = skippedDuplicates > 0 ? `, 중복 ${skippedDuplicates}건 skip` : "";
   showToast({
-    message: `일괄 등록 시작 (이미지 ${imageFiles.files.length}장, 추가제목 ${headlineCount}건, 추가설명 ${descriptionCount}건, 홍보문구 ${promoCount}건${dupSuffix})`,
+    message: "일괄 등록 시작",
     variant: "success",
     ttlMs: 2500,
   });
+
+  // 자동 진행 중 화면 잠금 오버레이 — 사용자가 페이지 클릭으로 자동화 방해하는 것 방지.
+  // manualCrop 이미지 처리 시에는 잠시 hide해서 페이지 모달과 상호작용 가능하게.
+  showAutoOverlay();
 
   const results: AssetResult[] = [];
   // 이미지 URL fetch에서 실패한 항목을 미리 결과에 추가 (사용자 결과 토스트에 표시).
@@ -254,11 +254,28 @@ async function runBulkRegistration(
     );
   }
 
-  for (const item of items) {
-    const r = await registerAssetItem(item);
-    results.push(r);
-    // 자동화 1건당 보통 1초 안팎. 페이지가 다음 모달 mount하는 동안 짧은 여백.
-    await sleep(120);
+  try {
+    for (const item of items) {
+      const isManualImage = item.kind === "image" && data.manualCrop;
+      if (isManualImage) {
+        // 사용자가 페이지 모달에서 자르고 [저장] 누를 수 있게 오버레이 잠시 hide.
+        hideAutoOverlay();
+        showToast({
+          message: "이미지를 수동으로 자르고 [저장]을 눌러주세요",
+          variant: "success",
+          ttlMs: 6000,
+        });
+      } else {
+        // 이전 단계가 manualCrop이었을 수도 있어 다시 오버레이 보이게 보장.
+        showAutoOverlay();
+      }
+      const r = await registerAssetItem(item);
+      results.push(r);
+      // 자동화 1건당 보통 1초 안팎. 페이지가 다음 모달 mount하는 동안 짧은 여백.
+      await sleep(120);
+    }
+  } finally {
+    hideAutoOverlay();
   }
 
   // 페이지 측 비동기 동작(모달 unmount 애니메이션 → 트리거 focus 등)이 끝난 후
@@ -272,22 +289,22 @@ async function runBulkRegistration(
   const failCount = results.length - successCount;
   if (failCount === 0) {
     showToast({
-      message: `일괄 등록 완료 (${successCount}건 성공)`,
+      message: `일괄 등록 완료(${successCount}건)`,
       variant: "success",
       ttlMs: 4000,
     });
     return;
   }
 
-  // 실패한 것들 모아 첫 2건만 사유 표기 — 너무 길면 토스트 줄바꿈 망가짐.
+  // 실패 사유는 콘솔에 남기고 토스트는 간결하게.
   const failures = results.filter((r) => !r.ok);
-  const sampleMsg = failures
-    .slice(0, 2)
-    .map((f) => `${f.label}: ${describeAssetFailure(f.reason)}`)
-    .join(" / ");
-  const more = failures.length > 2 ? ` 외 ${failures.length - 2}건` : "";
+  failures.forEach((f) => {
+    console.warn(
+      `[dv-ads/asset-bulk] 실패: ${f.label} - ${describeAssetFailure(f.reason)}`,
+    );
+  });
   showToast({
-    message: `일괄 등록 부분 실패 — 성공 ${successCount}, 실패 ${failCount}. ${sampleMsg}${more}`,
+    message: `등록 실패 ${failCount}건`,
     variant: "error",
     ttlMs: 8000,
   });
@@ -295,6 +312,34 @@ async function runBulkRegistration(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+// ─── 자동 진행 중 화면 잠금 오버레이 ───
+// 한 번 mount된 element를 module-scope에서 reuse — show/hide 빠르게 토글.
+// re-append 안 함: 토스트 root는 이후 mount되므로 stacking 상 토스트가 자연스럽게 위에 오게 됨.
+let autoOverlayEl: HTMLElement | null = null;
+function showAutoOverlay(): void {
+  if (autoOverlayEl) {
+    autoOverlayEl.style.display = "";
+    return;
+  }
+  const el = document.createElement("div");
+  el.className = "dvads dvads-auto-overlay";
+  const card = document.createElement("div");
+  card.className = "dvads-auto-overlay-card";
+  const spinner = document.createElement("div");
+  spinner.className = "dvads-auto-overlay-spinner";
+  const text = document.createElement("div");
+  text.className = "dvads-auto-overlay-text";
+  text.textContent = "등록 중...";
+  card.append(spinner, text);
+  el.appendChild(card);
+  document.body.appendChild(el);
+  autoOverlayEl = el;
+}
+function hideAutoOverlay(): void {
+  if (!autoOverlayEl) return;
+  autoOverlayEl.style.display = "none";
 }
 
 // ─── 이미지 URL → File ───
