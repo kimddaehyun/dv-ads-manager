@@ -511,14 +511,17 @@ function buildImageBlock(
 
   // 수동 자르기 토글 — 켜면 각 이미지마다 페이지 모달에서 사용자가 직접 자르고 [저장] 누름.
   // shadcn Switch 비주얼을 vanilla input + pseudo-element로 재현.
-  const optionRow = document.createElement("label");
+  // 토글/텍스트만 hit area로 — 빈 공간은 클릭해도 토글 안 됨 (`<label>` for 명시 연결).
+  const optionRow = document.createElement("div");
   optionRow.className = "dvads-asset-bulk-option-row";
   const cropToggle = document.createElement("input");
   cropToggle.type = "checkbox";
   cropToggle.role = "switch";
   cropToggle.className = "dvads-asset-bulk-switch";
+  cropToggle.id = `dvads-asset-bulk-crop-${Math.random().toString(36).slice(2, 9)}`;
   cropToggle.checked = state.manualCrop;
-  const cropText = document.createElement("span");
+  const cropText = document.createElement("label");
+  cropText.htmlFor = cropToggle.id;
   cropText.className = "dvads-asset-bulk-option-label";
   cropText.textContent = "수동 자르기";
   optionRow.append(cropToggle, cropText);
@@ -780,19 +783,13 @@ function buildImageBlock(
   function renderCounter(): void {
     const sel = selectedCount();
     const ex = existing.count;
-    const noteParts: string[] = [];
-    if (ex > 0) noteParts.push(`페이지에 이미 ${ex}장 등록`);
-    const note = noteParts.length > 0 ? ` (${noteParts.join(", ")})` : "";
-    counter.textContent = `${sel}/${Math.max(0, totalLimit - ex)}${note}`;
+    counter.textContent = `${sel}/${Math.max(0, totalLimit - ex)}`;
     const fullyBlocked = totalLimit - ex <= 0;
     const noRoom = fullyBlocked || remaining() <= 0;
     dropZone.classList.toggle("dvads-asset-bulk-dropzone-blocked", noRoom);
     urlInput.disabled = fullyBlocked;
     fetchBtn.disabled = fullyBlocked;
     counter.classList.toggle("dvads-asset-bulk-counter-blocked", fullyBlocked);
-    if (fullyBlocked && status.hidden) {
-      showStatus("이미 최대치 등록됨 — 페이지에서 일부 삭제 후 재시도해 주세요", "error");
-    }
   }
 
   renderFiles();
