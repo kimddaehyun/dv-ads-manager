@@ -326,10 +326,12 @@ function mountButton(): void {
   btn.setAttribute(BTN_MARK, "1");
   btn.setAttribute("aria-label", "데이터 비교");
   btn.title = "데이터 비교 (직전 동일 기간과 비교)";
+  // 차트 형태(짧은 막대 + 긴 막대, "비교" 의미). 두 막대 모두 하단 y=14 baseline로 차트 정렬.
+  // 너비 3 — 살짝 두꺼운 비례. open 시 scaleX로 얇게 + scaleY로 길이 14로 통일 → 즐겨찾기 X 매칭.
   btn.innerHTML =
-    '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
-    '<rect x="2.5" y="7" width="3.5" height="6" rx="0.6"/>' +
-    '<rect x="10" y="3" width="3.5" height="10" rx="0.6"/>' +
+    '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">' +
+    '<rect x="3" y="9" width="3" height="5" rx="0.7"/>' +
+    '<rect x="10" y="3" width="3" height="11" rx="0.7"/>' +
     "</svg>";
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -354,6 +356,7 @@ function unmountButton(): void {
 
 let openPopoverEl: HTMLElement | null = null;
 let openPopoverCleanup: (() => void) | null = null;
+let openPopoverAnchor: HTMLElement | null = null;
 
 function closePopover(): void {
   if (!openPopoverEl) return;
@@ -361,6 +364,9 @@ function closePopover(): void {
   openPopoverCleanup = null;
   openPopoverEl.remove();
   openPopoverEl = null;
+  // 막대 → X morph 복귀
+  openPopoverAnchor?.classList.remove("is-open");
+  openPopoverAnchor = null;
 }
 
 async function openPopover(anchor: HTMLElement): Promise<void> {
@@ -385,6 +391,9 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
   popover.style.zIndex = "2147483647";
   document.body.appendChild(popover);
   openPopoverEl = popover;
+  openPopoverAnchor = anchor;
+  // 막대 → X morph 트리거 (CSS transition)
+  anchor.classList.add("is-open");
 
   // 직전 기간은 fetch 결과와 무관하게 즉시 계산 가능 — 로딩 중에도 기간 줄 완성된 상태로 표시.
   const initialPrev = previousPeriod(dateInfo.start, dateInfo.end);
@@ -433,7 +442,19 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
   };
   rafLoop = requestAnimationFrame(tick);
 
+  // popover 안에서 시작한 mousedown 추적 — 드래그하다가 밖에서 release하면 click이
+  // 외부에서 발화해서 popover를 닫아버리는 사고 방지. mousedown 시작점이 popover/anchor
+  // 내부면 그 다음 click 1번은 outside-close에서 면제한다.
+  let mousedownInsidePopover = false;
+  const onDocMouseDown = (e: MouseEvent) => {
+    const t = e.target as Node;
+    mousedownInsidePopover = popover.contains(t) || anchor.contains(t);
+  };
   const onDocClick = (e: MouseEvent) => {
+    if (mousedownInsidePopover) {
+      mousedownInsidePopover = false;
+      return;
+    }
     if (!popover.contains(e.target as Node) && e.target !== anchor) {
       closePopover();
     }
@@ -441,11 +462,13 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
   const onKey = (e: KeyboardEvent) => {
     if (e.key === "Escape") closePopover();
   };
+  document.addEventListener("mousedown", onDocMouseDown, true);
   setTimeout(() => {
     document.addEventListener("click", onDocClick);
     document.addEventListener("keydown", onKey);
   }, 0);
   openPopoverCleanup = () => {
+    document.removeEventListener("mousedown", onDocMouseDown, true);
     document.removeEventListener("click", onDocClick);
     document.removeEventListener("keydown", onKey);
     if (rafLoop !== null) cancelAnimationFrame(rafLoop);

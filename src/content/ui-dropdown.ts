@@ -101,12 +101,22 @@ export function createDropdown<V extends string>(
     panel.style.minWidth = `${r.width}px`;
 
     // 화면 하단에 너무 가까우면 위로 펼치기 (panel 높이 계산은 다음 frame).
+    // `data-side`는 CSS sweep 애니메이션 방향 결정 — bottom: 위→아래, top: 아래→위.
+    // 이 frame에서 처음 세팅 → 그 시점에 키프레임 발동 → 한 번만 깔끔하게 sweep.
+    //
+    // ★ 중요: rAF 콜백에서 `panel.offsetHeight` 접근으로 강제 layout이 일어나 panel이
+    //   첫 paint 전이어도 정확한 높이를 얻는다. CSS 기본 상태가 `clip-path: inset(0 0 100% 0)`
+    //   라 panel은 보이지 않지만 layout box는 계산됨. 이 rAF를 동기 호출로 바꾸면 panel
+    //   appendChild 직전 layout이 stale이라 잘못된 side 판정 가능 — rAF 유지 필요.
     requestAnimationFrame(() => {
       if (!panel) return;
       const ph = panel.offsetHeight;
+      let side: "top" | "bottom" = "bottom";
       if (r.bottom + 4 + ph > window.innerHeight - 8) {
         panel.style.top = `${Math.max(8, r.top - 4 - ph)}px`;
+        side = "top";
       }
+      panel.dataset.side = side;
     });
   };
 

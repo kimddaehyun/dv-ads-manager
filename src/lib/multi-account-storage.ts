@@ -17,7 +17,7 @@ const USER_META_KEY = "multi_account_user_meta";
 const ADDED_LIST_KEY = "multi_account_added_list";
 const DIRECTORY_KEY = "multi_account_directory";
 const SNAPSHOT_PREFIX = "multi_account_snapshot:";
-const SNAPSHOT_TTL_MS = 30 * 60 * 1000; // 30분. 비즈머니는 가장 자주 변하지만 30분 TTL + 사용자가 그 계정 페이지 진입 시 자연 캐싱으로 충분. 더 짧게 두면 사용자가 popover 열 때마다 N개 iframe 띄워야 해서 부담
+const SNAPSHOT_TTL_MS = 60 * 60 * 1000; // 1시간. popover 열 때 stale 항목 자동 background refresh. 대행사 30~50계정 가정에서 너무 짧으면 매 진입마다 큰 burst — 1시간이 신선도 ↔ API 부담의 sweet spot
 const DIRECTORY_STALE_MS = 24 * 60 * 60 * 1000; // 1일
 
 type UserMetaMap = Record<number, MultiAccountUserMeta>;

@@ -659,11 +659,41 @@
 }
 .dvads-period-btn svg {
   display: block;
+  overflow: visible; /* X morph 시 rect가 viewBox 밖으로 살짝 나가도 잘리지 않게 */
 }
 .dvads-period-btn:hover {
   background: #fafafa;
   border-color: #E6783B;
   color: #E6783B;
+}
+/* open 상태 — popover 열려있는 동안 active 시각 cue + 두 막대가 X로 morph.
+   viewBox 0 0 16 16 기준, SVG 중심 (8, 8). 각 rect를 자기 중심 기준으로 회전 + 중심으로 이동.
+   - 왼쪽 rect: x=2.5 y=7 w=3.5 h=6 → 중심 (4.25, 10) → 중심까지 translate(3.75, -2) + rotate(45)
+   - 오른쪽 rect: x=10 y=3 w=3.5 h=10 → 중심 (11.75, 8) → translate(-3.75, 0) + rotate(-45)
+   `transform-box: fill-box`로 transform-origin이 각 rect의 자기 box 중심이 되게 한다. */
+.dvads-period-btn.is-open {
+  background: #fff8f3;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+.dvads-period-btn svg rect {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 350ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* 차트 막대(w=3, 높이 다름)를 즐겨찾기 X와 매칭되는 thin X로 morph:
+   - scaleX(0.417): 너비 3 → 1.25 (즐겨찾기 X stroke 두께 매칭)
+   - scaleY: 두 획 길이 13으로 통일 (왼쪽 5 → ×2.6, 오른쪽 11 → ×1.182)
+   - rotate ±45° + SVG 중심 (8,8)으로 translate
+   CSS transform은 right-to-left → scale 먼저 (자기 box 중심 기준) → rotate → translate. */
+.dvads-period-btn.is-open svg rect:nth-of-type(1) {
+  transform: translate(3.5px, -3.5px) rotate(45deg) scale(0.417, 2.6);
+}
+.dvads-period-btn.is-open svg rect:nth-of-type(2) {
+  transform: translate(-3.5px, -0.5px) rotate(-45deg) scale(0.417, 1.182);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-period-btn svg rect { transition: none !important; }
 }
 
 /* popover는 F001과 같은 .dvads-popover 베이스 사용. PoP 전용 너비·내부 폭 조정.
@@ -897,28 +927,128 @@ td.dvads-period-delta-down {
   background: rgba(230, 120, 59, 0.10) !important;
 }
 
-/* 팝업 카드 — confirm-dialog 베이스(.dvads-confirm-card) 위에 폭·내부 스크롤 추가. */
+/* 첫 mount 시 진입 애니메이션 — backdrop fade-in + card scale·translate.
+   기존 popover와 동일한 easing(cubic-bezier(0.16,1,0.3,1))으로 일관성. */
+.dvads-asset-bulk-backdrop {
+  animation: dvads-asset-bulk-backdrop-in 180ms ease-out;
+}
+@keyframes dvads-asset-bulk-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* 자동 일괄 등록 진행 중 화면 잠금 오버레이 — 사용자 인터랙션 차단 + 진행 안내.
+   manualCrop 이미지 처리 시에는 잠시 hide (사용자가 페이지 모달과 상호작용해야 함). */
+.dvads-auto-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  animation: dvads-asset-bulk-backdrop-in 180ms ease-out;
+}
+.dvads-auto-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 40px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+/* 32px 링 스피너 — DV 주황 1/4 호 + 옅은 회색 3/4 trace, 0.8s 등속 회전. */
+.dvads-auto-overlay-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2.5px solid #ECEEF0;
+  border-top-color: #E6783B;
+  border-radius: 50%;
+  animation: dvads-spin 0.8s linear infinite;
+}
+.dvads-auto-overlay-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #525252;
+  letter-spacing: 0.01em;
+}
+
+/* 팝업 카드 — confirm-dialog 베이스(.dvads-confirm-card) 위에 폭·내부 스크롤 추가.
+   참고 디자인(네이버 ad-cms 모달) 크기에 맞춰 폭·여백 확대. */
 .dvads-asset-bulk-card {
-  width: min(560px, calc(100vw - 32px));
-  padding: 20px 22px 18px;
+  width: min(640px, calc(100vw - 32px));
+  padding: 28px 28px 24px;
   max-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
+  animation: dvads-asset-bulk-card-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes dvads-asset-bulk-card-in {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+/* 헤더: 제목 가운데 정렬, 닫기 버튼은 우상단 absolute. 본문과의 간격 32px. */
+.dvads-asset-bulk-card .dvads-confirm-header {
+  position: relative;
+  justify-content: center;
+  margin-bottom: 32px;
+}
+.dvads-asset-bulk-card .dvads-confirm-title {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.dvads-asset-bulk-card .dvads-confirm-close {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 28px;
+  height: 28px;
+  font-size: 22px;
+}
+/* 푸터 액션 — 풀폭 양분 그리드(좌:취소 / 우:등록). 상단 구분선으로 본문과 시각 분리. */
+.dvads-asset-bulk-card .dvads-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #ECEEF0;
+}
+.dvads-asset-bulk-card .dvads-confirm-actions .dvads-btn {
+  width: 100%;
+  height: 48px;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+/* 일괄 등록 카드 내부 inline 컨트롤 — input 높이(40)와 시각적 균형. */
+.dvads-asset-bulk-card .dvads-asset-bulk-url-row .dvads-btn,
+.dvads-asset-bulk-card .dvads-dropdown-trigger {
+  height: 40px;
+  font-size: 14px;
+  padding: 0 14px;
 }
 .dvads-asset-bulk-body {
   flex: 1 1 auto;
   overflow-y: auto;
-  margin: 0 -4px 14px;
+  /* 스크롤 등장/사라짐 시 가로폭 흔들림 방지 — 항상 스크롤바 자리를 예약. Chrome 94+. */
+  scrollbar-gutter: stable;
+  margin: 0 -4px 16px;
   padding: 0 4px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 32px;
 }
 
 .dvads-asset-bulk-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 12px;
 }
 .dvads-asset-bulk-section-head {
   display: flex;
@@ -928,74 +1058,208 @@ td.dvads-period-delta-down {
 }
 .dvads-asset-bulk-section-title {
   margin: 0;
-  font-size: 13px;
+  font-size: 18px;
   font-weight: 600;
   color: #171717;
 }
 .dvads-asset-bulk-slots {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  /* 슬롯 사이 18px — dup 경고(-16px bottom, ~12px height)가 등장해도 다음 슬롯과 충돌 X.
+     dup 등장/사라짐과 무관하게 row 위치 고정 → layout shift 제거. */
+  gap: 18px;
 }
 
-/* 이미지 영역 — 파일 첨부 + 상품 URL 후보 그리드 통합 */
+/* 이미지 영역 — 드랍존 + 첨부 파일 목록 + 상품 URL 후보 그리드 */
 .dvads-asset-bulk-counter {
   margin-left: auto;
-  font-size: 12px;
-  color: #666666;
+  font-size: 14px;
+  color: #737373;
+  font-feature-settings: "tnum";
 }
 .dvads-asset-bulk-counter-blocked {
   color: #B23A3A;
 }
-.dvads-asset-bulk-file-row {
+
+/* 드랍존 — shadcn 패턴(dashed border + 원형 아이콘 + 2-line hint). */
+.dvads-asset-bulk-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 168px;
+  padding: 22px 16px;
+  border: 1.5px dashed rgba(115, 115, 115, 0.35);
+  border-radius: 10px;
+  background: #fafafa;
+  text-align: center;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.dvads-asset-bulk-dropzone:hover,
+.dvads-asset-bulk-dropzone:focus-visible {
+  background: #f3f4f6;
+  border-color: rgba(115, 115, 115, 0.55);
+}
+.dvads-asset-bulk-dropzone-dragover {
+  border-color: #E6783B !important;
+  background: rgba(230, 120, 59, 0.06) !important;
+}
+.dvads-asset-bulk-dropzone-blocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+/* 가운데 원형 배경 + ImagePlus 아이콘 (lucide path inline SVG로 매칭). */
+.dvads-asset-bulk-dropzone-icon {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 6px;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #737373;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
-.dvads-asset-bulk-file-list {
+.dvads-asset-bulk-dropzone-text {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 2px;
+}
+.dvads-asset-bulk-dropzone-primary {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #171717;
+  line-height: 1.4;
+}
+.dvads-asset-bulk-dropzone-secondary {
+  margin: 0;
+  font-size: 12px;
+  color: #737373;
+  line-height: 1.4;
+}
+
+/* 첨부 파일 그리드 — 정사각 썸네일 카드 + 호버 시 어두운 오버레이에 휴지통 액션. */
+.dvads-asset-bulk-file-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 96px);
+  gap: 10px;
   list-style: none;
   margin: 0;
   padding: 0;
-  flex: 1 1 auto;
-  min-width: 0;
+}
+.dvads-asset-bulk-file-list:empty {
+  display: none;
 }
 .dvads-asset-bulk-file-item {
+  position: relative;
+  width: 96px;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+.dvads-asset-bulk-file-thumb {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  background: #fafafa;
+}
+/* 우상단 × 배지 — 항상 보이는 작은 원형 버튼. 카드 모서리 살짝 밖으로 떠서 시각 단서 강함. */
+.dvads-asset-bulk-file-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 6px 4px 10px;
-  background: #fafafa;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.95);
+  color: #525252;
   border: 1px solid #ECEEF0;
-  border-radius: 6px;
-  font-size: 12px;
-  color: #171717;
-  max-width: 220px;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  z-index: 1;
 }
-.dvads-asset-bulk-file-item .dvads-asset-bulk-file-name {
-  font-size: 12px;
-  color: #171717;
+.dvads-asset-bulk-file-remove:hover {
+  background: #DC2626;
+  color: #ffffff;
+  border-color: #DC2626;
+}
+.dvads-asset-bulk-file-name {
+  display: block;
+  height: 24px;
+  line-height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: #525252;
+  background: #fafafa;
+  border-top: 1px solid #ECEEF0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  min-width: 0;
 }
 .dvads-asset-bulk-url-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
+}
+/* 수동 자르기 옵션 — label 자체를 row로 써서 텍스트 클릭으로도 토글. */
+.dvads-asset-bulk-option-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+  margin-top: -4px;
+}
+/* 커스텀 체크박스 — appearance:none으로 네이티브 외관 제거하고 주황 fill + 흰 체크로 통일.
+   체크 표시는 inline SVG를 background-image로 두고 center 배치 — rotated border 트릭은
+   회전 기준점 때문에 시각 중심이 치우치는 문제 있어 SVG로 정확히 중앙. */
+.dvads-asset-bulk-checkbox {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex-shrink: 0;
+  background-color: #ffffff;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 12px 12px;
+  border: 1.5px solid #d4d4d4;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+.dvads-asset-bulk-checkbox:hover {
+  border-color: #E6783B;
+}
+.dvads-asset-bulk-checkbox:checked {
+  background-color: #E6783B;
+  border-color: #E6783B;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='20 6 9 17 4 12'/></svg>");
+}
+.dvads-asset-bulk-option-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #525252;
 }
 .dvads-asset-bulk-url-input {
   flex: 1 1 auto;
-  height: 32px;
-  padding: 0 10px;
+  height: 40px;
+  padding: 0 12px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   color: #171717;
   background: #ffffff;
   border: 1px solid #ECEEF0;
@@ -1040,8 +1304,37 @@ td.dvads-period-delta-down {
   border-color: #cccccc;
 }
 .dvads-asset-bulk-thumb-selected {
-  border: 1.5px solid #E6783B;
-  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.15);
+  border: 2.5px solid #E6783B;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.18);
+}
+.dvads-asset-bulk-thumb-selected:hover {
+  border-color: #E6783B;
+}
+
+/* 호버 시 portal로 document.body에 mount되는 큰 프리뷰 패널 —
+   popup `.dvads-asset-bulk-body`의 overflow:auto 클리핑을 회피하기 위해 카드 바깥에 띄움.
+   viewport 우측 상단 모서리에 고정 — 어떤 썸네일 호버해도 같은 자리. */
+.dvads-asset-bulk-thumb-preview {
+  position: fixed;
+  width: 360px;
+  height: 360px;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  z-index: 2147483647;
+}
+.dvads-asset-bulk-thumb-preview[hidden] {
+  display: none;
+}
+.dvads-asset-bulk-thumb-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fafafa;
 }
 .dvads-asset-bulk-thumb-check {
   position: absolute;
@@ -1090,11 +1383,11 @@ td.dvads-period-delta-down {
 }
 .dvads-asset-bulk-text-input {
   flex: 1 1 auto;
-  height: 32px;
-  /* 우측 padding = counter(40px) + clearBtn(28px) + 여백(4px) */
-  padding: 0 72px 0 10px;
+  height: 40px;
+  /* 우측 padding = counter(46px) + clearBtn(28px) + 여백(4px) */
+  padding: 0 78px 0 12px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   color: #171717;
   background: #ffffff;
   border: 1px solid #ECEEF0;
@@ -1106,20 +1399,21 @@ td.dvads-period-delta-down {
 .dvads-asset-bulk-text-input:focus {
   border-color: #E6783B;
 }
+/* input 안쪽 오른쪽 끝 — 카운터(0/15)는 최우측. */
 .dvads-asset-bulk-text-counter {
   position: absolute;
-  right: 36px;
+  right: 12px;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 11px;
+  font-size: 12px;
   color: #a3a3a3;
   pointer-events: none;
   font-feature-settings: "tnum";
 }
-/* input 안쪽 오른쪽 끝 — 슬롯 삭제 × 버튼. value 비어있으면 hidden 속성으로 숨김. */
+/* input 안쪽 — 카운터 좌측에 위치한 슬롯 삭제 × 버튼. value 비어있으면 hidden. */
 .dvads-asset-bulk-text-clear {
   position: absolute;
-  right: 4px;
+  right: 48px;
   top: 50%;
   transform: translateY(-50%);
   width: 24px;
@@ -1153,9 +1447,8 @@ td.dvads-period-delta-down {
   pointer-events: none;
   white-space: nowrap;
 }
-.dvads-asset-bulk-text-row.dvads-asset-bulk-dup {
-  margin-bottom: 14px;
-}
+/* dup margin-bottom 제거 — 슬롯 gap(18px)에 dup 경고 공간이 항상 포함되어 있어 불필요.
+   dup 등장/사라짐과 무관하게 row 위치 고정 → layout shift 제거. */
 .dvads-asset-bulk-text-row.dvads-asset-bulk-dup .dvads-asset-bulk-text-input {
   border-color: #dc2626;
 }
@@ -1225,6 +1518,52 @@ td.dvads-period-delta-down {
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
   max-height: 320px;
   overflow-y: auto;
+  /* 기본 hidden — 위치 계산 후 data-side가 세팅되면 sweep 애니메이션으로 reveal.
+     side 결정 전 한 프레임 flash 방지. */
+  clip-path: inset(0 0 100% 0 round 10px);
+}
+/* 패널이 trigger 아래로 열림 → 위에서 아래로 sweep */
+.dvads-dropdown-panel[data-side="bottom"] {
+  animation: dvads-dropdown-sweep-down 240ms cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+  transform-origin: top center;
+}
+/* 화면 하단 공간 부족으로 위로 flip → 아래에서 위로 sweep */
+.dvads-dropdown-panel[data-side="top"] {
+  animation: dvads-dropdown-sweep-up 240ms cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+  transform-origin: bottom center;
+}
+@keyframes dvads-dropdown-sweep-down {
+  from {
+    clip-path: inset(0 0 100% 0 round 10px);
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 10px);
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes dvads-dropdown-sweep-up {
+  from {
+    clip-path: inset(100% 0 0 0 round 10px);
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 10px);
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* 모션 줄이기 환경 — 애니메이션·clip-path 비활성, 그냥 즉시 표시 */
+@media (prefers-reduced-motion: reduce) {
+  .dvads-dropdown-panel {
+    clip-path: none !important;
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
 }
 .dvads-dropdown-option {
   appearance: none;
@@ -1396,6 +1735,39 @@ td.dvads-period-delta-down {
   border-color: #E6783B;
   color: #E6783B;
 }
+/* open 상태 — popover 열려있는 동안 active 시각 cue (테두리 + 색 주황 유지) */
+.dvads-multi-btn.is-open {
+  background: #fff8f3;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+
+/* 햄버거 ↔ close 모핑 아이콘.
+   - svg 자체는 -45deg 회전 (햄버거 두 줄 → X 형태)
+   - 첫 path(.dvads-multi-btn-icon-morph)는 stroke-dasharray로 일부만 렌더 → open 시 위치 이동
+   - 두 번째 path(중간 가로선)는 정적, 회전과 함께 X의 한 획 역할 */
+.dvads-multi-btn-icon {
+  transition: transform 500ms ease-in-out;
+  transform-origin: 50% 50%;
+}
+.dvads-multi-btn.is-open .dvads-multi-btn-icon {
+  transform: rotate(-45deg);
+}
+.dvads-multi-btn-icon-morph {
+  stroke-dasharray: 12 63;
+  stroke-dashoffset: 0;
+  transition: stroke-dasharray 500ms ease-in-out, stroke-dashoffset 500ms ease-in-out;
+}
+.dvads-multi-btn.is-open .dvads-multi-btn-icon-morph {
+  stroke-dasharray: 20 300;
+  stroke-dashoffset: -32.42px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-btn-icon,
+  .dvads-multi-btn-icon-morph {
+    transition: none !important;
+  }
+}
 
 /* popover — 1100px (8지표 컬럼 수용), 흰 배경, rounded, shadow */
 .dvads-multi-popover {
@@ -1408,6 +1780,43 @@ td.dvads-period-delta-down {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  /* 처음 켜질 때 진입 모션. clip-path는 box-shadow를 같이 잘라서 사용 안 함 — translateY +
+     scale + opacity 조합으로 sweep-down 느낌 유지. 위치는 top/left로 잡으므로 transform 자유. */
+  animation: dvads-multi-popover-enter 280ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+  transform-origin: top center;
+}
+.dvads-period-popover {
+  /* F-PoP popover는 JS에서 popover.style.transform = translate(x,y)로 위치를 매 프레임 잡아서
+     keyframe transform이 들어가면 0,0으로 덮어버린다. opacity-only fade로 충돌 회피 +
+     shadow 보존. */
+  animation: dvads-period-popover-enter 220ms ease-out both;
+}
+@keyframes dvads-multi-popover-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes dvads-period-popover-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-popover {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  .dvads-period-popover {
+    /* transform: none 금지 — JS가 inline transform으로 popover 위치를 잡으므로
+       !important로 덮으면 0,0 좌상단으로 튐. animation/opacity만 reset. */
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }
 
 /* 즐겨찾기 셀 */
@@ -1451,11 +1860,43 @@ td.dvads-period-delta-down {
   color: #171717;
 }
 .dvads-multi-sort-ind {
-  display: inline-block;
-  width: 10px;
-  margin-left: 3px;
-  font-size: 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
   color: #E6783B;
+  vertical-align: middle;
+}
+.dvads-multi-sort-chevron {
+  display: block;
+  transform-origin: 50% 50%;
+}
+/* 정렬 클릭 시 chevron이 새로 렌더되며 pop-in. 컬럼이 바뀌든 같은 컬럼 asc↔desc 토글이든
+   매 클릭에 새 element라 animation이 매번 발화한다. asc/desc 별도 키프레임으로 회전 각도를
+   끝까지 유지(forwards). 스케일 0.5 → 1.15 overshoot → 1 로 통통 튀는 느낌. */
+.dvads-multi-table th.dvads-multi-th-sort.is-asc .dvads-multi-sort-chevron {
+  animation: dvads-chevron-pop-asc 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.dvads-multi-table th.dvads-multi-th-sort.is-desc .dvads-multi-sort-chevron {
+  animation: dvads-chevron-pop-desc 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+@keyframes dvads-chevron-pop-asc {
+  0%   { opacity: 0; transform: scale(0.5) rotate(0deg); }
+  60%  { opacity: 1; transform: scale(1.15) rotate(0deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+@keyframes dvads-chevron-pop-desc {
+  0%   { opacity: 0; transform: scale(0.5) rotate(180deg); }
+  60%  { opacity: 1; transform: scale(1.15) rotate(180deg); }
+  100% { opacity: 1; transform: scale(1) rotate(180deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-sort-chevron { animation: none !important; }
+  .dvads-multi-table th.dvads-multi-th-sort.is-desc .dvads-multi-sort-chevron {
+    transform: rotate(180deg);
+  }
 }
 
 /* 컬럼 폭 조정 — 8지표 컴팩트하게 */

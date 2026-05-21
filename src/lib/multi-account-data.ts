@@ -75,11 +75,28 @@ interface ContractsResponse {
 
 // ─── 공통 인증 fetch ───
 
-async function authFetch<T>(input: string, init?: RequestInit): Promise<T> {
+/**
+ * `x-ad-customer-id` 헤더가 cross-account의 silver bullet — 서버가 이 헤더의 customerId
+ * 기준으로 응답해서 SPA 활성 계정 컨텍스트와 무관하게 다른 계정 데이터를 받을 수 있다.
+ * 광고관리자 SPA 자신도 모든 internal API 호출에 이 헤더를 함께 보냄(2026-05-21 정찰 확인).
+ * 헤더 없으면 서버가 세션 활성 계정 기준으로 응답하므로 활성 계정 컨텍스트가 안 잡힌
+ * 상태에서는 404 "광고주가 존재하지 않습니다" 반환.
+ */
+async function authFetch<T>(
+  input: string,
+  init?: RequestInit,
+  customerId?: number,
+): Promise<T> {
   const headers = new Headers(init?.headers);
   if (!headers.has("x-xsrf-token")) {
     const xsrf = readCookie("XSRF-TOKEN");
     if (xsrf) headers.set("x-xsrf-token", decodeURIComponent(xsrf));
+  }
+  if (customerId !== undefined && !headers.has("x-ad-customer-id")) {
+    headers.set("x-ad-customer-id", String(customerId));
+  }
+  if (!headers.has("accept")) {
+    headers.set("accept", "application/json, text/plain, */*");
   }
   if (init?.body && !headers.has("content-type")) {
     headers.set("content-type", "application/json");
@@ -140,9 +157,16 @@ export async function fetchAllDirectory(): Promise<MultiAccountDirectoryEntry[]>
 
 // ─── 비즈머니 잔액 ───
 
-export async function fetchBizMoney(): Promise<number | null> {
+/**
+ * bmgate URL은 path에 adAccountNo가 박혀있어 `x-ad-customer-id` 헤더 없이도
+ * 그 계정의 비즈머니를 직접 응답. campaigns/stats/contracts는 `/apis/sa/api/*` 경로 +
+ * x-ad-customer-id 헤더 조합으로 cross-account 가능.
+ */
+export async function fetchBizMoney(adAccountNo: number): Promise<number | null> {
   try {
-    const json = await authFetch<BizMoneyResponse>("/apis/sa/api/bizmoney/account");
+    const json = await authFetch<BizMoneyResponse>(
+      `/apis/bmgate/v1.0/adAccounts/${adAccountNo}/bizmoney/account`,
+    );
     const refundable = Number(json.refundableAmt ?? 0);
     const nonRefundable = Number(json.nonRefundableAmt ?? 0);
     if (!Number.isFinite(refundable) || !Number.isFinite(nonRefundable)) return null;
@@ -151,53 +175,6 @@ export async function fetchBizMoney(): Promise<number | null> {
     console.warn("[dv-ads/multi-account] bizmoney 실패", e);
     return null;
   }
-}
-
-// ─── 활성 광고계정 컨텍스트 ready check ───
-
-/**
- * iframe 안에서 SPA가 활성 광고계정 컨텍스트를 잡기 전에 fetch하면 404
- * "요청하신 광고주가 존재하지 않습니다" 반환. `/apis/sa/api/bizmoney/account`가
- * 200을 응답하는 시점 = SPA가 활성 계정 init 완료. 그 시점까지 backoff polling.
- *
- * 기본 30초 — background hidden tab은 Chrome이 timer를 1Hz로 throttle해서
- * foreground 대비 3~5배 느리게 init된다. foreground 호출(자연 캐싱 등)에서는
- * 보통 1~2초 안에 ready라 30초 타임아웃 도달 안 함.
- */
-export async function waitForAccountContext(maxMs = 30000): Promise<boolean> {
-  const start = Date.now();
-  let attempt = 0;
-  while (Date.now() - start < maxMs) {
-    try {
-      const resp = await fetch("/apis/sa/api/bizmoney/account", {
-        credentials: "include",
-        headers: buildAuthHeaders(),
-      });
-      if (resp.ok) return true;
-      if (resp.status === 404) {
-        attempt++;
-        await sleep(Math.min(300 + attempt * 200, 1200));
-        continue;
-      }
-      // 401/403/5xx — retry 무의미
-      return false;
-    } catch {
-      attempt++;
-      await sleep(400);
-    }
-  }
-  return false;
-}
-
-function buildAuthHeaders(): Record<string, string> {
-  const xsrf = readCookie("XSRF-TOKEN");
-  const h: Record<string, string> = {};
-  if (xsrf) h["x-xsrf-token"] = decodeURIComponent(xsrf);
-  return h;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 // ─── 캠페인 ID 리스트 (campaignType별 호출 필요) ───
@@ -212,11 +189,13 @@ const CAMPAIGN_TYPES = [
   "PLACE",          // 플레이스
 ] as const;
 
-export async function fetchCampaignRows(): Promise<NccCampaignRow[]> {
+export async function fetchCampaignRows(customerId: number): Promise<NccCampaignRow[]> {
   const results = await Promise.allSettled(
     CAMPAIGN_TYPES.map((tp) =>
       authFetch<NccCampaignRow[]>(
         `/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=${tp}`,
+        undefined,
+        customerId,
       ),
     ),
   );
@@ -225,6 +204,14 @@ export async function fetchCampaignRows(): Promise<NccCampaignRow[]> {
     const r = results[i];
     if (r.status === "fulfilled" && Array.isArray(r.value)) {
       const tp = CAMPAIGN_TYPES[i];
+      // recordSize=1001로 호출했는데 1000개를 넘으면 page 짤림 가능 — stats 누락 위험 경고.
+      // 페이지네이션은 SPA 보강 작업 시까지 보류.
+      if (r.value.length >= 1001) {
+        console.warn(
+          `[dv-ads/multi-account] 캠페인 ${tp}이(가) 1000개를 초과해 일부 통계가 누락될 수 있어요`,
+          r.value.length,
+        );
+      }
       for (const row of r.value) {
         if (row?.nccCampaignId) {
           out.push({ nccCampaignId: row.nccCampaignId, campaignTp: row.campaignTp ?? tp });
@@ -239,9 +226,12 @@ export async function fetchCampaignRows(): Promise<NccCampaignRow[]> {
 
 // 정찰 결과: `/apis/sa/api/ncc/adgroups`는 `nccCampaignId` 파라미터 필수.
 // 브랜드검색 계약 정보는 BRAND 캠페인의 광고그룹 ID 필요.
-export async function fetchAdgroupRowsByCampaign(nccCampaignId: string): Promise<NccAdgroupRow[]> {
+export async function fetchAdgroupRowsByCampaign(
+  nccCampaignId: string,
+  customerId: number,
+): Promise<NccAdgroupRow[]> {
   const url = `/apis/sa/api/ncc/adgroups?nccCampaignId=${encodeURIComponent(nccCampaignId)}&recordSize=1001`;
-  const raw = await authFetch<NccAdgroupRow[]>(url).catch(() => [] as NccAdgroupRow[]);
+  const raw = await authFetch<NccAdgroupRow[]>(url, undefined, customerId).catch(() => [] as NccAdgroupRow[]);
   return Array.isArray(raw) ? raw : [];
 }
 
@@ -250,6 +240,7 @@ export async function fetchAdgroupRowsByCampaign(nccCampaignId: string): Promise
 export async function fetchYesterdayStats(
   campaignIds: string[],
   yesterdayISODate: string,
+  customerId: number,
 ): Promise<MultiAccountSnapshot["yesterday"]> {
   if (campaignIds.length === 0) {
     return { impressions: 0, clicks: 0, ctr: 0, cpc: 0, cost: 0, revenue: 0, conversions: 0, roas: 0 };
@@ -275,10 +266,11 @@ export async function fetchYesterdayStats(
       timeRange: { since: yesterdayISODate, until: yesterdayISODate },
       ids: chunk.join(","),
     });
-    const json = await authFetch<StatsResponse>("/apis/sa/api/stats", {
-      method: "POST",
-      body,
-    });
+    const json = await authFetch<StatsResponse>(
+      "/apis/sa/api/stats",
+      { method: "POST", body },
+      customerId,
+    );
     for (const row of json.data ?? []) {
       impressions += Number(row.impCnt ?? 0);
       clicks += Number(row.clkCnt ?? 0);
@@ -297,12 +289,15 @@ export async function fetchYesterdayStats(
 
 // ─── 계약 정보 (BRAND_SEARCH 등 time-contracts) ───
 
-export async function fetchContracts(adgroupIds: string[]): Promise<MultiAccountSnapshot["contracts"]> {
+export async function fetchContracts(
+  adgroupIds: string[],
+  customerId: number,
+): Promise<MultiAccountSnapshot["contracts"]> {
   if (adgroupIds.length === 0) return [];
   const url =
     "/apis/sa/api/ncc/time-contracts/after-current-summaries?nccAdgroupIds=" +
     encodeURIComponent(adgroupIds.join(","));
-  const raw = await authFetch<ContractsResponse[]>(url);
+  const raw = await authFetch<ContractsResponse[]>(url, undefined, customerId);
   const out: MultiAccountSnapshot["contracts"] = [];
   for (const row of raw ?? []) {
     const c = row.currentTimeContract;
@@ -317,7 +312,7 @@ export async function fetchContracts(adgroupIds: string[]): Promise<MultiAccount
   return out;
 }
 
-// ─── 통합: 현재 활성 계정의 모든 데이터 수집 ───
+// ─── 통합: 특정 광고계정의 모든 데이터 수집 ───
 
 export interface AccountSnapshotPayload {
   bizMoney: number | null;
@@ -325,18 +320,24 @@ export interface AccountSnapshotPayload {
   contracts: MultiAccountSnapshot["contracts"];
 }
 
-export async function collectActiveAccount(yesterdayISODate: string): Promise<AccountSnapshotPayload> {
-  // SPA가 활성 광고계정 컨텍스트 잡을 때까지 대기 (iframe·background tab 환경 대응)
-  const ready = await waitForAccountContext();
-  if (!ready) {
-    // 묵묵히 빈 payload 반환하면 caller가 ok로 받아 "-"만 표시 → 사용자 혼동.
-    // 명시적 throw로 친근 메시지 보여주게 한다.
-    throw new Error("광고계정 컨텍스트 초기화 실패");
-  }
+/**
+ * 어떤 광고계정의 데이터든 현재 페이지 컨텍스트에서 직접 수집. hidden tab/approach 불필요.
+ *
+ * - bizmoney: URL에 adAccountNo가 박힌 bmgate endpoint
+ * - campaigns/stats/contracts/adgroups: `x-ad-customer-id` 헤더로 cross-account
+ *
+ * `customerId`는 광고계정의 `masterCustomerId`(검색광고 customerId와 동일 ID space).
+ * directory entry에서 가져온다. 빠진 경우 호출 측에서 skip.
+ */
+export async function collectAccount(
+  adAccountNo: number,
+  customerId: number,
+  yesterdayISODate: string,
+): Promise<AccountSnapshotPayload> {
   // 비즈머니 + 캠페인 동시 fetch
   const [bizMoney, campaignRows] = await Promise.all([
-    fetchBizMoney(),
-    fetchCampaignRows().catch((e) => {
+    fetchBizMoney(adAccountNo),
+    fetchCampaignRows(customerId).catch((e) => {
       console.warn("[dv-ads/multi-account] campaigns 실패", e);
       return [] as NccCampaignRow[];
     }),
@@ -352,17 +353,17 @@ export async function collectActiveAccount(yesterdayISODate: string): Promise<Ac
 
   // stats (어제) + 브랜드검색 광고그룹 ID 동시
   const [yesterday, brandAdgroupIds] = await Promise.all([
-    fetchYesterdayStats(allCampaignIds, yesterdayISODate).catch((e) => {
+    fetchYesterdayStats(allCampaignIds, yesterdayISODate, customerId).catch((e) => {
       console.warn("[dv-ads/multi-account] stats 실패", e);
       return null;
     }),
-    fetchBrandAdgroupIds(brandCampaignIds).catch((e) => {
+    fetchBrandAdgroupIds(brandCampaignIds, customerId).catch((e) => {
       console.warn("[dv-ads/multi-account] brand adgroups 실패", e);
       return [] as string[];
     }),
   ]);
 
-  const contracts = await fetchContracts(brandAdgroupIds).catch((e) => {
+  const contracts = await fetchContracts(brandAdgroupIds, customerId).catch((e) => {
     console.warn("[dv-ads/multi-account] contracts 실패", e);
     return [] as MultiAccountSnapshot["contracts"];
   });
@@ -370,10 +371,13 @@ export async function collectActiveAccount(yesterdayISODate: string): Promise<Ac
   return { bizMoney, yesterday, contracts };
 }
 
-async function fetchBrandAdgroupIds(brandCampaignIds: string[]): Promise<string[]> {
+async function fetchBrandAdgroupIds(
+  brandCampaignIds: string[],
+  customerId: number,
+): Promise<string[]> {
   if (brandCampaignIds.length === 0) return [];
   const results = await Promise.allSettled(
-    brandCampaignIds.map((cmpId) => fetchAdgroupRowsByCampaign(cmpId)),
+    brandCampaignIds.map((cmpId) => fetchAdgroupRowsByCampaign(cmpId, customerId)),
   );
   const out: string[] = [];
   for (const r of results) {

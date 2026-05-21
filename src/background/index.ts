@@ -13,7 +13,6 @@ import type {
   GetBidEstimateRequest,
   GetBidEstimateResponse,
   RefreshActiveTabResponse,
-  MultiAccountCollectResponse,
   FetchProductPageResponse,
   ScrapeProductImagesResponse,
   FetchImageBinaryResponse,
@@ -101,34 +100,6 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     return true;
   }
   return false;
-});
-
-// ─── F-MultiAccount — Port API (chrome.runtime.connect) ───
-// `chrome.runtime.sendMessage` + return true 패턴은 MV3 service worker가 idle/restart 시
-// "message channel closed before a response was received" 에러 발생. Port 사용 시
-// long-lived connection이라 worker keep-alive + 안정적 응답.
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== "dvads-multi-account-collect") return;
-  port.onMessage.addListener((msg: { type?: string; adAccountNo?: number }) => {
-    if (msg?.type !== "MULTI_ACCOUNT_COLLECT_ACCOUNT" || typeof msg.adAccountNo !== "number") {
-      port.postMessage({ ok: false, error: "잘못된 메시지" });
-      return;
-    }
-    void (async () => {
-      try {
-        const result = await handleMultiAccountCollect(msg.adAccountNo!);
-        console.log(`[bg/multi-account] port response ad=${msg.adAccountNo}`, result);
-        port.postMessage(result);
-      } catch (e) {
-        const raw = e instanceof Error ? e.message : String(e);
-        console.warn(`[bg/multi-account] port handler crashed ad=${msg.adAccountNo}`, e);
-        port.postMessage({ ok: false, error: raw });
-      }
-    })();
-  });
-  port.onDisconnect.addListener(() => {
-    console.log("[bg/multi-account] port disconnected");
-  });
 });
 
 // ─── F-AssetBulk V2 — 상품 페이지 이미지 후보 추출 (hidden tab) ───
@@ -231,124 +202,11 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   return btoa(bin);
 }
 
-// ─── F-MultiAccount — 다른 광고계정 데이터 수집 (hidden tab 위임) ───
-// 사유: 비즈머니/계약 같은 endpoint가 SPA 활성 계정 컨텍스트 기준이라 콘텐츠 스크립트
-// 직접 cross-account fetch가 안 됨. 메모리 `project_f_multiaccount_cross_account_decision` 참조.
-
-// 동시 1개로 처리 — 여러 hidden tab이 같은 도메인 쿠키(활성 계정)를 동시에 덮어쓰면
-// 서로의 수집 결과가 섞일 수 있어 직렬화. "↻ 전체"도 어차피 sequential이라 병목 없음.
-const MULTI_ACCOUNT_MAX_CONCURRENT = 1;
-let multiAccountInFlight = 0;
-const multiAccountWaiters: Array<() => void> = [];
-
-async function handleMultiAccountCollect(
-  adAccountNo: number,
-): Promise<MultiAccountCollectResponse> {
-  while (multiAccountInFlight >= MULTI_ACCOUNT_MAX_CONCURRENT) {
-    await new Promise<void>((resolve) => multiAccountWaiters.push(resolve));
-  }
-  multiAccountInFlight++;
-  try {
-    return await collectViaHiddenTab(adAccountNo);
-  } finally {
-    multiAccountInFlight--;
-    const next = multiAccountWaiters.shift();
-    next?.();
-  }
-}
-
-async function collectViaHiddenTab(
-  adAccountNo: number,
-): Promise<MultiAccountCollectResponse> {
-  // `active: false` 숨김 탭으로 띄움 — 사용자 화면은 광고 페이지 그대로 유지.
-  // 백그라운드 탭은 timer가 1Hz로 throttle되어 SPA 활성 계정 컨텍스트 init이
-  // foreground 대비 3~5배 느려진다. 그래서 content script의 `waitForAccountContext`
-  // 타임아웃을 30초로 늘려둠 (`multi-account-data.ts`).
-  // 데이터 받으면 탭 닫음. active 복귀가 필요 없어 race도 사라짐.
-  const url = `https://ads.naver.com/manage/ad-accounts/${adAccountNo}/sa/campaigns-by/WEB_SITE`;
-  console.log(`[bg/multi-account] collect start ad=${adAccountNo}`);
-
-  let newTab: chrome.tabs.Tab | null = null;
-  try {
-    newTab = await chrome.tabs.create({ url, active: false });
-  } catch (e) {
-    console.warn(`[bg/multi-account] tabs.create 실패`, e);
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  }
-  const tabId = newTab.id;
-  if (!tabId) return { ok: false, error: "탭 생성 실패" };
-  console.log(`[bg/multi-account] tab created id=${tabId}, waiting complete...`);
-
-  try {
-    // 백그라운드 탭은 페이지 로드도 약간 느려질 수 있어 20초로 여유.
-    await waitForTabComplete(tabId, 20000);
-    console.log(`[bg/multi-account] tab=${tabId} complete, PING polling 시작`);
-
-    // PING polling — content script listener 등록 완료될 때까지 대기.
-    // sendMessage 호출 전 listener 활성 확인하면 "channel closed before response" 회피.
-    // 백그라운드 탭이라 content script 등록도 약간 느려질 수 있어 20초.
-    const pingOk = await pingUntilReady(tabId, 20000);
-    if (!pingOk) {
-      console.warn(`[bg/multi-account] tab=${tabId} PING 응답 없음`);
-      return { ok: false, error: "콘텐츠 스크립트 응답 없음" };
-    }
-    console.log(`[bg/multi-account] tab=${tabId} PING OK, sending COLLECT_ACTIVE`);
-
-    // `frameId: 0` (top frame only) — 콘텐츠 스크립트가 `all_frames: true`라
-    // iframe들에서도 listener가 등록되고 모두 `return true`(async)로 응답 약속.
-    // ads.naver.com SPA가 hydration 중 iframe을 swap하면 그 frame이 sendResponse 전
-    // destroy되어 Chrome이 채널을 close → "channel closed before response" 에러.
-    // top frame만 타겟해 race 제거.
-    // 응답 timeout은 content script의 waitForAccountContext(30s) + 실제 fetch들의
-    // 합보다 넉넉히 — 45초.
-    const sendPromise = chrome.tabs.sendMessage(
-      tabId,
-      { type: "MULTI_ACCOUNT_COLLECT_ACTIVE" },
-      { frameId: 0 },
-    ) as Promise<MultiAccountCollectResponse | undefined>;
-    const res = await Promise.race([
-      sendPromise,
-      sleep(45000).then(() => "__TIMEOUT__" as const),
-    ]);
-
-    if (res === "__TIMEOUT__") {
-      console.warn(`[bg/multi-account] tab=${tabId} sendMessage 응답 시간 초과 (45초)`);
-      return { ok: false, error: "응답 시간 초과" };
-    }
-    console.log(`[bg/multi-account] tab=${tabId} response`, res);
-    return res ?? { ok: false, error: "응답 없음" };
-  } catch (e) {
-    console.warn(`[bg/multi-account] tab=${tabId} 오류`, e);
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
-  } finally {
-    console.log(`[bg/multi-account] removing tab ${tabId}`);
-    try {
-      await chrome.tabs.remove(tabId);
-    } catch (e) {
-      console.warn(`[bg/multi-account] tabs.remove 실패`, e);
-    }
-  }
-}
-
-async function pingUntilReady(tabId: number, maxMs: number): Promise<boolean> {
-  const start = Date.now();
-  while (Date.now() - start < maxMs) {
-    try {
-      // `frameId: 0` — COLLECT_ACTIVE와 동일 frame을 ready check.
-      // multi-frame broadcast 시 어느 frame의 listener가 응답했는지 불확실 → top frame 고정.
-      const res = (await chrome.tabs.sendMessage(
-        tabId,
-        { type: "PING" },
-        { frameId: 0 },
-      )) as { ok?: boolean } | undefined;
-      if (res?.ok) return true;
-    } catch {
-      // listener 미등록 또는 channel close — retry
-    }
-    await sleep(300);
-  }
-  return false;
-}
+// ─── F-MultiAccount: 더 이상 hidden tab 안 씀 ───
+// 2026-05-21 정찰로 `x-ad-customer-id` 헤더 + bmgate URL 조합으로 cross-account 직접
+// fetch 가능 확인. 이제 콘텐츠 스크립트가 사용자 페이지 컨텍스트에서 모든 계정 데이터를
+// 직접 받음 (이 background 코드 경로 자체가 폐기됨).
+// `MULTI_ACCOUNT_COLLECT_ACCOUNT` Port handler 및 hidden tab spawning 모두 제거.
 
 function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
   return new Promise((resolve) => {
