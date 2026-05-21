@@ -2,8 +2,10 @@ import iconUrl from "@/assets/icon-128.png";
 import DataDisclosure from "./data-disclosure";
 import { CredentialsUi, type CredentialsState, type CredentialsValue } from "./credentials-ui";
 import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
 import { useEffect, useState } from "react";
 import { loadCredentials, saveCredentials, clearCredentials } from "@/lib/searchad";
+import { clearAllCaches } from "@/lib/cache-prune";
 
 const APP_VERSION = "v" + (chrome?.runtime?.getManifest?.()?.version ?? "0.0.0");
 const SUGGEST_MAILTO = "mailto:dvcompany.dev@gmail.com?subject=%5B%EB%94%94%EB%B8%8C%EC%9D%B4%20%EC%95%A0%EB%93%9C%20%EB%A7%A4%EB%8B%88%EC%A0%80%5D%20%EA%B8%B0%EB%8A%A5%20%EC%A0%9C%EC%95%88";
@@ -60,6 +62,30 @@ export default function Options() {
     }
   }
 
+  const [clearingCache, setClearingCache] = useState(false);
+  const [cacheCleared, setCacheCleared] = useState<number | null>(null);
+
+  async function handleClearCache() {
+    if (
+      !confirm(
+        "저장된 캐시(키워드 시세, 다계정 데이터 등)를 모두 삭제할까요?\n다음 사용 시 자동으로 다시 받아옵니다. 별칭·추가된 계정 등 사용자 설정은 유지됩니다.",
+      )
+    ) {
+      return;
+    }
+    setClearingCache(true);
+    setCacheCleared(null);
+    try {
+      const r = await clearAllCaches();
+      setCacheCleared(r.removed);
+    } catch (e) {
+      console.warn("[options] clearAllCaches failed", e);
+      alert("캐시 삭제에 실패했어요. 잠시 후 다시 시도해 주세요.");
+    } finally {
+      setClearingCache(false);
+    }
+  }
+
   return (
     <div className="max-w-6xl mx-auto p-10">
       <header className="flex items-center gap-3 pt-6 mb-3">
@@ -103,6 +129,31 @@ export default function Options() {
             onDelete={handleDelete}
           />
         )}
+      </Card>
+
+      <Card className="mb-6">
+        <div className="flex items-start justify-between gap-6">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold text-gray-900">캐시 삭제</h2>
+            <p className="mt-1.5 text-sm text-gray-600 leading-relaxed">
+              저장된 계정 데이터를 모두 비웁니다.
+            </p>
+            {cacheCleared !== null && (
+              <p className="mt-2 text-sm text-brand font-medium">
+                {cacheCleared > 0
+                  ? `캐시 ${cacheCleared}개 항목 삭제됨.`
+                  : "삭제할 캐시가 없어요."}
+              </p>
+            )}
+          </div>
+          <Button
+            variant="secondary"
+            onClick={handleClearCache}
+            disabled={clearingCache}
+          >
+            {clearingCache ? "삭제 중..." : "캐시 삭제"}
+          </Button>
+        </div>
       </Card>
 
       <DataDisclosure />

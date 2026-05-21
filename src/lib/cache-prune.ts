@@ -60,6 +60,42 @@ export async function pruneExpiredCache(): Promise<PruneResult> {
   return { removed: toRemove.length, kept };
 }
 
+/**
+ * 모든 캐시 일괄 삭제 — 사용자 명시 액션(옵션 페이지의 "캐시 삭제" 버튼)에서 호출.
+ *
+ * 삭제 대상:
+ *   - F001 캐시 4종: volume/performance/shopping/current_bid
+ *   - F-MultiAccount 디렉터리 캐시(`multi_account_directory`)와 스냅샷(`multi_account_snapshot:*`)
+ *
+ * 보존 대상(사용자 데이터):
+ *   - 검색광고 자격증명(`searchadCredentials`)
+ *   - F-MultiAccount 추가 목록(`multi_account_added_list`)·별칭 메타(`multi_account_user_meta`)
+ *
+ * 캐시는 다음 사용 시 자동으로 재수집된다 — 영구 데이터 손실 없음.
+ */
+export async function clearAllCaches(): Promise<{ removed: number }> {
+  const all = await chrome.storage.local.get(null);
+  const toRemove: string[] = [];
+  for (const key of Object.keys(all)) {
+    if (CACHE_PREFIXES.some((p) => key.startsWith(p))) {
+      toRemove.push(key);
+      continue;
+    }
+    if (key === "multi_account_directory") {
+      toRemove.push(key);
+      continue;
+    }
+    if (key.startsWith("multi_account_snapshot:")) {
+      toRemove.push(key);
+      continue;
+    }
+  }
+  if (toRemove.length > 0) {
+    await chrome.storage.local.remove(toRemove);
+  }
+  return { removed: toRemove.length };
+}
+
 export async function maybePrune(): Promise<void> {
   let last: number | undefined;
   try {
