@@ -28,6 +28,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `src/content/index.ts` — `ads.naver.com` 페이지 주입 콘텐츠 스크립트. 광고 키워드 옆 입찰가·순위 오버레이 렌더 + 팝오버 행 클릭으로 입찰가 자동 변경. popover에 PC/모바일 디바이스 토글(PC default eager 호출, MOBILE은 토글 시 lazy 호출). in-memory + storage 캐시 키에 device 포함(`<prefix>:<device>:<keyword>[:<bid>]`). 토글 시 popover 높이 morph(FLIP 패턴) + flip 결정 freeze(`openPopoverFlipHeight`)로 위치 jitter 방지.
 - `src/content/dom-bid.ts` — ads.naver.com 입찰가 변경 UI 자동화 격리. 페이지 입찰가 셀 클릭 → React 호환 input 값 주입 → 변경 버튼 클릭 → 셀 갱신 대기. `waitFor` / `setReactInputValue` 헬퍼는 다른 자동화 모듈에서도 import해서 사용.
 - `src/content/asset-bulk.ts` + `asset-bulk-popup.ts` + `dom-asset.ts` — F-AssetBulk 파워링크 확장소재 일괄 등록. "+ 새 확장 소재" 드롭다운에 "등록" li 주입 → native DOM 팝업으로 이미지/추가제목/추가설명/홍보문구(최대 2개) 입력 → 페이지 모달 자동화로 순차 등록. 홍보문구는 `[홍보종류 select][추가설명 14자]` 쌍이고 종류 dropdown은 `selectPromoKind`로 mousedown+click + portal li 매칭. 확장소재 페이지 DOM 셀렉터는 `dom-asset.ts`에 격리.
+- `src/content/product-page-scrape.ts` + `src/lib/product-page-extract.ts` — F-AssetBulk v2 상품 페이지 URL → background hidden tab 갤러리 스크레이퍼. PRELOADED_STATE `simpleProductForDetailPage.A.{representativeImageUrl, optionalImageUrls}` 화이트리스트 path만 사용해 로고/배너/추천 상품 noise 제외.
 - `src/content/confirm-dialog.ts` / `toast.ts` — 오버레이 다이얼로그·토스트(+5초 Undo). React 미사용, native DOM.
 - `src/background/index.ts` — MV3 Service Worker. 검색광고 API(GET_BID_ESTIMATE) fetch 위임.
 - `src/popup/` — React 19 팝업 (옵션 진입점)
@@ -81,6 +82,9 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - **배지 ⚠ "응답없음" 디버깅 1순위 = SW Console raw 로그** (`[searchad] ... raw response` 또는 `API 4xx`). silent-empty = "응답은 받았는데 데이터 0개" 상태. spike 로그는 모듈당 1회만 찍히니 확장 reload 후 재호출하면 다시 찍힘. 400 에러 메시지의 `fields:` 가 결정적 단서.
 - **`tsc -b` incremental cache(`.tsbuildinfo`)에 stale 에러가 남을 수 있음** — `rm -f tsconfig.*.tsbuildinfo && npm run typecheck`로 클린 재실행.
 - **사용자 노출 한글 메시지에 영문 기술용어 금지** (`reload`/`fetch`/`background`/`백그라운드`/`sendMessage` 등). `friendly-error.ts` 패턴 따라 "페이지를 새로고침해 주세요" 같은 일상 한글로. 배지 툴팁(`lastError`), 토스트, 다이얼로그 모두 동일.
+- **네이버 SPA의 inline SSR state**(스마트스토어 `window.__PRELOADED_STATE__={...}` 등)는 `/` unicode escape + `:undefined`/`:NaN` JS literal이 박혀있어 raw `JSON.parse` 실패. brace depth counter로 assignment 잘라낸 뒤 `:undefined` → `:null` sanitize 후 parse (`src/content/product-page-scrape.ts` `sliceBalancedBraces`/`sanitizeJsLiterals`). 갤러리/대표 데이터 path는 도메인별 화이트리스트로 박아 noise(로고·배너·추천상품) 제외 — 단순 정규식 추출은 거의 항상 noise 같이 잡힘.
+- **`shop-phinf.pstatic.net` raw URL은 응답 사이즈 비일관** (이미지마다 thumbnail 또는 full). ads.naver.com 확장소재 모달(이미지 검증 단축 640px ~ 장축 2000px)에 그대로 업로드 시 일부 거부됨. 페이지 carousel이 쓰는 `?type=o1000` query 강제로 1000×1000 정사각 보장 (`applyStandardSize`). `?type=w1500` 같은 다른 variant는 일부 이미지에서 invalid response 줘 broken image.
+- **`chrome.tabs.create({active:false})` hidden tab의 carousel hydration 한계** — lazy slider 다른 슬라이드가 viewport 밖 transform 또는 lazy-load 안 됨. DOM `<img>` scrape만으론 첫 슬라이드 ~4장만 잡힘. SSR JSON inline state(`__PRELOADED_STATE__` 등)에서 path 화이트리스트로 추출이 가장 안정적, DOM scrape는 폴백.
 
 ## gstack
 

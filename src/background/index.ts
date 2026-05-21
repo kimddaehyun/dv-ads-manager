@@ -235,8 +235,8 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 // 사유: 비즈머니/계약 같은 endpoint가 SPA 활성 계정 컨텍스트 기준이라 콘텐츠 스크립트
 // 직접 cross-account fetch가 안 됨. 메모리 `project_f_multiaccount_cross_account_decision` 참조.
 
-// 동시 1개로 처리 — active:true tab이 차례대로 잠깐 활성화되며 데이터 수집.
-// 동시 N개면 사용자 화면이 여러 탭 사이를 빠르게 오가서 매우 어지러움.
+// 동시 1개로 처리 — 여러 hidden tab이 같은 도메인 쿠키(활성 계정)를 동시에 덮어쓰면
+// 서로의 수집 결과가 섞일 수 있어 직렬화. "↻ 전체"도 어차피 sequential이라 병목 없음.
 const MULTI_ACCOUNT_MAX_CONCURRENT = 1;
 let multiAccountInFlight = 0;
 const multiAccountWaiters: Array<() => void> = [];
@@ -260,17 +260,17 @@ async function handleMultiAccountCollect(
 async function collectViaHiddenTab(
   adAccountNo: number,
 ): Promise<MultiAccountCollectResponse> {
-  // 사용자 ↻ 의사 표시 시점에 잠깐 active:true 탭으로 띄움 — SPA가 정상 init되어
-  // 다른 계정 데이터 수집 가능. 데이터 받으면 사용자 원래 탭으로 active 복귀 + 새 탭 닫음.
-  // 모든 단계에 timeout + 콘솔 로그로 hang/실패 진단 가능하게 한다.
+  // `active: false` 숨김 탭으로 띄움 — 사용자 화면은 광고 페이지 그대로 유지.
+  // 백그라운드 탭은 timer가 1Hz로 throttle되어 SPA 활성 계정 컨텍스트 init이
+  // foreground 대비 3~5배 느려진다. 그래서 content script의 `waitForAccountContext`
+  // 타임아웃을 30초로 늘려둠 (`multi-account-data.ts`).
+  // 데이터 받으면 탭 닫음. active 복귀가 필요 없어 race도 사라짐.
   const url = `https://ads.naver.com/manage/ad-accounts/${adAccountNo}/sa/campaigns-by/WEB_SITE`;
-  const [originalTab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const originalTabId = originalTab?.id;
-  console.log(`[bg/multi-account] collect start ad=${adAccountNo} originalTab=${originalTabId}`);
+  console.log(`[bg/multi-account] collect start ad=${adAccountNo}`);
 
   let newTab: chrome.tabs.Tab | null = null;
   try {
-    newTab = await chrome.tabs.create({ url, active: true });
+    newTab = await chrome.tabs.create({ url, active: false });
   } catch (e) {
     console.warn(`[bg/multi-account] tabs.create 실패`, e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -280,12 +280,14 @@ async function collectViaHiddenTab(
   console.log(`[bg/multi-account] tab created id=${tabId}, waiting complete...`);
 
   try {
-    await waitForTabComplete(tabId, 12000);
+    // 백그라운드 탭은 페이지 로드도 약간 느려질 수 있어 20초로 여유.
+    await waitForTabComplete(tabId, 20000);
     console.log(`[bg/multi-account] tab=${tabId} complete, PING polling 시작`);
 
     // PING polling — content script listener 등록 완료될 때까지 대기.
     // sendMessage 호출 전 listener 활성 확인하면 "channel closed before response" 회피.
-    const pingOk = await pingUntilReady(tabId, 15000);
+    // 백그라운드 탭이라 content script 등록도 약간 느려질 수 있어 20초.
+    const pingOk = await pingUntilReady(tabId, 20000);
     if (!pingOk) {
       console.warn(`[bg/multi-account] tab=${tabId} PING 응답 없음`);
       return { ok: false, error: "콘텐츠 스크립트 응답 없음" };
@@ -297,6 +299,8 @@ async function collectViaHiddenTab(
     // ads.naver.com SPA가 hydration 중 iframe을 swap하면 그 frame이 sendResponse 전
     // destroy되어 Chrome이 채널을 close → "channel closed before response" 에러.
     // top frame만 타겟해 race 제거.
+    // 응답 timeout은 content script의 waitForAccountContext(30s) + 실제 fetch들의
+    // 합보다 넉넉히 — 45초.
     const sendPromise = chrome.tabs.sendMessage(
       tabId,
       { type: "MULTI_ACCOUNT_COLLECT_ACTIVE" },
@@ -304,11 +308,11 @@ async function collectViaHiddenTab(
     ) as Promise<MultiAccountCollectResponse | undefined>;
     const res = await Promise.race([
       sendPromise,
-      sleep(15000).then(() => "__TIMEOUT__" as const),
+      sleep(45000).then(() => "__TIMEOUT__" as const),
     ]);
 
     if (res === "__TIMEOUT__") {
-      console.warn(`[bg/multi-account] tab=${tabId} sendMessage 응답 시간 초과 (15초)`);
+      console.warn(`[bg/multi-account] tab=${tabId} sendMessage 응답 시간 초과 (45초)`);
       return { ok: false, error: "응답 시간 초과" };
     }
     console.log(`[bg/multi-account] tab=${tabId} response`, res);
@@ -317,15 +321,6 @@ async function collectViaHiddenTab(
     console.warn(`[bg/multi-account] tab=${tabId} 오류`, e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   } finally {
-    // 무조건 원래 탭으로 active 복귀 (새 탭 닫기 전에)
-    if (originalTabId) {
-      console.log(`[bg/multi-account] restoring active tab ${originalTabId}`);
-      try {
-        await chrome.tabs.update(originalTabId, { active: true });
-      } catch (e) {
-        console.warn(`[bg/multi-account] restore active 실패`, e);
-      }
-    }
     console.log(`[bg/multi-account] removing tab ${tabId}`);
     try {
       await chrome.tabs.remove(tabId);

@@ -969,7 +969,9 @@ function escapeHtml(s: string): string {
 /**
  * 다른 계정 데이터 수집 — background hidden tab으로 위임.
  * background가 chrome.tabs.create({active:false})로 그 계정 페이지를 띄워
- * SPA가 정상 init된 후 콘텐츠 스크립트가 활성 계정 fetch.
+ * SPA가 정상 init된 후 콘텐츠 스크립트가 활성 계정 fetch. 사용자 화면은
+ * 광고 페이지 그대로(탭바에 잠깐 새 탭 보였다 사라짐). 백그라운드 탭은 timer
+ * throttle되어 SPA init이 느려서 waitForAccountContext 타임아웃 30초.
  * iframe 방식은 광고관리자 SPA가 iframe 안에서 활성 계정 컨텍스트를 안 잡아서 폐기.
  */
 /**
@@ -1023,6 +1025,9 @@ function friendlyMessage(e: unknown): string {
   }
   if (raw.includes("Could not establish connection")) {
     return "다른 계정 탭과 통신하지 못했어요.";
+  }
+  if (raw.includes("컨텍스트 초기화 실패") || raw.includes("응답 시간 초과")) {
+    return "데이터 받기에 시간이 너무 걸렸어요. 잠시 후 다시 시도해주세요.";
   }
   return "데이터를 가져오지 못했어요.";
 }

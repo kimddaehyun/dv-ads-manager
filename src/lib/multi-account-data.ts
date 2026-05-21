@@ -159,8 +159,12 @@ export async function fetchBizMoney(): Promise<number | null> {
  * iframe 안에서 SPA가 활성 광고계정 컨텍스트를 잡기 전에 fetch하면 404
  * "요청하신 광고주가 존재하지 않습니다" 반환. `/apis/sa/api/bizmoney/account`가
  * 200을 응답하는 시점 = SPA가 활성 계정 init 완료. 그 시점까지 backoff polling.
+ *
+ * 기본 30초 — background hidden tab은 Chrome이 timer를 1Hz로 throttle해서
+ * foreground 대비 3~5배 느리게 init된다. foreground 호출(자연 캐싱 등)에서는
+ * 보통 1~2초 안에 ready라 30초 타임아웃 도달 안 함.
  */
-export async function waitForAccountContext(maxMs = 8000): Promise<boolean> {
+export async function waitForAccountContext(maxMs = 30000): Promise<boolean> {
   const start = Date.now();
   let attempt = 0;
   while (Date.now() - start < maxMs) {
@@ -322,11 +326,12 @@ export interface AccountSnapshotPayload {
 }
 
 export async function collectActiveAccount(yesterdayISODate: string): Promise<AccountSnapshotPayload> {
-  // SPA가 활성 광고계정 컨텍스트 잡을 때까지 대기 (iframe 환경 대응)
+  // SPA가 활성 광고계정 컨텍스트 잡을 때까지 대기 (iframe·background tab 환경 대응)
   const ready = await waitForAccountContext();
   if (!ready) {
-    console.warn("[dv-ads/multi-account] SPA 활성 계정 컨텍스트 초기화 시간 초과");
-    return { bizMoney: null, yesterday: null, contracts: [] };
+    // 묵묵히 빈 payload 반환하면 caller가 ok로 받아 "-"만 표시 → 사용자 혼동.
+    // 명시적 throw로 친근 메시지 보여주게 한다.
+    throw new Error("광고계정 컨텍스트 초기화 실패");
   }
   // 비즈머니 + 캠페인 동시 fetch
   const [bizMoney, campaignRows] = await Promise.all([
