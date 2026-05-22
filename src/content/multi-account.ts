@@ -304,6 +304,9 @@ async function openPopover() {
   // popover 안에서 시작한 mousedown 추적 — 드래그하다가 밖에서 release하면 click이
   // 외부에서 발화해서 popover를 닫아버리는 사고 방지. mousedown 시작점이 popover 내부면
   // 그 다음 click 1번은 outside-close에서 면제한다.
+  const inBrandTooltip = (t: Node): boolean =>
+    !!brandTooltipEl?.contains(t);
+
   let mousedownInsidePopover = false;
   const onMouseDown = (e: MouseEvent) => {
     if (!popoverEl) return;
@@ -311,7 +314,8 @@ async function openPopover() {
     mousedownInsidePopover =
       popoverEl.contains(t) ||
       (buttonEl?.contains(t) ?? false) ||
-      inAuxModal(t);
+      inAuxModal(t) ||
+      inBrandTooltip(t);
   };
   const onClickOutside = (e: MouseEvent) => {
     if (!popoverEl) return;
@@ -324,6 +328,8 @@ async function openPopover() {
     if (buttonEl?.contains(e.target as Node)) return;
     // 보조 모달(이름 수정 등) 내부 클릭은 popover 외부지만 닫지 않음.
     if (inAuxModal(e.target as Node)) return;
+    // 브랜드검색 알림 툴팁 내부 클릭(=연장하기 버튼)도 popover 닫지 않음.
+    if (inBrandTooltip(e.target as Node)) return;
     closePopover();
   };
   document.addEventListener("keydown", onKey);
@@ -353,6 +359,8 @@ function closePopover() {
   popoverFullscreen = false;
   document.querySelector(".dvads-multi-backdrop")?.remove();
   selectedAccountNos.clear();
+  // 브랜드검색 알림 툴팁 잔여 정리 — popover 떠 있을 때만 의미 있음.
+  hideBrandTooltip();
   // close 아이콘 → 햄버거로 복귀
   buttonEl?.classList.remove("is-open");
 }
@@ -1364,6 +1372,19 @@ function renderTableRow(
   nameTd?.classList.add("dvads-multi-td-name-clickable");
   nameTd?.addEventListener("click", goTo);
 
+  // 브랜드검색 알림 호버 툴팁 — 이름 셀에만 트리거. alert 토글 여부는 paintRow가 행 클래스로
+  // 처리하니 listener는 항상 등록하고 내부에서 부모 행 클래스 확인. delay-hide로
+  // 이름 셀→툴팁 사이 마우스 이동 허용.
+  nameTd?.addEventListener("mouseenter", () => {
+    if (!tr.classList.contains("dvads-multi-tr-brand-alert")) return;
+    cancelHideBrandTooltip();
+    showBrandTooltip(tr, nameTd);
+  });
+  nameTd?.addEventListener("mouseleave", () => {
+    if (!tr.classList.contains("dvads-multi-tr-brand-alert")) return;
+    scheduleHideBrandTooltip();
+  });
+
   // 체크박스 wire — 선택 토글 + 헤더 카운트 동기화.
   wireRowCheckbox(tr, entry.adAccountNo);
 
@@ -1540,11 +1561,11 @@ async function openBizMoneyDialogFor(nos: number[]) {
   openInputDialog({
     title: "비즈머니 알림 설정",
     description: nos.length === 1
-      ? "비즈머니가 이 금액 이하로 떨어지면 알림"
-      : `선택된 ${nos.length}개 계정에 일괄 적용 - 비즈머니가 이 금액 이하면 알림`,
+      ? undefined
+      : `선택된 ${nos.length}개 계정에 일괄 적용`,
     initialValue: initial,
     suffix: "원",
-    placeholder: "예: 100000",
+    placeholder: "100,000",
     onConfirm: async (value) => {
       for (const no of nos) await updateUserMeta(no, { bizMoneyThreshold: value });
       if (popoverEl) await renderListView(popoverEl);
@@ -1567,11 +1588,11 @@ async function openBrandSearchDialogFor(nos: number[]) {
   openInputDialog({
     title: "브랜드검색 알림 설정",
     description: nos.length === 1
-      ? "브랜드검색 계약 만료가 이 일수 이하로 남으면 알림"
-      : `선택된 ${nos.length}개 계정에 일괄 적용 - 브랜드검색 만료가 이 일수 이하면 알림`,
+      ? undefined
+      : `선택된 ${nos.length}개 계정에 일괄 적용`,
     initialValue: initial,
     suffix: "일",
-    placeholder: "예: 7",
+    placeholder: "7",
     onConfirm: async (value) => {
       for (const no of nos) await updateUserMeta(no, { brandSearchDaysThreshold: value });
       if (popoverEl) await renderListView(popoverEl);
@@ -1680,18 +1701,13 @@ function paintRow(adAccountNo: number, snap: MultiAccountSnapshot, meta?: MultiA
   }
   setCell("bizMoney", snap.bizMoney != null ? formatWon(snap.bizMoney) : "-");
 
-  // 계약 D-day는 행 자체에 시각 cue (테두리/title)
-  row.classList.remove("dvads-multi-tr-contract-warning", "dvads-multi-tr-contract-expired");
+  // 계약 D-day는 캠페인 단위 max → min으로 계산. 후속 계약 마련됐으면 자연 OFF.
+  row.classList.remove("dvads-multi-tr-contract-expired");
   row.removeAttribute("title");
   const dday = computeMinDday(snap.contracts);
-  if (dday !== null) {
-    if (dday <= 0) {
-      row.classList.add("dvads-multi-tr-contract-expired");
-      row.title = "브랜드검색 계약 만료";
-    } else if (dday <= 5) {
-      row.classList.add("dvads-multi-tr-contract-warning");
-      row.title = `브랜드검색 D-${dday} - 계약 종료 임박`;
-    }
+  // 만료(≤ 0)는 임계값 무관 항상 회색 cue — 운영 끝난 계정 시각 구분.
+  if (dday !== null && dday <= 0) {
+    row.classList.add("dvads-multi-tr-contract-expired");
   }
 
   // ─── 사용자 임계값 알림 cue ───
@@ -1702,15 +1718,126 @@ function paintRow(adAccountNo: number, snap: MultiAccountSnapshot, meta?: MultiA
     && snap.bizMoney <= meta.bizMoneyThreshold;
   bizCell?.classList.toggle("dvads-multi-td-biz-alert", bizAlert);
 
-  // 브랜드검색 임계 도달 — 행 좌측 보더 + 계정명 빨강(펄스). 기존 hardcoded ≤5일 cue와는
-  // 별개 클래스로 동작. 둘 다 맞으면 CSS 단일 색이라 한 번만 그려짐.
+  // 브랜드검색 임계 도달 — 비즈머니처럼 단순 빨강(펄스 없음). 계정명만 색 변경 +
+  // 호버 시 커스텀 툴팁(브랜드검색 페이지로 가는 [연장하기] 버튼 포함).
   const brandAlert = meta?.brandSearchDaysThreshold != null
     && dday !== null
     && dday <= meta.brandSearchDaysThreshold;
   row.classList.toggle("dvads-multi-tr-brand-alert", brandAlert);
-  if (brandAlert) {
-    // 임계 도달이 hardcoded cue보다 강한 신호 — title 덮어쓴다.
-    row.title = dday! <= 0 ? "브랜드검색 만료" : `브랜드검색 만료 ${dday}일 전`;
+  // 툴팁 컨텍스트 저장 — 호버 핸들러가 읽어서 N일/계정번호 추출.
+  if (brandAlert && dday !== null) {
+    row.dataset.brandDday = String(dday);
+  } else {
+    delete row.dataset.brandDday;
+  }
+
+  // 통합 알림 cue — 비즈/브랜드 어느 쪽이든 임계 도달 시 행 좌측 빨간 세로 선.
+  // "이 계정에 뭔가 알림이 떴음"이라는 단일 시각 신호로 통일.
+  row.classList.toggle("dvads-multi-tr-threshold-alert", bizAlert || brandAlert);
+}
+
+// ─── 브랜드검색 알림 호버 툴팁 ───────────────────────────────────────────
+//
+// 임계값 도달한(빨강) 행에 마우스 올리면 "브랜드검색 종료 N일 전" + [연장하기] 버튼.
+// 버튼 클릭 시 해당 광고계정의 브랜드검색 페이지를 새 탭에서 연다 (SPA URL은 "BRAND").
+//
+// 패턴: 모듈 단위 단일 element. 행/툴팁 사이를 마우스가 오갈 때 잠깐 hide 지연(120ms)을 둬
+// 끊김 없이 자연스러운 호버 → 클릭 흐름이 되도록 한다.
+
+let brandTooltipEl: HTMLDivElement | null = null;
+let brandTooltipRowKey: string | null = null;
+let brandTooltipHideTimer: number | null = null;
+
+function showBrandTooltip(row: HTMLTableRowElement, anchor: HTMLElement) {
+  const ddayStr = row.dataset.brandDday;
+  const adAccountNo = row.dataset.adAccountNo;
+  if (!ddayStr || !adAccountNo) return;
+  const dday = parseInt(ddayStr, 10);
+  if (!Number.isFinite(dday)) return;
+
+  // 같은 행에 이미 떠 있으면 위치/내용 재계산 skip — 깜빡임 방지.
+  if (brandTooltipRowKey === adAccountNo && brandTooltipEl?.isConnected) return;
+  hideBrandTooltip();
+
+  const tip = document.createElement("div");
+  tip.className = "dvads dvads-brand-tooltip";
+  tip.dataset.adAccountNo = adAccountNo;
+
+  const msg = document.createElement("span");
+  msg.className = "dvads-brand-tooltip-msg";
+  msg.textContent = dday <= 0 ? "브랜드검색 계약 만료" : `브랜드검색 종료 ${dday}일 전`;
+  tip.appendChild(msg);
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "dvads-btn dvads-btn-primary dvads-brand-tooltip-btn";
+  btn.textContent = "연장하기";
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    // 새 탭에서 브랜드검색 페이지로 — 다른 행 click 처리(WEB_SITE)와 동일 패턴.
+    // SPA URL은 API와 동일한 "BRAND_SEARCH" 풀네임 (단순 "BRAND"는 파워링크로 리다이렉트).
+    const url = `/manage/ad-accounts/${adAccountNo}/sa/campaigns-by/BRAND_SEARCH`;
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.click();
+  });
+  tip.appendChild(btn);
+
+  // 툴팁 자체 hover guard — 툴팁 위에 마우스 있는 동안엔 hide 안 함.
+  tip.addEventListener("mouseenter", cancelHideBrandTooltip);
+  tip.addEventListener("mouseleave", scheduleHideBrandTooltip);
+
+  document.body.appendChild(tip);
+  brandTooltipEl = tip;
+  brandTooltipRowKey = adAccountNo;
+
+  // 위치 — anchor(계정명 셀) 상단 중앙. 화살표가 아래쪽으로 향함. 위쪽 공간 부족하면
+  // anchor 아래로 fallback (꼬리 방향도 자동 반전).
+  const anchorRect = anchor.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  const GAP = 10;
+  let left = anchorRect.left + anchorRect.width / 2 - tipRect.width / 2;
+  if (left < 8) left = 8;
+  if (left + tipRect.width > window.innerWidth - 8) {
+    left = window.innerWidth - 8 - tipRect.width;
+  }
+  let top = anchorRect.top - tipRect.height - GAP;
+  let placement: "top" | "bottom" = "top";
+  if (top < 8) {
+    top = anchorRect.bottom + GAP;
+    placement = "bottom";
+  }
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+  tip.dataset.placement = placement;
+  // 화살표 가로 위치 — anchor 중심 X에서 툴팁 left를 뺀 값. clamp로 양 끝 14px 유지.
+  const arrowOffset = Math.max(
+    14,
+    Math.min(tipRect.width - 14, anchorRect.left + anchorRect.width / 2 - left),
+  );
+  tip.style.setProperty("--dvads-brand-tooltip-arrow-x", `${arrowOffset}px`);
+}
+
+function hideBrandTooltip() {
+  cancelHideBrandTooltip();
+  brandTooltipEl?.remove();
+  brandTooltipEl = null;
+  brandTooltipRowKey = null;
+}
+
+function scheduleHideBrandTooltip() {
+  cancelHideBrandTooltip();
+  brandTooltipHideTimer = window.setTimeout(() => {
+    hideBrandTooltip();
+  }, 120);
+}
+
+function cancelHideBrandTooltip() {
+  if (brandTooltipHideTimer !== null) {
+    clearTimeout(brandTooltipHideTimer);
+    brandTooltipHideTimer = null;
   }
 }
 
@@ -1737,14 +1864,32 @@ function findRow(adAccountNo: number): HTMLTableRowElement | null {
   );
 }
 
+/**
+ * 캠페인 단위로 가장 늦은 종료일(current/next 통합)을 보고, 그 max들 중 가장 임박한 것을
+ * 계정 D-day로 반환. "후속 계약 마련됨" 시나리오를 자연 처리 — 같은 캠페인에 새 광고그룹/
+ * next contract가 있으면 그 종료일이 max로 채택되어 알림 OFF.
+ *
+ * 예: 캠페인 X = 그룹A(current 5/30) + 그룹B(next 5/31~8/30) → max = 8/30 → D-100
+ *     → 임계값 60일이면 알림 OFF (정상, 후속 마련됨).
+ *
+ * 매핑이 빠진 contract(`nccCampaignId` 빈 값)는 단일 버킷에 모음 — 가능한 한 같은 캠페인
+ * 취급해 보수적으로(min) 평가.
+ */
 function computeMinDday(contracts: MultiAccountSnapshot["contracts"]): number | null {
   if (!contracts || contracts.length === 0) return null;
-  let minDays: number | null = null;
-  const now = Date.now();
+  const maxMsByCampaign = new Map<string, number>();
   for (const c of contracts) {
     if (!c.endDate) continue;
     const ms = new Date(c.endDate).getTime();
     if (!Number.isFinite(ms)) continue;
+    const key = c.nccCampaignId || "_unknown";
+    const prev = maxMsByCampaign.get(key);
+    if (prev === undefined || ms > prev) maxMsByCampaign.set(key, ms);
+  }
+  if (maxMsByCampaign.size === 0) return null;
+  const now = Date.now();
+  let minDays: number | null = null;
+  for (const ms of maxMsByCampaign.values()) {
     const days = Math.ceil((ms - now) / (24 * 60 * 60 * 1000));
     if (minDays === null || days < minDays) minDays = days;
   }

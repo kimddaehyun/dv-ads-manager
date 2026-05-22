@@ -1,7 +1,7 @@
 {
   "name": "dv-ads",
   "private": true,
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "네이버 광고 대시보드에서 키워드 입찰가·쇼핑 순위를 실시간 표시",
   "scripts": {

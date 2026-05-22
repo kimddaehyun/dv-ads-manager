@@ -2123,12 +2123,20 @@ td.dvads-period-delta-down {
   font-weight: 600;
 }
 
-/* 브랜드검색 임계 도달 행 — 좌측 빨간 보더(펄스) + 계정명 빨강(펄스).
-   기존 .dvads-multi-tr-contract-warning과 동일 패턴이되 별도 클래스로 추가. */
-.dvads-multi-tr.dvads-multi-tr-brand-alert td:first-child {
+/* 브랜드검색 임계 도달 행 — 정적 빨강(펄스 없음). 계정명 텍스트만 색 변경.
+   자세한 D-day/연장하기는 호버 툴팁(.dvads-brand-tooltip)에서. */
+.dvads-multi-tr.dvads-multi-tr-brand-alert .dvads-multi-name {
+  color: #DC2626;
+  font-weight: 600;
+  cursor: help;
+}
+
+/* 통합 알림 cue — 비즈머니/브랜드검색 어느 쪽이든 임계 도달 시 행 좌측 빨간 세로 선.
+   "이 계정에 뭔가 알림이 떴음"이라는 단일 시각 신호. 정적(펄스 없음). */
+.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child {
   position: relative;
 }
-.dvads-multi-tr.dvads-multi-tr-brand-alert td:first-child::before {
+.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child::before {
   content: "";
   position: absolute;
   left: 0;
@@ -2136,21 +2144,6 @@ td.dvads-period-delta-down {
   bottom: 0;
   width: 3px;
   background: #DC2626;
-  animation: dvads-brand-alert-pulse 1.8s ease-in-out infinite;
-}
-.dvads-multi-tr.dvads-multi-tr-brand-alert .dvads-multi-name {
-  color: #DC2626;
-  animation: dvads-brand-alert-pulse 1.8s ease-in-out infinite;
-}
-@keyframes dvads-brand-alert-pulse {
-  0%, 100% { opacity: 1; }
-  50%      { opacity: 0.55; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .dvads-multi-tr.dvads-multi-tr-brand-alert td:first-child::before,
-  .dvads-multi-tr.dvads-multi-tr-brand-alert .dvads-multi-name {
-    animation: none;
-  }
 }
 
 /* 페이지 우상단 햄버거 버튼 알림 배지 (iOS 스타일) — 가로/세로 동일한 정원 고정.
@@ -2362,13 +2355,15 @@ td.dvads-period-delta-down {
   border-color: #9CA3AF;
 }
 
-/* 테이블 체크박스 셀/헤더 — 좁고 가운데 정렬 */
+/* 테이블 체크박스 셀/헤더 — 좁고 좌우/상하 가운데 정렬.
+   padding 좌우 동일(9px) + vertical-align: middle로 다중 줄 행(이름+번호)에서도 행 중앙에 위치. */
 .dvads-multi-table th.dvads-multi-th-cb,
 .dvads-multi-table td.dvads-multi-td-cb {
   width: 36px;
   min-width: 36px;
-  padding: 7px 6px 7px 12px;
+  padding: 0 9px;
   text-align: center;
+  vertical-align: middle;
 }
 
 
@@ -2916,5 +2911,79 @@ td.dvads-period-delta-down {
 }
 .dvads-input-clear {
   /* 해제 버튼은 위험성보다는 "되돌리기" 톤이라 secondary 그대로 — 다만 좌측에 단독 배치. */
+}
+
+/* ─── 브랜드검색 알림 호버 툴팁 (multi-account.ts) ─────────────────────
+   네이버 광고관리자 native 툴팁 톤 — 검은 배경 + 흰 글자 + 아래쪽 꼬리. 행 상단 가운데
+   정렬, 위쪽 공간 부족하면 행 아래로 fallback (placement 속성으로 꼬리 방향 전환).
+   document.body 자식이라 popover overflow 무관. */
+.dvads-brand-tooltip {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  background: #1F2937;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.18);
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 13px;
+  color: #ffffff;
+  white-space: nowrap;
+  animation: dvads-brand-tooltip-fade 140ms ease-out both;
+  pointer-events: auto;
+  /* 꼬리 가로 위치 — JS에서 --dvads-brand-tooltip-arrow-x를 설정. 미설정 시 중앙. */
+  --dvads-brand-tooltip-arrow-x: 50%;
+}
+@keyframes dvads-brand-tooltip-fade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* 아래로 향하는 꼬리 — placement="top" (기본) */
+.dvads-brand-tooltip[data-placement="top"]::after {
+  content: "";
+  position: absolute;
+  left: var(--dvads-brand-tooltip-arrow-x);
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: #1F2937;
+  transform: translateX(-50%) rotate(45deg);
+  border-radius: 2px;
+}
+/* 위로 향하는 꼬리 — placement="bottom" (행 아래로 fallback) */
+.dvads-brand-tooltip[data-placement="bottom"]::after {
+  content: "";
+  position: absolute;
+  left: var(--dvads-brand-tooltip-arrow-x);
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  background: #1F2937;
+  transform: translateX(-50%) rotate(45deg);
+  border-radius: 2px;
+}
+.dvads-brand-tooltip-msg {
+  color: #ffffff;
+  font-weight: 500;
+}
+/* 연장하기 — 버튼 외관 없이 인라인 텍스트 링크. 살짝 연한 DV 주황 + 볼드, 밑줄 없음.
+   .dvads-btn-primary 베이스 스타일(높이/배경/radius/border)을 모두 덮어 평범한 텍스트로. */
+.dvads-brand-tooltip-btn {
+  height: auto !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #F2A06E !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+  cursor: pointer;
+}
+.dvads-brand-tooltip-btn:hover {
+  color: #FFB987 !important;
 }
 

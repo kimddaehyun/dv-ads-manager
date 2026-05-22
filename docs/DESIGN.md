@@ -684,6 +684,88 @@ popup 등 컨테이너가 dismiss될 때 `closeAllOpenDropdowns()`를 호출해 
 }
 ```
 
+### Threshold Alert Cue (F-MultiAccount — 임계값 도달 시각 신호)
+
+행 단위 통합 cue + 셀 단위 디테일의 2단 구조. **펄스/애니메이션 사용 안 함** — 정적 빨강만.
+
+- **행 좌측 빨간 세로 선** (`dvads-multi-tr-threshold-alert`) — 비즈머니/브랜드 둘 중 하나라도
+  임계 도달 시. "이 계정에 뭔가 알림 있음" 단일 신호.
+- **비즈머니 셀 빨강** (`td.dvads-multi-td-biz-alert`) — 비즈머니 잔액 ≤ 임계값.
+- **브랜드검색 계정명 빨강** (`tr.dvads-multi-tr-brand-alert .dvads-multi-name`) — 캠페인
+  단위 max(endDate) 기준 D-day ≤ 임계값. `cursor: help`로 호버 가능 신호.
+
+```css
+/* 통합 cue — 행 좌측 3px 빨간 세로 선 */
+.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child { position: relative; }
+.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; background: #DC2626;
+}
+/* 셀 단위 디테일 */
+.dvads-multi-table td.dvads-multi-td-biz-alert {
+  color: #DC2626; font-weight: 600;
+}
+.dvads-multi-tr.dvads-multi-tr-brand-alert .dvads-multi-name {
+  color: #DC2626; font-weight: 600; cursor: help;
+}
+```
+
+펄스/glow를 쓰지 않는 이유: popover 안에 알림 계정이 여러 개면 펄스가 동시에 깜빡여
+시각 노이즈가 되고, 비즈머니 셀 빨강 같은 정적 cue와 톤이 어긋남. 정적 빨강 + bold만으로
+충분히 식별 가능. 단 한 가지 — 만료(D-day ≤ 0)는 회색 cue(`dvads-multi-tr-contract-expired`)로
+**운영 끝남**과 **임박 알림**을 구분.
+
+### Hover Tooltip — Native-tone (F-MultiAccount 연장하기 등)
+
+네이버 광고관리자 native 툴팁과 동일 톤 — 검은 배경 + 흰 글자 + 작은 꼬리. **다이얼로그류
+팝업(흰 배경 + 그림자)과는 다른 톤** — 일시적 호버 컨텍스트라는 신호를 의도적으로 분리.
+
+```css
+.dvads-brand-tooltip {
+  position: fixed; z-index: 2147483647;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 10px 8px 14px;
+  background: #1F2937;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.18);
+  font: 500 13px "Pretendard Variable";
+  color: #fff;
+  white-space: nowrap;
+  animation: dvads-brand-tooltip-fade 140ms ease-out both;
+  /* 꼬리 가로 위치 — JS에서 anchor 중심에 맞춰 동적 설정 */
+  --dvads-brand-tooltip-arrow-x: 50%;
+}
+/* 꼬리: 10x10 사각형 45도 회전. placement 속성으로 방향 전환 */
+.dvads-brand-tooltip[data-placement="top"]::after {
+  content: ""; position: absolute; left: var(--dvads-brand-tooltip-arrow-x);
+  bottom: -5px; width: 10px; height: 10px;
+  background: #1F2937;
+  transform: translateX(-50%) rotate(45deg); border-radius: 2px;
+}
+.dvads-brand-tooltip[data-placement="bottom"]::after {
+  /* 동일하되 top: -5px */
+}
+/* 인라인 텍스트 링크 버튼 — 살짝 연한 DV 주황, 밑줄 없음, weight 700 */
+.dvads-brand-tooltip-btn {
+  background: transparent; border: 0; padding: 0; height: auto;
+  color: #F2A06E; font: 700 13px "Pretendard Variable";
+  text-decoration: none; cursor: pointer;
+}
+.dvads-brand-tooltip-btn:hover { color: #FFB987; }
+```
+
+**위치 규칙** — anchor element(예: 계정명 셀) 상단 가운데 정렬, 8~10px gap. 위쪽 viewport
+부족 시 anchor 아래로 fallback(`data-placement="bottom"`)하며 꼬리 방향도 자동 반전.
+좌우는 viewport 8px 안쪽으로 clamp하고 꼬리는 anchor 중심 X에 맞춰 동적 오프셋
+(`--dvads-brand-tooltip-arrow-x`).
+
+**호버 끊김 방지** — anchor와 툴팁 사이를 마우스가 오갈 때 120ms hide-delay. anchor leave
+시 schedule, 툴팁 enter 시 cancel. 호버 → 클릭(인라인 링크) 흐름 자연스럽게.
+
+**dismiss 가드** — 툴팁은 `document.body`에 fixed로 mount되어 popover 외부 클릭 close
+핸들러에 잡힐 수 있음. mousedown/click outside 판정에서 `brandTooltipEl.contains(target)`
+면제 필수.
+
 ---
 
 ## Conventions
@@ -706,6 +788,19 @@ popup 등 컨테이너가 dismiss될 때 `closeAllOpenDropdowns()`를 호출해 
 - **오버레이 dropdown은 `createDropdown` 사용 의무** — 네이티브 `<select>`는 OS별 외관이
   갈려 시각 통일 불가. 모든 단일 선택 UI는 `src/content/ui-dropdown.ts`의 함수를 거치고
   새 dropdown 변종이 필요하면 옵션 추가로 흡수 (별도 컴포넌트 X).
+- **숫자 입력 다이얼로그 placeholder는 "예:" prefix 없이 값만** — `"예: 7"` X, `"7"` O.
+  금액은 천 단위 구분 포함 (`"100,000"`). placeholder만으로 입력 단위가 자명하니
+  "예:" 안내는 시각 노이즈.
+- **단일 계정 임계값 다이얼로그엔 description 안 씀** — 제목("브랜드검색 알림 설정")이
+  이미 의도를 다 설명. 부제목은 시각 노이즈. **다중 선택(2개 이상 일괄 적용)일 때만**
+  부제목으로 "선택된 N개 계정에 일괄 적용" 노출 (일괄 적용 사실은 사용자에게 명시적
+  알려야 안전).
+- **테이블 체크박스 셀은 좌우 padding 대칭 + `vertical-align: middle`** — 다중 줄 행
+  (이름+번호 2줄)에서도 행 세로 가운데 정렬. F-MultiAccount 테이블 패턴
+  (`.dvads-multi-td-cb { padding: 0 9px; vertical-align: middle; }`).
+- **알림 cue는 정적 빨강만 — 펄스 금지** — 임계값 도달 행이 여러 개면 펄스가 동시에
+  깜빡여 노이즈. 행 좌측 빨간 세로 선 + 셀 단위 텍스트 빨강 + bold만으로 충분히 식별.
+  자세한 정보(D-day, 액션)는 호버 툴팁에 분리.
 
 ---
 
@@ -737,3 +832,8 @@ popup 등 컨테이너가 dismiss될 때 `closeAllOpenDropdowns()`를 호출해 
 | 2026-05-18 | F001 팝오버에 행 클릭 → 입찰가 자동 변경 기능 추가. 페이지 UI 자동화(DOM 조작) 방식 — 검색광고 PUT API 미사용. 신규 컴포넌트: 확인 다이얼로그, 토스트(+Undo), 팝오버 닫기 버튼. | 사용자가 "추정 → 적용" 사이 컨텍스트 스위칭을 없애기 위함. DOM 자동화는 사용자가 직접 수정하는 것과 동일한 경로라 즉시 반영·권한 동일·`nccKeywordId` 추출 부담 회피. 깨질 위험은 `src/content/dom-bid.ts` 한 파일에 격리 — ads.naver.com이 클래스명을 갈면 여기만 수정. |
 | 2026-05-18 | Typography Scale 문서를 실제 코드 기준으로 동기화. 오버레이 입찰가 표(10→14px), 면책 푸터(10→12px) 등 outdated 값 갱신. 다이얼로그 폰트 토큰 확정 — 제목 16px/600, 본문 14px/400. 신규 다이얼로그류 팝업은 동일 토큰 적용. | 코드와 문서가 어긋나면 신규 작업 시 잘못된 사이즈로 가는 사고가 반복. 입찰가 표는 정보 밀도보다 가독성이 더 중요해 14px로 갱신된 상태였음. |
 | 2026-05-19 | F001 popover에 PC/모바일 디바이스 토글 추가 — segmented control (`.dvads-device-toggle` / `.dvads-device-seg`) 높이 28px / radius 6px. 트랙은 `#F3F4F6`, 선택 디바이스만 흰 카드(`#FFFFFF`) + weight 600 + 미세 그림자. **DV 주황 사용 X** — 보조 UI라 화면 주황 면적(≤3%) 규칙 보존. 모바일이 default eager 호출, PC는 토글 시 lazy(첫 호출만 추가, 이후 캐시). | 모바일 광고 비중이 큰 광고주에게 기존 "PC만 표시"가 실측과 동떨어진 추정치를 보여줬음. 디바이스 분리는 popover 안에서만 — 배지·"현재 N위"는 default device 기준 유지로 화면 정보량 늘리지 않음. 토글에 주황을 쓰면 popover 안에 주황 칠이 (현재 행 강조 + 푸터 차액 + 헤더 키워드 hover 밑줄에) 4번째로 들어가 brand color 인플레이션. |
+| 2026-05-22 | F-MultiAccount 임계값 알림 cue를 2단 구조로 통일 — **행 좌측 빨간 세로 선**(비즈/브랜드 둘 중 하나라도 도달, `dvads-multi-tr-threshold-alert`) + **셀 단위 디테일**(비즈머니 셀 빨강, 브랜드는 계정명 빨강). 펄스/glow 모두 폐기, 정적 빨강만. 만료(D-0 이하)는 회색 cue로 별도 처리. | 알림 계정이 여러 개 누적될 때 펄스가 동시에 깜빡여 popover가 시각 폭격기가 됨. 또 비즈머니 셀은 처음부터 정적이라 브랜드만 펄스면 톤 어긋남. 좌측 세로 선이라는 단일 "이 계정에 뭔가 알림 있다" 신호 + 어떤 임계인지는 색이 들어간 셀 위치로 자연 식별되도록 분리. |
+| 2026-05-22 | 호버 툴팁(`.dvads-brand-tooltip`)을 native-tone(검은 배경 `#1F2937` + 흰 글자 + 작은 꼬리)으로 신설. 인라인 텍스트 링크 버튼은 살짝 연한 DV 주황 `#F2A06E`(weight 700, 밑줄 없음). anchor 상단 가운데 정렬, 위쪽 공간 부족 시 아래로 fallback(꼬리 자동 반전). 행→툴팁 마우스 이동 끊김 방지 120ms hide-delay. | 다이얼로그류(흰 배경 + 그림자)와 톤을 의도적으로 분리해 "일시적 호버 컨텍스트"임을 시각으로 신호. 네이버 광고관리자 native 툴팁과도 톤이 통일됨. 인라인 링크는 popover 안에 이미 주황 면적이 있어 강한 주황 풀 톤을 한 단계 낮춰 noise 감소. |
+| 2026-05-22 | 브랜드검색 알림 D-day 계산을 **캠페인 단위 max(endDate) → min** 로 변경. 같은 BRAND_SEARCH 캠페인 안에 후속 광고그룹·next 계약이 마련되어 있으면 자동으로 max가 늦은 종료일을 채택해 알림 자연 OFF. `MultiAccountSnapshot.contracts`에 `nccCampaignId`/`phase("current"\|"next")` 필드 추가. | 사용자가 후속 계약을 이미 만들어둔 상태에서 현재 광고그룹 D-8을 보고 빨간 알림이 발화하면 false alarm. 광고운영 실무에서 갱신 시 "별도 광고그룹/소재 재생성" 패턴이 흔해, 캠페인 단위로 묶어서 보는 게 의도와 일치. |
+| 2026-05-22 | 숫자 입력 다이얼로그(비즈머니/브랜드 알림 임계값) 톤 정리 — placeholder는 `"예: 7"` 대신 값만(`"7"`, `"100,000"`). 단일 계정 다이얼로그엔 description 제거. 다중 선택일 때만 "선택된 N개 계정에 일괄 적용" 부제목 유지. | placeholder는 단위(원/일)가 suffix로 보이므로 "예:" 안내가 중복. 부제목도 제목("비즈머니 알림 설정")으로 충분히 의도가 전달돼 시각 노이즈만 됨. 일괄 적용 사실은 사용자에게 명시적으로 알려야 사고 방지. |
+| 2026-05-22 | F-MultiAccount 테이블 체크박스 셀 정렬 패턴 확정 — `padding: 0 9px` 좌우 대칭 + `vertical-align: middle`. 다중 줄 행(계정명 + 번호 2줄)에서도 체크박스가 행 세로 가운데로. 헤더 th와 동일 토큰. | 이전 `padding: 7px 6px 7px 12px` 비대칭으로 체크박스가 좌측으로 치우치고, 다중 줄 행에서는 위쪽으로 붙어버려 헤더와 안 맞음. 좌우 동일 + vertical-align로 행 높이와 무관하게 가운데 정렬. |

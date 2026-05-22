@@ -64,13 +64,18 @@ interface StatsResponse {
 
 interface ContractsResponse {
   nccAdgroupId: string;
-  currentTimeContract?: {
-    contractName?: string;
-    campaignTp?: string;
-    contractStartDt?: string;
-    contractEndDt?: string;
-    contractStatus?: string;
-  };
+  /** 진행 중 계약 (만료 전). 만료 후엔 null. */
+  currentTimeContract?: TimeContractBlock;
+  /** 예약된 다음 계약 (현재 계약 종료 후 시작). 없으면 null. */
+  nextTimeContract?: TimeContractBlock;
+}
+
+interface TimeContractBlock {
+  contractName?: string;
+  campaignTp?: string;
+  contractStartDt?: string;
+  contractEndDt?: string;
+  contractStatus?: string;
 }
 
 // ─── 공통 인증 fetch ───
@@ -182,20 +187,22 @@ export async function fetchBizMoney(adAccountNo: number): Promise<number | null>
 // 정찰 결과: `/apis/sa/api/ncc/campaigns`는 `campaignType` 파라미터 필수.
 // 광고관리자 페이지가 매체별 따로 호출. 타입 병렬 호출해서 합산.
 //
-// `BRAND`/`NEW_PROD`만 time-contracts 대상이라 브랜드검색 알림 D-day 계산에 쓰임.
-// 응답의 `campaignTp` 필드는 더 구체적인 값(`BRAND_SEARCH`, `NEW_PRODUCT_SEARCH` 등)으로
-// 돌아올 수 있어 호출 측 필터(`=== "BRAND"`)와 어긋남 → 출처(URL의 campaignType)로 강제 태깅.
+// **주의**: SPA URL path에서 쓰는 string(`BRAND`/`NEW_PROD`/`SHOPPING_NS`)이 본 API에서는
+// "this campaign Type don't exist" 400으로 거부됨. API가 받는 정답 풀네임이 따로 있음
+// (2026-05-22 정찰):
+//   - 브랜드검색 → `BRAND_SEARCH`
+//   - 쇼핑검색  → `SHOPPING`
+//   - 신제품검색 → 미확인 (정찰에서 매칭 안 됨, 추후 별도 정찰 필요)
 const CAMPAIGN_TYPES = [
   "WEB_SITE",       // 파워링크
-  "SHOPPING_NS",    // 쇼핑검색
-  "BRAND",          // 브랜드검색
-  "NEW_PROD",       // 신제품검색 (브랜드와 별도 campaignType)
+  "SHOPPING",       // 쇼핑검색 (← SHOPPING_NS 거부)
+  "BRAND_SEARCH",   // 브랜드검색 (← BRAND 거부)
   "POWER_CONTENTS", // 파워컨텐츠
   "PLACE",          // 플레이스
 ] as const;
 
-// 브랜드검색 알림 D-day 대상 — 두 캠페인 타입의 광고그룹에 time-contracts 존재.
-const BRAND_LIKE_TYPES: ReadonlyArray<(typeof CAMPAIGN_TYPES)[number]> = ["BRAND", "NEW_PROD"];
+// 브랜드검색 알림 D-day 대상 — time-contracts 가진 캠페인 타입.
+const BRAND_LIKE_TYPES: ReadonlyArray<(typeof CAMPAIGN_TYPES)[number]> = ["BRAND_SEARCH"];
 
 export async function fetchCampaignRows(customerId: number): Promise<NccCampaignRow[]> {
   const results = await Promise.allSettled(
@@ -212,8 +219,6 @@ export async function fetchCampaignRows(customerId: number): Promise<NccCampaign
     const r = results[i];
     if (r.status === "fulfilled" && Array.isArray(r.value)) {
       const tp = CAMPAIGN_TYPES[i];
-      // recordSize=1001로 호출했는데 1000개를 넘으면 page 짤림 가능 — stats 누락 위험 경고.
-      // 페이지네이션은 SPA 보강 작업 시까지 보류.
       if (r.value.length >= 1001) {
         console.warn(
           `[dv-ads/multi-account] 캠페인 ${tp}이(가) 1000개를 초과해 일부 통계가 누락될 수 있어요`,
@@ -223,8 +228,7 @@ export async function fetchCampaignRows(customerId: number): Promise<NccCampaign
       for (const row of r.value) {
         if (row?.nccCampaignId) {
           // 응답 campaignTp는 그대로 안 쓰고 요청 URL의 tp로 태깅 — 호출 측 필터가
-          // "BRAND" 같은 카테고리 키로 매칭할 수 있도록 보장 (응답이 BRAND_SEARCH 등
-          // 더 구체적인 서브타입이라 직접 비교하면 누락).
+          // CAMPAIGN_TYPES 키로 정확히 매칭할 수 있도록 보장.
           out.push({ nccCampaignId: row.nccCampaignId, campaignTp: tp });
         }
       }
@@ -300,9 +304,20 @@ export async function fetchYesterdayStats(
 
 // ─── 계약 정보 (BRAND_SEARCH 등 time-contracts) ───
 
+/**
+ * 광고그룹별 계약 정보 가져옴. **current + next 둘 다 추출** — "현재 계약 + 후속 예약"이
+ * 모두 같은 광고그룹에 묶여있는 경우를 잡기 위함.
+ *
+ * 추가로 `adgroupToCampaign`을 받아 각 contract에 nccCampaignId를 태깅한다. 호출 측이
+ * **캠페인 단위로 max(종료일)을 보고 캠페인별 D-day를 계산** 가능하게 함.
+ *
+ * 시나리오 예: 광고그룹 A=5/30 종료(current) + 광고그룹 B=5/31~8/30 예약(next on B 또는 next on A).
+ * 광고그룹별 max를 캠페인에서 더 max로 묶으면 "후속 마련됨" 판정이 자연 성립.
+ */
 export async function fetchContracts(
   adgroupIds: string[],
   customerId: number,
+  adgroupToCampaign?: Map<string, string>,
 ): Promise<MultiAccountSnapshot["contracts"]> {
   if (adgroupIds.length === 0) return [];
   const url =
@@ -311,14 +326,27 @@ export async function fetchContracts(
   const raw = await authFetch<ContractsResponse[]>(url, undefined, customerId);
   const out: MultiAccountSnapshot["contracts"] = [];
   for (const row of raw ?? []) {
-    const c = row.currentTimeContract;
-    if (!c?.contractEndDt) continue;
-    out.push({
-      product: c.contractName ?? "",
-      campaignTp: c.campaignTp ?? "",
-      endDate: c.contractEndDt,
-      status: c.contractStatus ?? "",
-    });
+    const adgroupId = row.nccAdgroupId;
+    const campaignId = adgroupToCampaign?.get(adgroupId) ?? "";
+    // current + next 모두 후보 — 둘 다 있으면 두 row로 push (캠페인 단위 max 계산에 모두 반영).
+    // 빈 endDate는 skip — 계약 없음/만료/예약 안 됨.
+    const candidates: Array<{ block: TimeContractBlock; phase: "current" | "next" }> = [];
+    if (row.currentTimeContract?.contractEndDt) {
+      candidates.push({ block: row.currentTimeContract, phase: "current" });
+    }
+    if (row.nextTimeContract?.contractEndDt) {
+      candidates.push({ block: row.nextTimeContract, phase: "next" });
+    }
+    for (const { block: c, phase } of candidates) {
+      out.push({
+        product: c.contractName ?? "",
+        campaignTp: c.campaignTp ?? "",
+        endDate: c.contractEndDt!,
+        status: c.contractStatus ?? "",
+        nccCampaignId: campaignId,
+        phase,
+      });
+    }
   }
   return out;
 }
@@ -363,54 +391,57 @@ export async function collectAccount(
     .filter((id): id is string => !!id);
 
   // stats (어제) + 브랜드검색 광고그룹 ID 동시
-  const [yesterday, brandAdgroupIds] = await Promise.all([
+  const [yesterday, brandAdgroups] = await Promise.all([
     fetchYesterdayStats(allCampaignIds, yesterdayISODate, customerId).catch((e) => {
       console.warn("[dv-ads/multi-account] stats 실패", e);
       return null;
     }),
     fetchBrandAdgroupIds(brandCampaignIds, customerId).catch((e) => {
       console.warn("[dv-ads/multi-account] brand adgroups 실패", e);
-      return [] as string[];
+      return { adgroupIds: [] as string[], adgroupToCampaign: new Map<string, string>() };
     }),
   ]);
 
-  const contracts = await fetchContracts(brandAdgroupIds, customerId).catch((e) => {
+  const contracts = await fetchContracts(
+    brandAdgroups.adgroupIds,
+    customerId,
+    brandAdgroups.adgroupToCampaign,
+  ).catch((e) => {
     console.warn("[dv-ads/multi-account] contracts 실패", e);
     return [] as MultiAccountSnapshot["contracts"];
-  });
-
-  // [DEBUG] 브랜드검색 알림 진단용 — 단계별 카운트. 원인 좁힌 뒤 제거 예정.
-  console.log("[dv-ads/multi-account/debug]", {
-    adAccountNo,
-    customerId,
-    totalCampaigns: campaignRows.length,
-    campaignTps: [...new Set(campaignRows.map((c) => c.campaignTp))],
-    brandCampaignIds: brandCampaignIds.length,
-    brandAdgroupIds: brandAdgroupIds.length,
-    contracts: contracts.length,
-    contractsSample: contracts[0],
   });
 
   return { bizMoney, yesterday, contracts };
 }
 
+/**
+ * 브랜드검색 캠페인들의 광고그룹 ID + 광고그룹→캠페인 매핑 동시 반환.
+ * 매핑은 contracts 응답을 캠페인 단위로 그룹핑하기 위함.
+ */
 async function fetchBrandAdgroupIds(
   brandCampaignIds: string[],
   customerId: number,
-): Promise<string[]> {
-  if (brandCampaignIds.length === 0) return [];
+): Promise<{ adgroupIds: string[]; adgroupToCampaign: Map<string, string> }> {
+  if (brandCampaignIds.length === 0) return { adgroupIds: [], adgroupToCampaign: new Map() };
   const results = await Promise.allSettled(
-    brandCampaignIds.map((cmpId) => fetchAdgroupRowsByCampaign(cmpId, customerId)),
+    brandCampaignIds.map(async (cmpId) => ({
+      cmpId,
+      rows: await fetchAdgroupRowsByCampaign(cmpId, customerId),
+    })),
   );
-  const out: string[] = [];
+  const adgroupIds: string[] = [];
+  const adgroupToCampaign = new Map<string, string>();
   for (const r of results) {
     if (r.status === "fulfilled") {
-      for (const row of r.value) {
-        if (row?.nccAdgroupId) out.push(row.nccAdgroupId);
+      for (const row of r.value.rows) {
+        if (row?.nccAdgroupId) {
+          adgroupIds.push(row.nccAdgroupId);
+          adgroupToCampaign.set(row.nccAdgroupId, r.value.cmpId);
+        }
       }
     }
   }
-  return out;
+  return { adgroupIds, adgroupToCampaign };
 }
 
 // ─── 날짜 유틸 ───

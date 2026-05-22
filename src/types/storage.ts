@@ -196,12 +196,20 @@ export interface MultiAccountSnapshot {
   } | null;
   /** 비즈머니 잔액 = refundableAmt + nonRefundableAmt (원). 수집 실패 시 null */
   bizMoney: number | null;
-  /** BRAND_SEARCH 등 기간 계약. 계약 없으면 빈 배열 */
+  /**
+   * BRAND_SEARCH 등 기간 계약. 광고그룹별 currentTimeContract + nextTimeContract 모두 row로
+   * 포함 — 캠페인 단위 max(endDate)로 "후속 계약 마련됨" 판정 가능.
+   * 계약 없으면 빈 배열.
+   */
   contracts: {
     product: string;        // contractName (e.g. "PC.4.10 ~ 7.08")
     campaignTp: string;     // "BRAND_SEARCH" 등
     endDate: string;        // ISO 8601 UTC (contractEndDt)
     status: string;         // contractStatus (e.g. "ON_EXPOSING")
+    /** 소속 캠페인 ID — 캠페인 단위 그룹핑용. 매핑 못 잡으면 빈 문자열. */
+    nccCampaignId: string;
+    /** "current" = 현재 진행 중, "next" = 예약된 다음 계약 */
+    phase: "current" | "next";
   }[];
   /** 캐시 적재 시각 (ISO date string) */
   fetched_at: string;
