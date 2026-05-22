@@ -158,7 +158,7 @@ export default function Options() {
 
       <DataDisclosure />
 
-      <section className="mt-6 px-8 py-[37px] text-center rounded-2xl bg-brand">
+      <section className="mt-6 px-8 py-[37px] text-center bg-brand">
         <h2 className="text-xl font-bold text-white">
           필요한 기능이 있으신가요?
         </h2>

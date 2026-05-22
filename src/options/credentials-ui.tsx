@@ -225,8 +225,6 @@ type={showSecret ? "text" : "password"}
           <li>[네이버 검색광고 API 서비스 신청] 클릭</li>
         </ol>
         <p className="text-xs text-gray-500 pt-1">
-          요청 한도: 일 1,000회 (1회 요청에 키워드 5개 처리 → 하루 약 5,000개 조회 가능)
-          <br />
           API키는 브라우저에만 저장되며 외부로 전송되지 않습니다.
         </p>
       </div>

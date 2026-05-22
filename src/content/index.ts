@@ -43,18 +43,6 @@ import { attachTooltip } from "@/content/tooltip";
 declare const __APP_VERSION__: string;
 console.log(`[dv-ads] content script loaded · v${__APP_VERSION__}`);
 
-// F-PoP — 전후 비교 모듈. 6개 매체 페이지에서 우측 상단 날짜 picker 옆에
-// 버튼 주입 + 캡처된 stats fetch replay. F001과 독립적으로 동작.
-initPeriodCompare();
-
-// F-AssetBulk — 파워링크 확장소재 일괄 등록. ads.naver.com 광고그룹 페이지의
-// "+ 새 확장 소재" 드롭다운에 "일괄 등록" 항목 주입. F001과 같은 URL 패턴이라
-// 독립 init하면서 자체 MutationObserver로 메뉴 mount를 따라간다.
-initAssetBulk();
-
-// F-MultiAccount — 다계정 대시보드. 광고관리자 페이지 우상단에 fixed 버튼 주입.
-// 명단/어제 데이터/비즈머니/계약 D-day 표시. F001/F-PoP과 독립적으로 동작.
-initMultiAccount();
 
 const KEYWORD_CELL_SELECTOR = "td.ad-cms-table-cell-fix-start";
 const KEYWORD_SPAN_SELECTOR = "span.keyword";
@@ -1092,6 +1080,19 @@ function schedule() {
     scan();
   });
 }
+
+// F-PoP — 전후 비교 모듈. 6개 매체 페이지에서 우측 상단 날짜 picker 옆에
+// 버튼 주입 + 캡처된 stats fetch replay. F001과 독립적으로 동작.
+initPeriodCompare();
+
+// F-AssetBulk — 파워링크 확장소재 일괄 등록. ads.naver.com 광고그룹 페이지의
+// "+ 새 확장 소재" 드롭다운에 "일괄 등록" 항목 주입. F001과 같은 URL 패턴이라
+// 독립 init하면서 자체 MutationObserver로 메뉴 mount를 따라간다.
+initAssetBulk();
+
+// F-MultiAccount — 다계정 대시보드. 광고관리자 페이지 우상단에 fixed 버튼 주입.
+// 명단/어제 데이터/비즈머니/계약 D-day 표시. F001/F-PoP과 독립적으로 동작.
+initMultiAccount();
 
 const observer = new MutationObserver(schedule);
 observer.observe(document.body, { childList: true, subtree: true });
