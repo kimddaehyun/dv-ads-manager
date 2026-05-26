@@ -11,6 +11,7 @@ import type {
   MultiAccountDirectoryEntry,
   MultiAccountSnapshot,
 } from "@/types/storage";
+import { loadPlatformFilter } from "./multi-account-storage";
 
 interface DirectoryPageResponse {
   content: Array<{
@@ -61,6 +62,26 @@ interface StatsResponse {
     purchaseCcnt?: number;
   }>;
 }
+
+// 대시보드 통합 endpoint — SA+DA 캠페인 + 지표. GFA(DA)의 노출/클릭/비용 + 캠페인 ID 수집용.
+// (구매완료 전환수 필드는 없어 conversion 수치는 campaignStats에서 별도로 가져온다.)
+interface DashboardSearchResponse {
+  results?: Array<{
+    campaign?: { campaignId?: string; adPlatform?: string; type?: string };
+    metrics?: {
+      impressions?: number;
+      clicks?: number;
+      grossCostMicros?: number;
+    };
+  }>;
+}
+
+// GFA campaignStats — 구매완료 전환수/매출만 사용 (전체전환 convCount/convSalesKRW는 안 씀).
+// key = DA 캠페인 ID(campaignId). 데이터 없는 캠페인은 값이 null로 섞여 올 수 있음.
+type GfaCampaignStatsResponse = Record<
+  string,
+  { conversion?: { purchaseConvCount?: number; purchaseConvSalesKRW?: number } } | null
+>;
 
 interface ContractsResponse {
   nccAdgroupId: string;
@@ -302,6 +323,105 @@ export async function fetchYesterdayStats(
   return { impressions, clicks, ctr, cpc, cost, revenue, conversions, roas };
 }
 
+// ─── GFA(디스플레이) 어제 stats — 구매완료만 ───
+//
+// 데이터 소스 2개 조합 (메모리 project_gfa_multiaccount_endpoints):
+//   1) 대시보드 campaigns/search filter:DA → 노출/클릭/비용 + DA campaignId (URL-aware, cross-account)
+//   2) GFA campaignStats → 구매완료 전환수/매출 (purchaseConvCount/purchaseConvSalesKRW)
+// 전체전환(convCount/conversions)은 사용하지 않는다 — 구매완료만.
+const GFA_CONV_CHUNK = 100;
+
+type YesterdayMetrics = NonNullable<MultiAccountSnapshot["yesterday"]>;
+
+export async function fetchGfaYesterdayStats(
+  adAccountNo: number,
+  customerId: number,
+  yesterdayISODate: string,
+): Promise<YesterdayMetrics> {
+  // 1) 대시보드 — DA 캠페인의 노출/클릭/비용 + ID. pageSize 크게 잡아 전체 합산.
+  const body = JSON.stringify({
+    startDate: yesterdayISODate,
+    endDate: yesterdayISODate,
+    filter: "campaign.adPlatform:in:DA",
+    orderBy: "campaign.status:asc",
+    pageNumber: 1,
+    pageSize: 1000,
+  });
+  const dash = await authFetch<DashboardSearchResponse>(
+    `/apis/dashboard/v1/adAccounts/${adAccountNo}/campaigns/search`,
+    { method: "POST", body },
+    customerId,
+  );
+  let impressions = 0;
+  let clicks = 0;
+  let costMicros = 0;
+  const daIds: string[] = [];
+  for (const row of dash.results ?? []) {
+    const m = row.metrics ?? {};
+    impressions += Number(m.impressions ?? 0);
+    clicks += Number(m.clicks ?? 0);
+    costMicros += Number(m.grossCostMicros ?? 0);
+    const id = row.campaign?.campaignId;
+    if (id) daIds.push(id);
+  }
+
+  // 2) campaignStats — 구매완료 전환수/매출 (DA campaignNoList 배치). URL-aware라 헤더 불필요(bmgate 패턴).
+  // 청크는 병렬 호출 후 합산 (캠페인 많을 때 순차 대기 방지).
+  let conversions = 0;
+  let revenue = 0; // purchaseConvSalesKRW는 이미 원 단위
+  const chunkPromises: Promise<GfaCampaignStatsResponse>[] = [];
+  for (let i = 0; i < daIds.length; i += GFA_CONV_CHUNK) {
+    const chunk = daIds.slice(i, i + GFA_CONV_CHUNK);
+    const url =
+      `/apis/gfa/v1/adAccounts/${adAccountNo}/stats/campaignStats` +
+      `?campaignNoList=${encodeURIComponent(chunk.join(","))}` +
+      `&startDate=${yesterdayISODate}&endDate=${yesterdayISODate}`;
+    chunkPromises.push(
+      authFetch<GfaCampaignStatsResponse>(url).catch((e) => {
+        console.warn("[dv-ads/multi-account] GFA campaignStats 실패", e);
+        return {} as GfaCampaignStatsResponse;
+      }),
+    );
+  }
+  for (const stats of await Promise.all(chunkPromises)) {
+    for (const key of Object.keys(stats)) {
+      const conv = stats[key]?.conversion;
+      if (conv) {
+        conversions += Number(conv.purchaseConvCount ?? 0);
+        revenue += Number(conv.purchaseConvSalesKRW ?? 0);
+      }
+    }
+  }
+
+  const cost = costMicros / 1_000_000;
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const cpc = clicks > 0 ? Math.round(cost / clicks) : 0;
+  const roas = cost > 0 ? (revenue / cost) * 100 : 0;
+  return { impressions, clicks, ctr, cpc, cost, revenue, conversions, roas };
+}
+
+function zeroYesterday(): YesterdayMetrics {
+  return { impressions: 0, clicks: 0, ctr: 0, cpc: 0, cost: 0, revenue: 0, conversions: 0, roas: 0 };
+}
+
+// 두 플랫폼 snapshot 합산 — base(노출/클릭/비용/매출/전환)만 더하고 비율(CTR/CPC/ROAS)은 재계산.
+function combineYesterday(
+  a: YesterdayMetrics | null,
+  b: YesterdayMetrics | null,
+): YesterdayMetrics {
+  const x = a ?? zeroYesterday();
+  const y = b ?? zeroYesterday();
+  const impressions = x.impressions + y.impressions;
+  const clicks = x.clicks + y.clicks;
+  const cost = x.cost + y.cost;
+  const revenue = x.revenue + y.revenue;
+  const conversions = x.conversions + y.conversions;
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const cpc = clicks > 0 ? Math.round(cost / clicks) : 0;
+  const roas = cost > 0 ? (revenue / cost) * 100 : 0;
+  return { impressions, clicks, ctr, cpc, cost, revenue, conversions, roas };
+}
+
 // ─── 계약 정보 (BRAND_SEARCH 등 time-contracts) ───
 
 /**
@@ -373,45 +493,59 @@ export async function collectAccount(
   customerId: number,
   yesterdayISODate: string,
 ): Promise<AccountSnapshotPayload> {
-  // 비즈머니 + 캠페인 동시 fetch.
-  // GFA 태그 계정도 masterCustomerId로 검색광고 캠페인/stats가 그대로 응답한다(naver의
-  // 검색광고-GFA 통합, 2026-05-26 정찰 확인). 그래서 플랫폼 구분 없이 동일 경로로 수집.
-  const [bizMoney, campaignRows] = await Promise.all([
-    fetchBizMoney(adAccountNo),
-    fetchCampaignRows(customerId).catch((e) => {
+  // 옵션의 광고 유형 필터 — 검색광고(SA)/디스플레이(GFA) 선택 수집. 둘 다 켜지면 합산.
+  const platforms = await loadPlatformFilter();
+
+  // 비즈머니는 플랫폼 무관 — 항상 수집.
+  const bizMoneyP = fetchBizMoney(adAccountNo);
+
+  // 디스플레이(GFA) — 켜져 있을 때만. SA와 독립이라 병렬 시작.
+  const gfaP: Promise<YesterdayMetrics | null> = platforms.da
+    ? fetchGfaYesterdayStats(adAccountNo, customerId, yesterdayISODate).catch((e) => {
+        console.warn("[dv-ads/multi-account] GFA stats 실패", e);
+        return null;
+      })
+    : Promise.resolve(null);
+
+  // 검색광고(SA) — 켜져 있을 때만. 캠페인 리스트 → 어제 stats + 브랜드검색 계약.
+  let saYesterday: YesterdayMetrics | null = null;
+  let contracts: MultiAccountSnapshot["contracts"] = [];
+  if (platforms.sa) {
+    const campaignRows = await fetchCampaignRows(customerId).catch((e) => {
       console.warn("[dv-ads/multi-account] campaigns 실패", e);
       return [] as NccCampaignRow[];
-    }),
-  ]);
+    });
+    const allCampaignIds = campaignRows
+      .map((c) => c.nccCampaignId)
+      .filter((id): id is string => !!id);
+    const brandCampaignIds = campaignRows
+      .filter((c) => BRAND_LIKE_TYPES.includes(c.campaignTp as (typeof CAMPAIGN_TYPES)[number]))
+      .map((c) => c.nccCampaignId)
+      .filter((id): id is string => !!id);
 
-  const allCampaignIds = campaignRows
-    .map((c) => c.nccCampaignId)
-    .filter((id): id is string => !!id);
-  const brandCampaignIds = campaignRows
-    .filter((c) => BRAND_LIKE_TYPES.includes(c.campaignTp as (typeof CAMPAIGN_TYPES)[number]))
-    .map((c) => c.nccCampaignId)
-    .filter((id): id is string => !!id);
+    const [sa, brandAdgroups] = await Promise.all([
+      fetchYesterdayStats(allCampaignIds, yesterdayISODate, customerId).catch((e) => {
+        console.warn("[dv-ads/multi-account] SA stats 실패", e);
+        return null;
+      }),
+      fetchBrandAdgroupIds(brandCampaignIds, customerId).catch((e) => {
+        console.warn("[dv-ads/multi-account] brand adgroups 실패", e);
+        return { adgroupIds: [] as string[], adgroupToCampaign: new Map<string, string>() };
+      }),
+    ]);
+    saYesterday = sa;
+    contracts = await fetchContracts(
+      brandAdgroups.adgroupIds,
+      customerId,
+      brandAdgroups.adgroupToCampaign,
+    ).catch((e) => {
+      console.warn("[dv-ads/multi-account] contracts 실패", e);
+      return [] as MultiAccountSnapshot["contracts"];
+    });
+  }
 
-  // stats (어제) + 브랜드검색 광고그룹 ID 동시
-  const [yesterday, brandAdgroups] = await Promise.all([
-    fetchYesterdayStats(allCampaignIds, yesterdayISODate, customerId).catch((e) => {
-      console.warn("[dv-ads/multi-account] stats 실패", e);
-      return null;
-    }),
-    fetchBrandAdgroupIds(brandCampaignIds, customerId).catch((e) => {
-      console.warn("[dv-ads/multi-account] brand adgroups 실패", e);
-      return { adgroupIds: [] as string[], adgroupToCampaign: new Map<string, string>() };
-    }),
-  ]);
-
-  const contracts = await fetchContracts(
-    brandAdgroups.adgroupIds,
-    customerId,
-    brandAdgroups.adgroupToCampaign,
-  ).catch((e) => {
-    console.warn("[dv-ads/multi-account] contracts 실패", e);
-    return [] as MultiAccountSnapshot["contracts"];
-  });
+  const [bizMoney, gfaYesterday] = await Promise.all([bizMoneyP, gfaP]);
+  const yesterday = combineYesterday(saYesterday, gfaYesterday);
 
   return { bizMoney, yesterday, contracts };
 }

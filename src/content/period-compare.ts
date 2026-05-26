@@ -156,7 +156,7 @@ function pickBestCapture(
   const startStrs = seps.map((s) => formatDateYMD(curStart, s));
   const endStrs = seps.map((s) => formatDateYMD(curEnd, s));
 
-  const matched: Array<{ cap: PeriodCompareCapture; imps: number }> = [];
+  const matched: Array<{ cap: PeriodCompareCapture; combined: number; richness: number; imps: number }> = [];
   for (const c of candidates) {
     const blob = c.url + " " + (c.body ?? "");
     const hasStart = startStrs.some((s) => blob.includes(s));
@@ -164,14 +164,26 @@ function pickBestCapture(
     if (!hasStart || !hasEnd) continue;
     const media = detectMedia(c.url, location.pathname) ?? "powerlink";
     const m = extractMetricsFromResponse(media, c.response);
-    matched.push({ cap: c, imps: m.impressions ?? 0 });
+    // 완성도(richness) — 비용·매출·전환 필드가 응답에 있는지. 추세 그래프용 부분
+    // 응답(impCnt/clkCnt만)은 0점이라 비용·전환을 갖춘 표용 응답에 밀린다.
+    // 같은 endpoint를 여러 번 호출할 때 부분 응답이 뽑혀 "0원/0전환"이 되던 문제 방지.
+    const richness =
+      (m.cost != null ? 1 : 0) +
+      (m.revenue != null ? 1 : 0) +
+      (m.conversions != null ? 1 : 0);
+    // combined 보너스 — dashboard/GFA URL은 SA+DA 양쪽을 합산할 수 있어 SA-only stats보다 우선.
+    // 전체 캠페인/대시보드 페이지는 SA stats도 잡히지만 dashboard capture가 있으면 그쪽을 선택해
+    // GFA 데이터까지 포함. SA 전용 페이지(파워링크 등)는 SA stats만 잡혀서 영향 없음.
+    const combined = /\/apis\/(dashboard\/v1|gfa\/v1)\/adAccounts\/\d+\//.test(c.url) ? 1 : 0;
+    matched.push({ cap: c, combined, richness, imps: m.impressions ?? 0 });
   }
 
   if (matched.length > 0) {
-    matched.sort((a, b) => b.imps - a.imps);
+    // 1순위 combined(SA+GFA 통합 가능 여부), 2순위 완성도, 3순위 노출수.
+    matched.sort((a, b) => b.combined - a.combined || b.richness - a.richness || b.imps - a.imps);
     if (DEBUG_CAPTURE) {
       console.log(
-        `[dv-ads/PoP] picked best ${matched[0].cap.method} ${matched[0].cap.url} (imps=${matched[0].imps}, ${matched.length} date-matched candidates)`,
+        `[dv-ads/PoP] picked best ${matched[0].cap.method} ${matched[0].cap.url} (richness=${matched[0].richness}, imps=${matched[0].imps}, ${matched.length} date-matched candidates)`,
       );
     }
     return matched[0].cap;
@@ -482,38 +494,56 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
 
     // 매체 분류 실패 시에도 어댑터는 generic alias로 동작 — 빈 매체 키로 fallback
     const adapterMedia: PeriodCompareMedia = media ?? "powerlink";
-    const currentMetrics = extractMetricsFromResponse(adapterMedia, cap.response);
     const prev = previousPeriod(dateInfo.start, dateInfo.end);
 
-    // 직전 기간 fetch — 캡처된 URL+body의 날짜를 shift
-    const shifted = shiftDateParams(cap, dateInfo.start, dateInfo.end, prev.start, prev.end);
-    if (DEBUG_CAPTURE) {
-      console.log("[dv-ads/PoP] replay shifted body=", shifted.body);
+    let currentMetrics: NormalizedMetrics;
+    let prevMetrics: NormalizedMetrics;
+
+    if (isSaStatsCapture(cap)) {
+      // SA 검색광고 stats — 페이지가 요청한 필드(전체전환만 있거나 전환 컬럼 누락 등)에
+      // 의존하지 않고, 구매완료 기준 표준 필드로 현재·직전 기간을 직접 재호출.
+      // 캡처에서는 ids(캠페인 ID)만 빌려온다. 페이지 열 맞춤 설정과 무관하게 항상 구매완료로 일관.
+      const curReq = buildSaStatsRequest(cap, dateInfo.start, dateInfo.end);
+      const prevReq = buildSaStatsRequest(cap, prev.start, prev.end);
+      if (DEBUG_CAPTURE) {
+        console.log("[dv-ads/PoP] SA stats canonical replay cur=", curReq.body, "prev=", prevReq.body);
+      }
+      const [curResp, prevResp] = await Promise.all([
+        replayFetch(curReq),
+        replayFetch(prevReq),
+      ]);
+      currentMetrics = extractMetricsFromResponse(adapterMedia, curResp);
+      prevMetrics = extractMetricsFromResponse(adapterMedia, prevResp);
+    } else {
+      const accountNo = extractDashboardAccountNo(cap.url);
+      if (accountNo) {
+        // dashboard / GFA / 계정 스코프 캡처 — campaigns/search + SA stats + GFA campaignStats
+        // 2차 호출로 구매완료만 합산. URL이 GFA campaignStats여도 항상 이 경로로 처리.
+        // 현재 기간은 campaigns/search 캡처이면 재사용, 아니면 재호출.
+        const isCampaignsSearch = /\/campaigns\/search(\?|$)/.test(cap.url);
+        // GFA 전용 페이지 캡처는 DA만 필터 — dashboard/전체캠페인은 SA+DA 모두.
+        // 혼재하면 SA 전환수가 GFA 수치에 더해져 over-count.
+        const platformFilter: "SA,DA" | "DA" = /\/apis\/gfa\/v1\//.test(cap.url) ? "DA" : "SA,DA";
+        const [cur, prv] = await Promise.all([
+          fetchDashboardPurchaseMetrics(
+            cap, dateInfo.start, dateInfo.end, accountNo,
+            isCampaignsSearch ? (cap.response as DashboardSearchResp) : undefined,
+            platformFilter,
+          ),
+          fetchDashboardPurchaseMetrics(cap, prev.start, prev.end, accountNo, undefined, platformFilter),
+        ]);
+        currentMetrics = cur;
+        prevMetrics = prv;
+      } else {
+        // 그 외 매체(플레이스 등) — 페이지가 요청한 그대로 replay (날짜만 shift).
+        currentMetrics = extractMetricsFromResponse(adapterMedia, cap.response);
+        const shifted = shiftDateParams(cap, dateInfo.start, dateInfo.end, prev.start, prev.end);
+        const prevResp = await replayFetch(shifted);
+        prevMetrics = extractMetricsFromResponse(adapterMedia, prevResp);
+      }
     }
-    const prevResp = await replayFetch(shifted);
     if (DEBUG_CAPTURE) {
-      const r = prevResp as Record<string, unknown> | null;
-      const dataLen = r && Array.isArray(r.data) ? r.data.length : -1;
-      const data0 =
-        r && Array.isArray(r.data) && r.data.length > 0 && typeof r.data[0] === "object"
-          ? r.data[0]
-          : null;
-      console.log(
-        "[dv-ads/PoP] replay resp dataLen=",
-        dataLen,
-        "data[0]=",
-        data0,
-        "current resp dataLen=",
-        Array.isArray((cap.response as { data?: unknown[] })?.data)
-          ? (cap.response as { data: unknown[] }).data.length
-          : -1,
-        "current metrics=",
-        currentMetrics,
-      );
-    }
-    const prevMetrics = extractMetricsFromResponse(adapterMedia, prevResp);
-    if (DEBUG_CAPTURE) {
-      console.log("[dv-ads/PoP] prev metrics=", prevMetrics);
+      console.log("[dv-ads/PoP] current metrics=", currentMetrics, "prev metrics=", prevMetrics);
     }
 
     renderPopover(popover, {
@@ -545,10 +575,266 @@ interface ShiftedRequest {
   body: string | null;
 }
 
+// ─── SA 검색광고 stats 표준 재호출 ───
+//
+// `/apis/sa/api/stats`는 powerlink/shopping/브랜드/파워컨텐츠/전체캠페인이 공유하는 endpoint.
+// 페이지가 요청하는 `fields`는 사용자 열 맞춤 설정에 따라 달라져(전체전환만 / 전환 누락 등)
+// 캡처 응답에서 구매완료를 못 뽑는 경우가 생긴다. 이를 피하려 페이지 필드를 무시하고
+// 다계정 대시보드(`multi-account-data.ts`)에서 검증된 구매완료 표준 필드로 직접 재호출한다.
+// 캡처에서는 ids(캠페인/광고그룹 ID)만 빌려온다.
+const SA_STATS_CANONICAL_FIELDS = [
+  "impCnt",
+  "clkCnt",
+  "cpc",
+  "salesAmtMicros",
+  "purchaseConvAmtMicros",
+  "purchaseCcnt",
+] as const;
+
+function isSaStatsCapture(cap: PeriodCompareCapture): boolean {
+  return (
+    cap.method.toUpperCase() === "POST" &&
+    /\/apis\/sa\/api\/stats(\?|$)/.test(cap.url) &&
+    !!cap.body
+  );
+}
+
+function buildSaStatsRequest(
+  cap: PeriodCompareCapture,
+  since: Date,
+  until: Date,
+): ShiftedRequest {
+  let ids = "";
+  try {
+    const parsed = JSON.parse(cap.body ?? "{}") as { ids?: unknown };
+    if (typeof parsed.ids === "string") ids = parsed.ids;
+    else if (Array.isArray(parsed.ids)) ids = parsed.ids.map(String).join(",");
+  } catch {
+    /* body가 JSON 아니면 ids 빈 채로 — 사실상 발생 안 함 */
+  }
+  const body = JSON.stringify({
+    fields: SA_STATS_CANONICAL_FIELDS,
+    timeIncrement: "allDays",
+    timeRange: {
+      since: formatDateYMD(since, "-"),
+      until: formatDateYMD(until, "-"),
+    },
+    ids,
+  });
+  return { url: cap.url, method: cap.method, headers: cap.headers, body };
+}
+
+// ─── 대시보드(전체 캠페인) stats 전체 합산 재호출 ───
+//
+// `/apis/dashboard/v1/adAccounts/{no}/campaigns/search`는 계정 홈 대시보드가 쓰는
+// 캠페인 리스트 endpoint. body의 `pageSize`가 작아(기본 10) 페이지가 보여주는 첫 페이지만
+// 합산되면 F-PoP 합계가 실제 계정 총합보다 적게 나온다. pageSize를 크게 잡아 전체 캠페인을
+// 한 번에 받아 합산한다.
+const DASHBOARD_PAGE_SIZE = 1000;
+
+// dashboard / GFA 어떤 캡처가 잡혔든 항상 campaigns/search(filter:SA,DA, pageSize 큼)로 재호출한다.
+function buildDashboardCampaignsRequest(
+  accountNo: string,
+  capturedHeaders: Record<string, string>,
+  since: Date,
+  until: Date,
+  platformFilter: "SA,DA" | "DA" = "SA,DA",
+): ShiftedRequest {
+  const body = JSON.stringify({
+    startDate: formatDateYMD(since, "-"),
+    endDate: formatDateYMD(until, "-"),
+    filter: `campaign.adPlatform:in:${platformFilter}`,
+    orderBy: "campaign.status:asc",
+    pageNumber: 1,
+    pageSize: DASHBOARD_PAGE_SIZE,
+  });
+  // XHR 캡처는 setRequestHeader 원본 케이스 보존 (Axios: "Content-Type", "Accept" 등 대문자).
+  // 전체 캡처 헤더를 그대로 스프레드하면 "Content-Type" + "content-type" 두 키가 공존해
+  // fetch()가 동일 헤더를 두 번 append → 중복 Content-Type → 서버 415.
+  // authFetch 패턴처럼 clean 헤더만 구성하고, 인증 헤더만 캡처에서 추출.
+  const headers: Record<string, string> = {
+    "content-type": "application/json",
+    "accept": "application/json, text/plain, */*",
+  };
+  for (const [k, v] of Object.entries(capturedHeaders)) {
+    const lower = k.toLowerCase();
+    if (lower === "x-xsrf-token" || lower === "x-ad-customer-id") {
+      headers[lower] = v;
+    }
+  }
+  return {
+    url: `${location.origin}/apis/dashboard/v1/adAccounts/${accountNo}/campaigns/search`,
+    method: "POST",
+    headers,
+    body,
+  };
+}
+
+// ─── 대시보드 구매완료 지표 (전환수까지 구매완료로 보강) ───
+//
+// 대시보드 campaigns/search 응답엔 노출/클릭/비용/구매완료매출(purchasedConversionsValueMicros)은
+// 있으나 "구매완료 전환수" 필드가 없다(전체전환 conversions만 있음). 사용자는 전체전환을 안 쓰므로,
+// 캠페인 ID를 플랫폼별로 분리해 구매완료 전환수를 2차 호출로 합산한다:
+//   SA → /apis/sa/api/stats purchaseCcnt,  DA(GFA) → gfa campaignStats purchaseConvCount
+// 매출/노출/클릭/비용은 대시보드 응답 그대로 사용.
+interface DashboardSearchResp {
+  results?: Array<{
+    campaign?: { campaignId?: string; adPlatform?: string };
+    metrics?: {
+      impressions?: number;
+      clicks?: number;
+      grossCostMicros?: number;
+    };
+  }>;
+}
+// 매출은 campaignStats.purchaseConvSalesKRW (원 단위)로 가져온다 — multi-account-data.ts와 동일.
+type GfaStatsResp = Record<
+  string,
+  { conversion?: { purchaseConvCount?: number; purchaseConvSalesKRW?: number } } | null
+>;
+interface SaPurchaseStatsResp {
+  data?: Array<{ purchaseCcnt?: number; purchaseConvAmtMicros?: number }>;
+}
+
+const SA_CONV_CHUNK = 80;
+const GFA_CONV_CHUNK = 100;
+
+// dashboard URL(/apis/dashboard/v1/adAccounts/{id}/) 또는 GFA URL(/apis/gfa/v1/adAccounts/{id}/)에서
+// adAccountNo 추출. SA stats(/apis/sa/api/stats)는 URL-aware 아닌 session 기반이라 여기서 안 잡음.
+function extractDashboardAccountNo(url: string): string | null {
+  const m = url.match(/\/apis\/(dashboard\/v1|gfa\/v1)\/adAccounts\/(\d+)\//);
+  return m ? m[2] : null;
+}
+
+async function fetchDashboardPurchaseMetrics(
+  cap: PeriodCompareCapture,
+  since: Date,
+  until: Date,
+  accountNo: string | null,
+  prefetchedResp?: DashboardSearchResp,
+  platformFilter: "SA,DA" | "DA" = "SA,DA",
+): Promise<NormalizedMetrics> {
+  const empty: NormalizedMetrics = {
+    impressions: 0, clicks: 0, ctr: null, cpc: null,
+    cost: 0, revenue: 0, conversions: 0, roas: null,
+  };
+  if (!accountNo) return empty;
+  // 현재 기간은 캡처 응답 재사용 가능 — 직전 기간은 항상 재호출.
+  const resp = prefetchedResp
+    ?? (await replayFetch(buildDashboardCampaignsRequest(accountNo, cap.headers, since, until, platformFilter)) as DashboardSearchResp);
+
+  let impressions = 0;
+  let clicks = 0;
+  let costMicros = 0;
+  const saIds: string[] = [];
+  const daIds: string[] = [];
+  for (const row of resp.results ?? []) {
+    const m = row.metrics ?? {};
+    impressions += Number(m.impressions ?? 0);
+    clicks += Number(m.clicks ?? 0);
+    costMicros += Number(m.grossCostMicros ?? 0);
+    const id = row.campaign?.campaignId;
+    if (!id) continue;
+    if (row.campaign?.adPlatform === "DA") daIds.push(id);
+    else saIds.push(id);
+  }
+
+  const sinceStr = formatDateYMD(since, "-");
+  const untilStr = formatDateYMD(until, "-");
+  // 매출·전환수는 각 플랫폼 2차 호출로 구매완료만 합산 — multi-account-data.ts와 동일 방식.
+  // GFA 전용 페이지(platformFilter=DA)는 SA 2차 호출 skip — SA 전환수가 합산되면 DA-only 수치가 오염됨.
+  const [saResult, daResult] = await Promise.all([
+    platformFilter === "DA"
+      ? Promise.resolve({ conv: 0, revenueMicros: 0 })
+      : sumSaPurchaseConversions(cap, saIds, sinceStr, untilStr),
+    sumGfaPurchaseConversions(cap, accountNo, daIds, sinceStr, untilStr),
+  ]);
+
+  const cost = costMicros / 1_000_000;
+  const revenue = saResult.revenueMicros / 1_000_000 + daResult.revenue;
+  const conversions = saResult.conv + daResult.conv;
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : null;
+  const cpc = clicks > 0 ? cost / clicks : null;
+  const roas = cost > 0 ? (revenue / cost) * 100 : null;
+  return { impressions, clicks, ctr, cpc, cost, revenue, conversions, roas };
+}
+
+// SA 캠페인 구매완료 전환수 + 매출 — /apis/sa/api/stats purchaseCcnt + purchaseConvAmtMicros 합산.
+async function sumSaPurchaseConversions(
+  cap: PeriodCompareCapture,
+  ids: string[],
+  since: string,
+  until: string,
+): Promise<{ conv: number; revenueMicros: number }> {
+  if (ids.length === 0) return { conv: 0, revenueMicros: 0 };
+  const url = `${location.origin}/apis/sa/api/stats`;
+  const chunks: Promise<SaPurchaseStatsResp>[] = [];
+  for (let i = 0; i < ids.length; i += SA_CONV_CHUNK) {
+    const body = JSON.stringify({
+      fields: ["purchaseCcnt", "purchaseConvAmtMicros"],
+      timeIncrement: "allDays",
+      timeRange: { since, until },
+      ids: ids.slice(i, i + SA_CONV_CHUNK).join(","),
+    });
+    chunks.push(
+      replayFetch({ url, method: "POST", headers: cap.headers, body })
+        .then((r) => r as SaPurchaseStatsResp)
+        .catch(() => ({}) as SaPurchaseStatsResp),
+    );
+  }
+  let conv = 0;
+  let revenueMicros = 0;
+  for (const r of await Promise.all(chunks)) {
+    for (const row of r.data ?? []) {
+      conv += Number(row.purchaseCcnt ?? 0);
+      revenueMicros += Number(row.purchaseConvAmtMicros ?? 0);
+    }
+  }
+  return { conv, revenueMicros };
+}
+
+// GFA(DA) 캠페인 구매완료 전환수 + 매출 — gfa campaignStats purchaseConvCount + purchaseConvSalesKRW 합산.
+// purchaseConvSalesKRW는 원 단위 (Micros 아님) — multi-account-data.ts와 동일.
+async function sumGfaPurchaseConversions(
+  cap: PeriodCompareCapture,
+  accountNo: string | null,
+  ids: string[],
+  since: string,
+  until: string,
+): Promise<{ conv: number; revenue: number }> {
+  if (!accountNo || ids.length === 0) return { conv: 0, revenue: 0 };
+  const chunks: Promise<GfaStatsResp>[] = [];
+  for (let i = 0; i < ids.length; i += GFA_CONV_CHUNK) {
+    const list = encodeURIComponent(ids.slice(i, i + GFA_CONV_CHUNK).join(","));
+    const url =
+      `${location.origin}/apis/gfa/v1/adAccounts/${accountNo}/stats/campaignStats` +
+      `?campaignNoList=${list}&startDate=${since}&endDate=${until}`;
+    chunks.push(
+      replayFetch({ url, method: "GET", headers: cap.headers, body: null })
+        .then((r) => r as GfaStatsResp)
+        .catch(() => ({}) as GfaStatsResp),
+    );
+  }
+  let conv = 0;
+  let revenue = 0;
+  for (const r of await Promise.all(chunks)) {
+    for (const v of Object.values(r)) {
+      conv += Number(v?.conversion?.purchaseConvCount ?? 0);
+      revenue += Number(v?.conversion?.purchaseConvSalesKRW ?? 0);
+    }
+  }
+  return { conv, revenue };
+}
+
 async function replayFetch(req: ShiftedRequest): Promise<unknown> {
   // 콘텐츠 스크립트는 페이지와 같은 origin(ads.naver.com)이라 쿠키 자동 첨부.
   // x-xsrf-token이 captured headers에 있으면 그대로 사용. 없으면 XSRF-TOKEN 쿠키에서 채움.
-  const headers = { ...req.headers };
+  // 헤더 키를 소문자로 정규화 — XHR 캡처는 setRequestHeader 원본 케이스 보존("Content-Type", "Accept" 등).
+  // 그대로 fetch()에 넘기면 Headers.append가 같은 헤더를 두 번 추가해 중복 Content-Type 등이 생길 수 있음.
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(req.headers)) {
+    headers[k.toLowerCase()] = v;
+  }
   if (!hasHeader(headers, "x-xsrf-token")) {
     const xsrf = readCookie("XSRF-TOKEN");
     if (xsrf) headers["x-xsrf-token"] = decodeURIComponent(xsrf);

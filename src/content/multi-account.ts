@@ -25,6 +25,10 @@ import {
   loadSnapshot,
   saveSnapshot,
   isSnapshotFresh,
+  clearAllSnapshots,
+  loadPlatformFilter,
+  savePlatformFilter,
+  type PlatformFilter,
 } from "@/lib/multi-account-storage";
 import {
   fetchAllDirectory,
@@ -47,6 +51,9 @@ let buttonEl: HTMLButtonElement | null = null;
 let lastButtonContainer: HTMLElement | null = null;
 let popoverEl: HTMLDivElement | null = null;
 let directoryFetchInFlight: Promise<void> | null = null;
+// 광고 유형 필터 — 검색광고(SA)/디스플레이(GFA) 표시 토글. popover 열 때 storage에서 로드.
+// collectAccount는 storage를 직접 읽으므로 이건 메뉴 체크 표시용 미러.
+let platformFilter: PlatformFilter = { sa: true, da: true };
 
 export function initMultiAccount() {
   // 동일 origin에서 두 번 초기화되면 listener 중복 등록 방지
@@ -275,6 +282,8 @@ function findOperationChip(): HTMLElement | null {
 
 async function openPopover() {
   closePopover();
+  // 광고 유형 필터 로드 (메뉴 체크 표시 동기화용). 실패해도 기본값(둘 다) 유지.
+  platformFilter = await loadPlatformFilter().catch(() => ({ sa: true, da: true }));
   popoverView = "list"; // 매번 list view로 시작
   const wrap = document.createElement("div");
   wrap.className = "dvads dvads-popover dvads-multi-popover";
@@ -1165,7 +1174,37 @@ function buildSearchInput(view: PopoverView): HTMLElement {
   return wrap;
 }
 
-// 내 계정(list view) ⋮ kebab 메뉴 — 크게 보기 / 새로고침 / 알림 2종 / 삭제. 알림·삭제는 선택 필요.
+// 광고 유형 필터 토글 — 메뉴 체크박스 클릭 시. 최소 하나는 켜져 있어야 하므로 마지막 하나는 못 끈다.
+// 변경 시 storage 저장 + 어제 데이터 캐시 무효화 + 전체 재수집(collectAccount가 새 필터로 fetch).
+// in-flight 가드 — 재수집(clearAll + refreshAllStale, 수십 계정)이 무거우므로 빠른 연속 클릭이
+// 동시 fetch storm을 일으키지 않게 한다.
+let platformToggleInFlight = false;
+async function togglePlatform(
+  key: "sa" | "da",
+  entries: MultiAccountDirectoryEntry[],
+): Promise<void> {
+  if (platformToggleInFlight) return;
+  const next: PlatformFilter = { ...platformFilter, [key]: !platformFilter[key] };
+  if (!next.sa && !next.da) return; // 마지막 하나는 끄기 무시 (체크 유지)
+  // platformFilter는 첫 await 이전에 동기 갱신 — populate()가 즉시 새 선택 상태를 그린다.
+  platformFilter = next;
+  platformToggleInFlight = true;
+  // 토글 즉시 전 행을 로딩 스켈레톤으로 덮는다. clearAllSnapshots가 수치를 무효화하므로
+  // 재수집이 끝날 때까지 옛 숫자를 그대로 두면 "안 바뀌었네?" 오해를 준다.
+  paintAllRowsSkeleton();
+  try {
+    await savePlatformFilter(next).catch((e) =>
+      console.warn("[content/multi-account] platform filter 저장 실패", e),
+    );
+    await clearAllSnapshots().catch(() => {});
+    // 새 필터로 재수집 — 캐시가 비었으니 force 없이도 전부 다시 받음.
+    await refreshAllStale(entries);
+  } finally {
+    platformToggleInFlight = false;
+  }
+}
+
+// 내 계정(list view) ⋮ kebab 메뉴 — 크게 보기 / 새로고침 / 광고 유형 필터 / 알림 2종 / 삭제.
 // 첫 항목은 fullscreen 상태 토글 — 평소 "크게 보기", 진입 후엔 "작게 보기"로 라벨 바뀜.
 function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[] {
   const hasSelection = selectedAccountNos.size > 0;
@@ -1175,6 +1214,20 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       onClick: () => setFullscreen(!popoverFullscreen),
     },
     { label: "새로고침", onClick: () => void refreshAllStale(entries) },
+    { separator: true },
+    // 광고 유형 필터 — 둘 중 하나만/둘 다 선택. 선택에 따라 어제 데이터가 SA/GFA/합산으로 바뀐다.
+    {
+      label: "검색광고",
+      checked: platformFilter.sa,
+      keepOpen: true,
+      onClick: () => togglePlatform("sa", entries),
+    },
+    {
+      label: "디스플레이광고",
+      checked: platformFilter.da,
+      keepOpen: true,
+      onClick: () => togglePlatform("da", entries),
+    },
     { separator: true },
     {
       label: "비즈머니 알림",
@@ -1549,6 +1602,36 @@ function paintRowLoading(adAccountNo: number) {
   row.classList.remove("dvads-multi-tr-empty");
 }
 
+// 데이터 셀(data-k)별 스켈레톤 바 폭. 컬럼 성격에 맞춰 살짝씩 다르게 줘 자연스러운 로딩 모양.
+const SKEL_CELL_WIDTHS: Record<string, number> = {
+  bizMoney: 60,
+  impressions: 46,
+  clicks: 38,
+  ctr: 40,
+  cpc: 48,
+  cost: 54,
+  revenue: 58,
+  conversions: 34,
+  roas: 44,
+};
+
+// 광고 유형 필터 토글 시 list view 전 행의 데이터 셀을 shimmer 스켈레톤으로 덮는다.
+// 이후 refreshRow -> paintRow가 행별 실제 수치로 setCell(textContent 대입) 하면서
+// 스켈레톤 span을 자동으로 밀어낸다. 토글은 list view kebab에서만 트리거되므로 search view는 무관.
+function paintAllRowsSkeleton(): void {
+  if (!popoverEl) return;
+  popoverEl
+    .querySelectorAll<HTMLTableRowElement>("tr.dvads-multi-tr")
+    .forEach((row) => {
+      row.classList.add("dvads-multi-tr-loading");
+      row.classList.remove("dvads-multi-tr-empty");
+      for (const [k, w] of Object.entries(SKEL_CELL_WIDTHS)) {
+        const td = row.querySelector<HTMLTableCellElement>(`td[data-k="${k}"]`);
+        if (td) td.innerHTML = `<span class="dvads-multi-skel" style="width:${w}px"></span>`;
+      }
+    });
+}
+
 // ─── 알림 임계값 다이얼로그 + 배지 갱신 ─────────────────────────────────
 //
 // 행/헤더 메뉴에서 "비즈머니 알림" / "브랜드검색 알림" 클릭 시 호출.
@@ -1852,6 +1935,10 @@ function paintRowError(adAccountNo: number, message: string) {
   const row = findRow(adAccountNo);
   if (!row) return;
   row.classList.remove("dvads-multi-tr-loading");
+  // 실패 행에 스켈레톤이 남아 영원히 shimmer 하지 않게 수치 자리를 "-"로 되돌린다.
+  row.querySelectorAll<HTMLTableCellElement>("td[data-k]").forEach((td) => {
+    if (td.querySelector(".dvads-multi-skel")) td.textContent = "-";
+  });
   const nameTd = row.querySelector<HTMLTableCellElement>(".dvads-multi-td-name");
   if (!nameTd) return;
   let errEl = nameTd.querySelector<HTMLSpanElement>(".dvads-multi-row-error");

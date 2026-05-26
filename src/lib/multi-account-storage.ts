@@ -138,3 +138,32 @@ export function isSnapshotFresh(snapshot: MultiAccountSnapshot | null): boolean 
   const age = Date.now() - new Date(snapshot.fetched_at).getTime();
   return age >= 0 && age < SNAPSHOT_TTL_MS;
 }
+
+// 모든 어제 데이터 스냅샷 일괄 삭제 — 플랫폼 필터 변경 시 새 필터로 재수집하도록 캐시 무효화.
+export async function clearAllSnapshots(): Promise<void> {
+  const all = await chrome.storage.local.get(null);
+  const keys = Object.keys(all).filter((k) => k.startsWith(SNAPSHOT_PREFIX));
+  if (keys.length > 0) await chrome.storage.local.remove(keys);
+}
+
+// ─── 광고 유형(플랫폼) 필터 ───
+// 검색광고(SA) / 디스플레이광고(DA=GFA) 표시 토글. 둘 다 켜지면 합산, 하나면 해당 유형만.
+// 어제 데이터 수집 시점에 collectAccount가 읽어 SA/GFA 파이프라인을 선택 실행한다.
+const PLATFORM_FILTER_KEY = "multi_account_platform_filter";
+
+export interface PlatformFilter {
+  sa: boolean;
+  da: boolean;
+}
+
+export async function loadPlatformFilter(): Promise<PlatformFilter> {
+  const r = await chrome.storage.local.get(PLATFORM_FILTER_KEY);
+  const raw = r[PLATFORM_FILTER_KEY] as Partial<PlatformFilter> | undefined;
+  // 기본값: 둘 다 켜짐(전체). 저장값이 명시적으로 false인 것만 끈다.
+  if (!raw || typeof raw !== "object") return { sa: true, da: true };
+  return { sa: raw.sa !== false, da: raw.da !== false };
+}
+
+export async function savePlatformFilter(filter: PlatformFilter): Promise<void> {
+  await chrome.storage.local.set({ [PLATFORM_FILTER_KEY]: filter });
+}

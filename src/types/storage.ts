@@ -130,7 +130,7 @@ export interface MultiAccountDirectoryEntry {
   adAccountNo: number;
   /** 서버측 광고계정명 */
   name: string;
-  /** SA(검색광고) | GFA(디스플레이) — F-MultiAccount는 SA만 사용 */
+  /** 계정 플랫폼 태그 SA(검색광고) | GFA(디스플레이). 어제 데이터는 옵션 플랫폼 필터에 따라 SA/GFA 합산 */
   adPlatformType: string;
   /** 사용자 권한 (MASTER / OPERATOR / VIEWER 등) */
   roleName: string;

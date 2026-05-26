@@ -1996,6 +1996,22 @@ td.dvads-period-delta-down {
   width: 110px;
   min-width: 110px;
 }
+
+/* 광고 유형 필터 토글 시 데이터 셀 로딩 스켈레톤 (paintAllRowsSkeleton).
+   period-compare의 .dvads-period-skel과 동일한 shimmer. 숫자 셀이 우측 정렬이라
+   바도 우측에 떠 수치 자리를 점유 -> 데이터 도착 시 레이아웃 점프 없음. width는 인라인. */
+.dvads-multi-skel {
+  display: inline-block;
+  height: 11px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ECEEF0 0%, #F5F6F7 50%, #ECEEF0 100%);
+  background-size: 200% 100%;
+  animation: dvads-skel-shimmer 1.2s ease-in-out infinite;
+  vertical-align: middle;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-skel { animation: none; }
+}
 .dvads-multi-table td.dvads-multi-td-name {
   padding: 12px;
 }

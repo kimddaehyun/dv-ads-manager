@@ -226,14 +226,19 @@ export function createDropdown<V extends string>(
 export interface ActionMenuItem {
   /** 항목 라벨. separator=true면 무시. */
   label?: string;
-  /** 클릭 핸들러. 생략 시 placeholder — 메뉴만 닫고 다른 동작 안 함. */
-  onClick?: () => void;
+  /** 클릭 핸들러. 생략 시 placeholder — 메뉴만 닫고 다른 동작 안 함.
+   *  keepOpen 항목이 Promise를 반환하면 완료 후 메뉴를 한 번 더 재렌더한다. */
+  onClick?: () => void | Promise<void>;
   /** 빨강 강조 (삭제 등 destructive 액션). */
   danger?: boolean;
   /** 비활성 — 클릭 불가, 흐릿하게. */
   disabled?: boolean;
   /** 항목 사이 구분선 (수평 hr). 다른 필드 모두 무시. */
   separator?: boolean;
+  /** 체크박스 항목 — true/false면 좌측에 체크 표시 렌더. undefined면 일반 항목. */
+  checked?: boolean;
+  /** 클릭해도 메뉴를 닫지 않음 (체크박스 토글용). 클릭 후 항목 재렌더로 체크 표시 즉시 갱신. */
+  keepOpen?: boolean;
 }
 
 export interface AttachActionMenuOptions {
@@ -292,12 +297,10 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
     opts.trigger.classList.remove("is-open");
   };
 
-  const openPanel = (): void => {
-    if (panel) return;
-    panel = document.createElement("div");
-    panel.className = "dvads dvads-dropdown-panel dvads-action-menu-panel";
-    if (opts.ariaLabel) panel.setAttribute("aria-label", opts.ariaLabel);
-
+  // 패널 항목 채우기 — 체크박스 토글(keepOpen) 시 재호출해 체크 표시를 갱신한다.
+  const populate = (): void => {
+    if (!panel) return;
+    panel.replaceChildren();
     const resolvedItems = typeof opts.items === "function" ? opts.items() : opts.items;
     for (const item of resolvedItems) {
       if (item.separator) {
@@ -315,16 +318,41 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
         btn.classList.add("is-disabled");
         btn.disabled = true;
       }
-      btn.textContent = item.label ?? "";
+      if (item.checked !== undefined) {
+        // 토글 항목 — 선택 시 주황 배경 강조(is-selected), 미선택 시 일반. 체크 표시 아이콘은 안 씀.
+        btn.classList.toggle("is-selected", item.checked);
+        btn.setAttribute("role", "menuitemcheckbox");
+        btn.setAttribute("aria-checked", item.checked ? "true" : "false");
+        btn.textContent = item.label ?? "";
+      } else {
+        btn.textContent = item.label ?? "";
+      }
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         if (item.disabled) return;
+        if (item.keepOpen) {
+          // 토글 — 메뉴 유지. 동기 상태 변경은 즉시 반영(즉각 피드백). 비동기 작업이면
+          // 완료 후 한 번 더 재렌더해 최종 상태를 보장(패널이 닫혀 있으면 populate가 no-op).
+          const r = item.onClick?.();
+          populate();
+          if (r instanceof Promise) void r.finally(() => populate());
+          return;
+        }
         // placeholder(onClick 미지정)도 메뉴는 닫는다.
         closePanel();
         item.onClick?.();
       });
       panel.appendChild(btn);
     }
+  };
+
+  const openPanel = (): void => {
+    if (panel) return;
+    panel = document.createElement("div");
+    panel.className = "dvads dvads-dropdown-panel dvads-action-menu-panel";
+    if (opts.ariaLabel) panel.setAttribute("aria-label", opts.ariaLabel);
+
+    populate();
 
     document.body.appendChild(panel);
     openPanels.add(panel);
