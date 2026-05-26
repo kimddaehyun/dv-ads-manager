@@ -11,3 +11,4 @@ dist-zip
 .claude.local.md
 *.tsbuildinfo
 .superpowers
+.playwright-mcp

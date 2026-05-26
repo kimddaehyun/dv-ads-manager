@@ -373,7 +373,9 @@ export async function collectAccount(
   customerId: number,
   yesterdayISODate: string,
 ): Promise<AccountSnapshotPayload> {
-  // 비즈머니 + 캠페인 동시 fetch
+  // 비즈머니 + 캠페인 동시 fetch.
+  // GFA 태그 계정도 masterCustomerId로 검색광고 캠페인/stats가 그대로 응답한다(naver의
+  // 검색광고-GFA 통합, 2026-05-26 정찰 확인). 그래서 플랫폼 구분 없이 동일 경로로 수집.
   const [bizMoney, campaignRows] = await Promise.all([
     fetchBizMoney(adAccountNo),
     fetchCampaignRows(customerId).catch((e) => {

@@ -715,8 +715,11 @@ async function renderSearchView(wrap: HTMLElement) {
     loadAddedList(),
   ]);
   const addedSet = new Set(addedList);
+  // 검색광고(SA) + 디스플레이광고(GFA) 모두 표시 — 네이버 "광고 계정" 탭과 동일한 전체 명단.
+  // GFA 태그 계정도 masterCustomerId로 검색광고 데이터가 그대로 나와 메인 리스트에서 정상 표시된다
+  // (naver 검색광고-GFA 통합, 2026-05-26 정찰). 삭제된 계정만 제외(운영중지 계정은 정상 표시).
   const all = (dir?.entries ?? [])
-    .filter((e) => e.adPlatformType === "SA" && !e.disabled && !e.deleted)
+    .filter((e) => !e.deleted)
     .sort((a, b) => (b.lastAccessTime ?? "").localeCompare(a.lastAccessTime ?? ""));
 
   const fragment = document.createDocumentFragment();
@@ -1311,7 +1314,8 @@ function pickAddedEntries(
   const out: MultiAccountDirectoryEntry[] = [];
   for (const no of addedList) {
     const e = byNo.get(no);
-    if (e && e.adPlatformType === "SA" && !e.disabled && !e.deleted) {
+    // 검색광고/디스플레이광고 모두 유지 — 삭제된 계정만 제외(검색 뷰 필터와 동일 기준).
+    if (e && !e.deleted) {
       out.push(e);
     }
   }
@@ -1501,6 +1505,8 @@ async function refreshRow(
     const cached = await loadSnapshot(entry.adAccountNo);
     if (cached && isSnapshotFresh(cached)) return;
   }
+  // GFA 태그 계정도 masterCustomerId로 검색광고 데이터가 나오므로 플랫폼 구분 없이 동일 경로.
+  // customerId가 없으면 디렉토리가 덜 받아진 실제 문제 신호 — 에러 표시.
   if (!entry.masterCustomerId) {
     paintRowError(entry.adAccountNo, "customerId 누락 — 새로고침 후 다시 시도해주세요");
     return;
