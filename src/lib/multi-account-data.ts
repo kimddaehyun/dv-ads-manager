@@ -108,7 +108,7 @@ interface TimeContractBlock {
  * 헤더 없으면 서버가 세션 활성 계정 기준으로 응답하므로 활성 계정 컨텍스트가 안 잡힌
  * 상태에서는 404 "광고주가 존재하지 않습니다" 반환.
  */
-async function authFetch<T>(
+export async function authFetch<T>(
   input: string,
   init?: RequestInit,
   customerId?: number,

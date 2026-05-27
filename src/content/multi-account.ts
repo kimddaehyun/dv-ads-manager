@@ -43,6 +43,7 @@ import type {
 } from "@/types/storage";
 import { attachActionMenu, type ActionMenuItem } from "./ui-dropdown";
 import { openInputDialog } from "./input-dialog";
+import { openSetupFlow } from "./setup";
 
 const ADACCT_URL_PATTERN = /\/manage\/ad-accounts\//;
 const BTN_MARK = "data-dvads-multi-btn";
@@ -1467,6 +1468,15 @@ function renderTableRow(
       ariaLabel: `${displayName} 작업 메뉴`,
       items: [
         { label: "바로가기", onClick: goTo },
+        {
+          label: "세팅안 생성",
+          onClick: () =>
+            void openSetupFlow({
+              adAccountNo: entry.adAccountNo,
+              masterCustomerId: entry.masterCustomerId,
+              name: meta?.displayName?.trim() || entry.name,
+            }),
+        },
         {
           label: "이름 수정",
           onClick: () => openRenameDialog(entry, () => replaceListRow(tr, entry)),

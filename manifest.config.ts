@@ -27,6 +27,9 @@ export default defineManifest({
     // F-AssetBulk V2 — 사용자가 선택한 상품 이미지를 광고 모달에 업로드하기 위해 binary를
     // background에서 fetch. 네이버 쇼핑 이미지 CDN.
     "https://shop-phinf.pstatic.net/*",
+    // F-Setup — 쇼핑검색 소재(상품)의 이미지를 세팅안 엑셀에 삽입하기 위해 background에서
+    // binary fetch. 쇼핑 상품 이미지 CDN (content script는 CORS로 차단됨).
+    "https://shopping-phinf.pstatic.net/*",
   ],
   options_ui: {
     page: "src/options/index.html",
