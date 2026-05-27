@@ -524,12 +524,14 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
         : {};
       // 인증 헤더는 아무 최근 캡처에서 빌려온다 (dashboard/gfa는 URL-aware라 활성 계정 세션으로 동작).
       const headerCap = cap ?? recentCaptures[recentCaptures.length - 1] ?? null;
+      // SA 구매완료 합산용 masterCustomerId 확보 (캡처 헤더 우선 → ad-account v2 조회). 계정당 1회 캐시.
+      const customerId = await resolveCustomerId(acct, headerCap?.headers ?? {});
       if (DEBUG_CAPTURE) {
-        console.log(`[dv-ads/PoP] scope=${scope.kind} acct=${acct} platform=${platformFilter} opts=`, scopeOpts);
+        console.log(`[dv-ads/PoP] scope=${scope.kind} acct=${acct} platform=${platformFilter} customerId=${customerId} opts=`, scopeOpts);
       }
       const [cur, prv] = await Promise.all([
-        fetchDashboardPurchaseMetrics(headerCap, dateInfo.start, dateInfo.end, acct, platformFilter, scopeOpts),
-        fetchDashboardPurchaseMetrics(headerCap, prev.start, prev.end, acct, platformFilter, scopeOpts),
+        fetchDashboardPurchaseMetrics(headerCap, dateInfo.start, dateInfo.end, acct, platformFilter, scopeOpts, customerId),
+        fetchDashboardPurchaseMetrics(headerCap, prev.start, prev.end, acct, platformFilter, scopeOpts, customerId),
       ]);
       currentMetrics = cur;
       prevMetrics = prv;
@@ -553,9 +555,10 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
       // cap.url 기반으로 dashboard/GFA 합산 (구 동작 유지).
       const accountNo = extractDashboardAccountNo(cap.url)!;
       const platformFilter: "SA,DA" | "DA" = /\/apis\/gfa\/v1\//.test(cap.url) ? "DA" : "SA,DA";
+      const customerId = await resolveCustomerId(accountNo, cap.headers ?? {});
       const [cur, prv] = await Promise.all([
-        fetchDashboardPurchaseMetrics(cap, dateInfo.start, dateInfo.end, accountNo, platformFilter, {}),
-        fetchDashboardPurchaseMetrics(cap, prev.start, prev.end, accountNo, platformFilter, {}),
+        fetchDashboardPurchaseMetrics(cap, dateInfo.start, dateInfo.end, accountNo, platformFilter, {}, customerId),
+        fetchDashboardPurchaseMetrics(cap, prev.start, prev.end, accountNo, platformFilter, {}, customerId),
       ]);
       currentMetrics = cur;
       prevMetrics = prv;
@@ -739,6 +742,54 @@ function extractDashboardAccountNo(url: string): string | null {
   return m ? m[2] : null;
 }
 
+// ─── masterCustomerId 확보 (SA stats cross-account 헤더용) ───
+//
+// `/apis/sa/api/stats`는 URL-aware가 아니라 `x-ad-customer-id`(masterCustomerId) 헤더로
+// 대상 계정을 지정한다. 헤더가 없으면 서버가 세션 활성 계정 기준으로 응답하는데, dashboard를
+// 보고 있어도 SA 컨텍스트가 안 잡힌 계정에서는 200 + 빈 data(silent-empty)가 되어 SA 구매완료가
+// 0으로 빠진다 (2026-05-27 라이브 확정 — 헤더 추가 시 reports ground truth와 매출 정확히 일치).
+// 광고관리자 URL의 accountNo(예: 2116317)와 masterCustomerId(예: 1125327)는 별개 ID space.
+//
+// 우선순위: 페이지 캡처 헤더의 x-ad-customer-id(페이지 axios가 이미 실어 보냄) → ad-account v2 조회.
+// 계정당 1회 캐시 (cur/prev 2회 호출 + 팝오버 재오픈에서 중복 fetch 방지).
+const customerIdCache = new Map<string, string | null>();
+
+function customerIdFromHeaders(headers: Record<string, string>): string | null {
+  for (const [k, v] of Object.entries(headers)) {
+    if (k.toLowerCase() === "x-ad-customer-id" && v) return v;
+  }
+  return null;
+}
+
+async function resolveCustomerId(
+  accountNo: string,
+  capturedHeaders: Record<string, string>,
+): Promise<string | null> {
+  const fromCap = customerIdFromHeaders(capturedHeaders);
+  if (fromCap) return fromCap;
+  if (customerIdCache.has(accountNo)) return customerIdCache.get(accountNo) ?? null;
+  let out: string | null = null;
+  try {
+    const headers: Record<string, string> = { accept: "application/json, text/plain, */*" };
+    const xsrf = readCookie("XSRF-TOKEN");
+    if (xsrf) headers["x-xsrf-token"] = decodeURIComponent(xsrf);
+    const resp = await fetch(`${location.origin}/apis/ad-account/v2/adAccounts/${accountNo}`, {
+      method: "GET",
+      headers,
+      credentials: "include",
+    });
+    if (resp.ok) {
+      const j = (await resp.json()) as { adAccount?: { masterCustomerId?: number } };
+      const id = j?.adAccount?.masterCustomerId;
+      if (id != null) out = String(id);
+    }
+  } catch {
+    /* 조회 실패 — null로 두면 SA 합산은 캡처 헤더(있으면)/세션 기준으로 graceful degrade */
+  }
+  customerIdCache.set(accountNo, out);
+  return out;
+}
+
 // ─── 페이지 스코프 판정 (location.pathname 기반) ───
 //
 // 어떤 capture가 잡혔는지(cap.url)가 아니라 *현재 보고 있는 페이지*로 무엇을 합산할지 결정한다.
@@ -786,13 +837,20 @@ async function fetchDashboardPurchaseMetrics(
   accountNo: string | null,
   platformFilter: "SA,DA" | "DA" = "SA,DA",
   scope: DashboardScopeOpts = {},
+  customerId: string | null = null,
 ): Promise<NormalizedMetrics> {
   const empty: NormalizedMetrics = {
     impressions: 0, clicks: 0, ctr: null, cpc: null,
     cost: 0, revenue: 0, conversions: 0, roas: null,
   };
   if (!accountNo) return empty;
-  const headers = cap?.headers ?? {};
+  // SA stats(`/apis/sa/api/stats`)는 x-ad-customer-id(masterCustomerId)가 없으면 silent-empty.
+  // 캡처 헤더에 이미 있으면 그대로, 없으면 resolve된 customerId를 보강해 모든 하위 호출(campaigns/search,
+  // SA stats)에 함께 싣는다. GFA campaignStats는 URL-aware라 이 헤더와 무관.
+  const headers: Record<string, string> = { ...(cap?.headers ?? {}) };
+  if (customerId && !customerIdFromHeaders(headers)) {
+    headers["x-ad-customer-id"] = customerId;
+  }
   // 페이지의 캡처 body(pageSize 10·필터 없음·다른 날짜)는 신뢰 못 하므로 항상 통제된 body로 재호출.
   const resp = await replayFetch(
     buildDashboardCampaignsRequest(accountNo, headers, since, until, platformFilter),
