@@ -898,7 +898,7 @@ function searchRowActionItems(
   const isAdded = addedSet.has(entry.adAccountNo);
   const goTo = () => {
     // anchor click 패턴 — window.open 차단 회피, 사용자 제스처 직결로 새 탭 안정적 오픈.
-    const url = `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`;
+    const url = `/manage/ad-accounts/${entry.adAccountNo}/dashboard`;
     const a = document.createElement("a");
     a.href = url;
     a.target = "_blank";
@@ -1417,7 +1417,7 @@ function renderTableRow(
   // anchor click 패턴 — window.open은 일부 콘텐츠 스크립트 컨텍스트에서 차단될 수 있어,
   // 임시 <a target="_blank">.click()이 가장 신뢰성 높음 (사용자 제스처 직결).
   const goTo = () => {
-    const url = `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns-by/WEB_SITE`;
+    const url = `/manage/ad-accounts/${entry.adAccountNo}/dashboard`;
     const a = document.createElement("a");
     a.href = url;
     a.target = "_blank";
