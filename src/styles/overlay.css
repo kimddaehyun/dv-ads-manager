@@ -1,0 +1,3145 @@
+/**
+ * 콘텐츠 오버레이 CSS — ads.naver.com 호스트 페이지 inline 주입용.
+ *
+ * 모든 클래스 `dvads-` prefix로 격리. Tailwind 미사용 — 콘텐츠 스크립트는
+ * React/JSX 외부의 native DOM 조작이라 utility 클래스 컴파일 흐름 밖.
+ *
+ * 토큰 값은 DESIGN.md (src/styles/theme.css)와 일치시켜 유지.
+ * 한 쪽 변경 시 양쪽 동시 갱신.
+ *
+ * 디자인 톤: 자매 프로젝트(디브이 SEO 매니저) 패널과 통일된 영역 정체성 패턴
+ * (1.5px 주황 보더 + 10px radius). 호스트 광고 테이블 안에서 "이 영역은 우리
+ * 확장이 그렸다"는 시각 신호.
+ *
+ * 사용처: src/demo/ (시안 검증), src/content/ (Phase 3에서 inline import).
+ */
+
+/* ─── 격리 boundary ─── */
+.dvads {
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-feature-settings: "tnum";
+  color: #171717;
+  box-sizing: border-box;
+  line-height: 1.5;
+}
+.dvads *, .dvads *::before, .dvads *::after { box-sizing: border-box; }
+
+/* 페이지 자체 확정 모달이 떠있는 동안 우리 팝오버/토스트를 잠깐 뒤로 보낸다 —
+   사용자가 페이지 모달의 닫기 버튼에 직접 접근할 수 있도록 길을 비워주는 용도.
+   visibility로 처리해 레이아웃·rAF 위치 추적은 그대로 유지. */
+.dvads-recede {
+  visibility: hidden !important;
+}
+
+/* ─── 페이지 banner (페이지 상단 고정 안내) ─── */
+.dvads-page-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px;
+  font-size: 12px;
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+  border-bottom: 1px solid rgba(230, 120, 59, 0.4);
+  z-index: 2147483647;
+}
+.dvads-page-banner.warn {
+  background: rgba(217, 119, 6, 0.10);
+  color: #d97706;
+  border-bottom-color: rgba(217, 119, 6, 0.4);
+}
+.dvads-page-banner.lock {
+  background: #F3F4F6;
+  color: #666666;
+  border-bottom-color: #ECEEF0;
+}
+.dvads-page-banner .left {
+  display: inline-flex; align-items: center; gap: 8px;
+}
+.dvads-page-banner img {
+  width: 16px; height: 16px; border-radius: 3px;
+}
+.dvads-page-banner .right {
+  font-size: 11px;
+  opacity: 0.8;
+}
+.dvads-page-banner a {
+  color: inherit;
+  text-decoration: underline;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* ─── F001 — 순위 배지 (키워드 셀 우측 끝 absolute) ─── */
+.dvads-rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 22px;
+  min-width: 42px; /* "10위+"·"현재 N위" 등 텍스트 길이 차이 흡수 — 모든 행 폭 통일 */
+  padding: 0 8px;
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease;
+  user-select: none;
+  font-feature-settings: "tnum";
+}
+/* 키워드 셀(<td>)에 직접 absolute 마운트해 우측 끝 정렬.
+   "적은검색량" 같은 가변 태그 줄바꿈에 영향 받지 않게. */
+.dvads-rank-badge.cell-anchor {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 1;
+}
+.dvads-rank-badge:hover {
+  background: rgba(230, 120, 59, 0.18);
+}
+.dvads-rank-badge.warn {
+  background: rgba(217, 119, 6, 0.10);
+  color: #d97706;
+}
+/* 10위+ (시장가 데이터 있지만 사용자 입찰가가 1~10위 진입 못한 상태).
+   시각 강조 낮춤 — DV 주황 면적 ~3% 정책에 따라 회색 톤. 클릭 동작은 유지. */
+.dvads-rank-badge.muted {
+  background: #F3F4F6;
+  color: #6B7280;
+  /* "10위+" 4글자가 min-width 42px 안에 들어가도록 좌우 padding 좁힘.
+     center 정렬이라 다른 배지와 시각적 위치 차이 없음. 폰트 12px 대응으로 0 1px까지 좁힘. */
+  padding: 0 1px;
+}
+.dvads-rank-badge.muted:hover {
+  background: #E5E7EB;
+}
+/* 에러 상태 — 정사각 chip(22x22)에 ⚠ 아이콘만 표시.
+   풀 문구는 title(tooltip)로 전달. 좁은 키워드 셀에서 줄바꿈 방지. */
+.dvads-rank-badge.warn.icon {
+  padding: 0;
+  width: 22px;
+  justify-content: center;
+  cursor: help;
+  font-size: 13px;
+}
+.dvads-rank-badge.warn.icon:hover {
+  background: rgba(217, 119, 6, 0.18);
+}
+
+/* custom tooltip — hover 시 띄움 (native title은 호스트 페이지에 가려질 수 있어 대체).
+   placement = "top"|"bottom" — anchor 위/아래에 표시 + 캐럿이 anchor를 가리킴.
+   JS가 caret 가로 위치는 `--dvads-tooltip-caret-x`로 계산 (viewport clamp 시에도 anchor 중앙 향함). */
+.dvads-tooltip {
+  position: fixed;
+  z-index: 2147483647;
+  display: none;
+  max-width: 320px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: #1f2937;
+  color: #ffffff;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  word-break: keep-all;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+}
+/* 캐럿 — 5px 정삼각. anchor 중앙으로 정렬되며 viewport clamp 시에도 anchor 향함. */
+.dvads-tooltip::after {
+  content: "";
+  position: absolute;
+  left: var(--dvads-tooltip-caret-x, 50%);
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+}
+.dvads-tooltip[data-placement="top"]::after {
+  top: 100%;
+  border-top: 5px solid #1f2937;
+}
+.dvads-tooltip[data-placement="bottom"]::after {
+  bottom: 100%;
+  border-bottom: 5px solid #1f2937;
+}
+.dvads-rank-badge.lock {
+  background: #F3F4F6;
+  color: #808080;
+  cursor: default;
+}
+/* 로딩 — 스피너만 표시. 텍스트 없이 정사각 chip(22x22). */
+.dvads-rank-badge.loading {
+  background: #F3F4F6;
+  color: #666666;
+  padding: 0;
+  width: 22px;
+  justify-content: center;
+  cursor: default;
+}
+.dvads-rank-badge.loading:hover {
+  background: #F3F4F6;
+}
+.dvads-rank-badge.loading::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid #808080;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+@keyframes dvads-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 키워드 셀 spacer (호스트 키워드명과 배지 사이 flex 분리) */
+.dvads-cell-spacer {
+  flex: 1 1 auto;
+}
+
+/* ─── F001 — 펼침 행 (1~10위 미니 테이블) ─── */
+.dvads-expand-row td {
+  padding: 0 !important;
+  background: #fafafa !important;
+}
+.dvads-expand-panel {
+  margin: 10px 12px 14px;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 12px 18px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+}
+.dvads-expand-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.dvads-expand-hdr .meta {
+  font-size: 11px;
+  color: #666666;
+}
+.dvads-expand-hdr .refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: #666666;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.dvads-expand-hdr .refresh-btn:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+
+/* 통합 테이블 — 순위 | 입찰가 | 노출수 | 클릭수 | 평균CPC | 총비용 × 10행.
+   호스트 광고관리자 표와 시각적으로 잘 어우러지도록 컴팩트(padding 5px) +
+   매 행 옅은 구분선 + hover 옅은 회색. 현재 행 강조는 배경 tint만으로
+   부드럽게(텍스트는 일반 ink + weight 600). */
+.dvads-bid-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #ECEEF0;     /* 표 외곽 테두리 */
+  /* 폰트는 헤더·셀 통일: 한글 라벨이 있는 헤더와 숫자 셀이 같은 톤으로 흐르도록
+     모두 Pretendard. 숫자 정렬은 tabular-nums(font-feature-settings)로 해결. */
+  font-family: "Pretendard Variable", Pretendard, system-ui, sans-serif;
+  font-feature-settings: "tnum";
+}
+/* 입찰가(2번째) 컬럼 오른쪽 세로선 — 입찰가 그룹과 실적 예측 그룹의 시각적 분리 */
+.dvads-bid-table th:nth-child(2),
+.dvads-bid-table td:nth-child(2) {
+  border-right: 1px solid #ECEEF0;
+}
+.dvads-bid-table th, .dvads-bid-table td {
+  padding: 7px 16px;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: right;
+  white-space: nowrap;          /* 헤더 한글 라벨 줄바꿈 방지 */
+}
+.dvads-bid-table thead tr {
+  background: #fafafa;          /* 호스트 표 톤의 옅은 헤더 배경 */
+}
+.dvads-bid-table th {
+  color: #666666;
+  font-weight: 500;
+  font-size: 14px;
+  border-bottom: 1px solid #ECEEF0;
+  padding-bottom: 6px;
+}
+/* 입찰가 컬럼(2번째)은 핵심 지표라 항상 강조 — weight 600 */
+.dvads-bid-table td:nth-child(2) {
+  font-weight: 600;
+}
+.dvads-bid-table td:first-child,
+.dvads-bid-table th:first-child {
+  text-align: left;
+  color: #808080;
+  width: 48px;
+}
+.dvads-bid-table td {
+  color: #171717;
+}
+/* 매 행 옅은 구분선 — 호스트 광고관리자 표 패턴 */
+.dvads-bid-table tbody tr {
+  border-bottom: 1px solid #f3f4f6;
+}
+.dvads-bid-table tbody tr:last-child {
+  border-bottom: 0;
+}
+/* 행 hover (현재 행은 별도 처리 — 아래) */
+.dvads-bid-table tbody tr:hover td {
+  background: #fafafa;
+}
+/* 클릭 가능한 행 (입찰가 변경 가능) — 현재 행은 비활성이라 이 클래스 없음 */
+.dvads-bid-table tbody tr.dvads-clickable {
+  cursor: pointer;
+}
+.dvads-bid-table tbody tr.dvads-clickable:hover td {
+  background: #f5f5f5;
+}
+/* 현재 추정 순위 행 강조 — 배경 tint만(weight는 안 건드림 → 입찰가 컬럼만 600). */
+.dvads-bid-table tr.current td {
+  background: rgba(230, 120, 59, 0.10);
+  color: #171717;
+}
+.dvads-bid-table tr.current td:first-child {
+  color: #666666;
+}
+.dvads-bid-table tbody tr.current:hover td {
+  background: rgba(230, 120, 59, 0.14);
+}
+
+/* ─── F001 — 면책 푸터 ─── */
+.dvads-disclaimer {
+  margin-top: 6px;
+  padding-top: 0;
+  font-size: 12px;
+  color: #a3a3a3;
+  line-height: 1.5;
+  font-family: "Pretendard Variable", system-ui, sans-serif;
+  white-space: pre-line;          /* "\n" 줄바꿈 인식 */
+  text-align: right;
+}
+
+/* ─── F001 — 부유 popover (가상화 테이블에 행 삽입 X, 배지 아래 anchored) ─── */
+.dvads-popover {
+  /* Popover는 floating이라 그림자(2-layer)만으로 호스트 페이지와 분리.
+     6컬럼 한글 헤더(예상 노출수 / 예상 클릭수 / 예상 입찰가 / 예상 광고비) 줄바꿈
+     없이 한 줄로 수용되도록 width 620px. */
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 14px 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  width: 620px;
+  max-width: calc(100vw - 32px);
+  box-sizing: border-box;
+  /* opacity 등장 페이드 — popover 자체 transform은 위치 계산용이라 손대지 않음.
+     overflow:hidden은 height morph 동안 내부 표가 잠깐 잘리는 경우 대비.
+     position:relative는 device 토글 시 옛 wrap을 absolute로 띄울 때 base. */
+  animation: dvads-popover-in 140ms cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  position: relative;
+}
+.dvads-popover.dvads-popover-exit {
+  animation: dvads-popover-out 120ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  pointer-events: none;
+}
+@keyframes dvads-popover-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes dvads-popover-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+/* 첫 mount 시 wrap 안쪽 컨텐츠가 살짝 떠오르며 등장. wrap에 적용하므로 popover의
+   reposition rAF가 매 프레임 덮어쓰는 외부 transform과 충돌하지 않음. */
+.dvads-popover-content-enter {
+  animation: dvads-popover-content-in 220ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes dvads-popover-content-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* device 토글 시 crossfade — 옛 wrap은 absolute로 띄워 자리를 비워주고 fade out,
+   새 wrap은 normal flow로 들어가 popover 높이를 결정하고 살짝 delay 후 fade in.
+   inset 14/20은 .dvads-popover padding 값과 동기화 필요. */
+.dvads-popover-content-swap-out {
+  position: absolute;
+  top: 14px;
+  left: 20px;
+  right: 20px;
+  pointer-events: none;
+  animation: dvads-popover-content-swap-out 160ms ease-out forwards;
+}
+.dvads-popover-content-swap-in {
+  animation: dvads-popover-content-swap-in 180ms ease-out 60ms backwards;
+}
+@keyframes dvads-popover-content-swap-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+@keyframes dvads-popover-content-swap-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.dvads-popover-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.dvads-popover-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: #a3a3a3;
+  font-size: 18px;
+  font-family: inherit;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-popover-close:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-popover-hdr .kw {
+  font-size: 16px;
+  font-weight: 600;
+  color: #171717;
+  /* 키워드 mid-character 줄바꿈 방지 — 한글 단어 분해 차단 */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  max-width: 100%;
+  /* <a>로 변경됨 — 호스트 페이지 a 스타일 무력화 + 호버 시 underline */
+  text-decoration: none;
+  cursor: pointer;
+}
+.dvads-popover-hdr a.kw:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: #E6783B;
+  text-decoration-thickness: 1.5px;
+}
+
+/* ─── F002 — 쇼핑 그룹 토글 버튼 ─── */
+.dvads-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 8px;
+  background: #F3F4F6;
+  color: #171717;
+  border: 0;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background 120ms ease;
+}
+.dvads-toggle-btn:hover { background: #E5E7EB; }
+.dvads-toggle-btn.expanded {
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+}
+.dvads-toggle-btn .chev { font-size: 10px; }
+
+.dvads-shop-panel {
+  margin: 10px 12px 14px;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 12px 18px;
+  box-shadow: 0 1px 6px rgba(0, 0, 0, 0.06);
+}
+.dvads-shop-hdr {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 11px;
+  color: #666666;
+}
+.dvads-shop-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.dvads-shop-table th, .dvads-shop-table td {
+  padding: 6px 8px;
+  text-align: right;
+  font-feature-settings: "tnum";
+}
+.dvads-shop-table th { color: #666666; font-weight: 500; font-size: 10px; }
+.dvads-shop-table td { color: #171717; }
+.dvads-shop-table th:first-child,
+.dvads-shop-table td:first-child {
+  text-align: left;
+  font-family: "Pretendard Variable", system-ui, sans-serif;
+}
+.dvads-shop-table tr.miss td { color: #a3a3a3; }
+
+/* ─── 공통 버튼 (다이얼로그/토스트용 — overlay 컨텍스트 전용) ─── */
+.dvads-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 120ms ease, filter 120ms ease, opacity 120ms ease;
+  user-select: none;
+  white-space: nowrap;
+}
+.dvads-btn:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.dvads-btn-primary {
+  background: #E6783B;
+  color: #ffffff;
+}
+.dvads-btn-primary:hover:enabled {
+  filter: brightness(0.95);
+}
+.dvads-btn-secondary {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-btn-secondary:hover:enabled {
+  background: #E5E7EB;
+}
+.dvads-btn-loading::before {
+  content: "";
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+
+/* ─── 입찰가 변경 확인 다이얼로그 ─── */
+.dvads-confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.dvads-confirm-card {
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 20px 22px 18px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  width: min(420px, calc(100vw - 32px));
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-feature-settings: "tnum";
+  color: #171717;
+  line-height: 1.5;
+}
+.dvads-confirm-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.dvads-confirm-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #171717;
+}
+/* popover close와 동일 톤 — 은은한 회색 ×, 호버 시만 진해짐 */
+.dvads-confirm-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: #a3a3a3;
+  font-size: 18px;
+  font-family: inherit;
+  line-height: 1;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-confirm-close:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+/* 변경 적용 중에는 닫기/취소 클릭이 무시되므로 시각적으로도 비활성 표시 */
+.dvads-confirm-busy .dvads-confirm-close {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.dvads-confirm-busy .dvads-confirm-close:hover {
+  background: transparent;
+  color: #a3a3a3;
+}
+.dvads-confirm-body {
+  font-size: 14px;
+  color: #333333;
+  margin-bottom: 18px;
+  /* 한글은 어절 단위로만 줄바꿈 — 단어 중간에서 깨지지 않도록 */
+  word-break: keep-all;
+}
+.dvads-confirm-line {
+  /* 2줄 본문 — 라인1 "<키워드> 입찰가를", 라인2 "<현재>원 → <목표>원(±차액)..." */
+}
+.dvads-confirm-line + .dvads-confirm-line {
+  margin-top: 2px;
+}
+.dvads-confirm-body b {
+  font-weight: 600;
+  color: #171717;
+  /* 키워드와 "1,700원 → 2,990원" 화살표는 한 덩어리로 유지 — 절대 중간 분절 X */
+  white-space: nowrap;
+}
+/* 차액 부호 — 한국 컨벤션(주식 시세): 인상=빨강 / 인하=파랑 */
+.dvads-confirm-delta-up {
+  color: #DC2626;
+  font-weight: 600;
+  margin-left: 2px;
+}
+.dvads-confirm-delta-down {
+  color: #0072f5;
+  font-weight: 600;
+  margin-left: 2px;
+}
+.dvads-confirm-arrow {
+  color: #E6783B;
+}
+.dvads-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ─── F-PoP — 전후 비교 (Period-over-Period) ─── */
+
+/* 날짜 picker 좌측 mount 버튼. DV 주황은 면적 ≤3% 규칙으로 텍스트만 주황,
+   배경은 옅은 회색(secondary 톤). 페이지의 primary 액션들과 경쟁 안 함. */
+.dvads-period-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: #ffffff;
+  color: #525252;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  margin-right: 8px;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.dvads-period-btn svg {
+  display: block;
+}
+.dvads-period-btn:hover {
+  background: #fafafa;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+
+/* popover는 F001과 같은 .dvads-popover 베이스 사용. PoP 전용 너비·내부 폭 조정.
+   큰 숫자(수억 원대 광고비 등)도 한 줄에 들어가도록 520px. */
+.dvads-period-popover {
+  width: 520px;
+  max-width: calc(100vw - 32px);
+}
+
+.dvads-period-range {
+  font-size: 12px;
+  color: #666666;
+  margin-bottom: 10px;
+  font-feature-settings: "tnum";
+}
+.dvads-period-days {
+  color: #999999;
+}
+
+/* PoP 테이블 — 지표 | 이전 기간 | 선택 기간 | 증감 (4컬럼) */
+.dvads-period-table th,
+.dvads-period-table td {
+  padding: 7px 12px;
+}
+/* 입찰가 표의 2번째 컬럼 강조(font-weight:600) override —
+   비교 표에서는 2번째 컬럼이 "이전 기간"이라 특별 강조할 이유 없음.
+   선택 기간(3번째) 컬럼과 동일한 default weight으로 통일.
+   specificity를 .dvads-bid-table td:nth-child(2)(0,2,1)보다 높이기 위해
+   .dvads-bid-table.dvads-period-table td:nth-child(2)(0,3,1) 형태로. */
+.dvads-bid-table.dvads-period-table td:nth-child(2) {
+  font-weight: 400;
+}
+.dvads-period-table th:first-child,
+.dvads-period-table td:first-child {
+  text-align: left;
+  color: #666666;
+  width: auto;
+  font-weight: 500;
+}
+.dvads-period-table tbody td:first-child {
+  color: #171717;
+  font-weight: 500;
+}
+/* 직전·현재 컬럼 사이 미세 구분선 — 입찰가 표의 2번째 컬럼 right border 패턴 재사용 X.
+   대신 변화 컬럼 왼쪽에 1px 구분선 두기 — 비교 결과가 분리되어 보이도록. */
+.dvads-period-table th:nth-child(4),
+.dvads-period-table td:nth-child(4) {
+  border-left: 1px solid #ECEEF0;
+  font-feature-settings: "tnum";
+}
+
+/* 증감 색 — 한국 주식 컨벤션: 증가=빨강 / 감소=파랑.
+   확인 다이얼로그(`.dvads-confirm-delta-up/down`)와 동일 톤 유지.
+   `.dvads-bid-table td { color: #171717 }`보다 specificity 높이기 위해
+   `td.클래스` 형태로 작성. */
+.dvads-bid-table td.dvads-period-delta-up,
+td.dvads-period-delta-up {
+  color: #DC2626;
+  font-weight: 600;
+}
+.dvads-bid-table td.dvads-period-delta-down,
+td.dvads-period-delta-down {
+  color: #0072f5;
+  font-weight: 600;
+}
+
+.dvads-period-empty,
+.dvads-period-error {
+  padding: 14px 4px;
+  font-size: 13px;
+  color: #666666;
+  text-align: center;
+  word-break: keep-all;
+}
+.dvads-period-error {
+  color: #DC2626;
+}
+
+/* 로딩 스켈레톤 — 데이터 셀에 잠깐 떠 있는 shimmer 바.
+   `.dvads-bid-table td`의 text-align:right (값 컬럼)에 따라 우측 정렬되어
+   숫자 자리 그대로 점유하므로 데이터가 들어와도 레이아웃 점프 없음. */
+.dvads-period-skel {
+  display: inline-block;
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    #ECEEF0 0%,
+    #F5F6F7 50%,
+    #ECEEF0 100%
+  );
+  background-size: 200% 100%;
+  animation: dvads-skel-shimmer 1.2s ease-in-out infinite;
+  vertical-align: middle;
+}
+@keyframes dvads-skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ─── 토스트 (우하단 stack, 자동 닫힘 + Undo) ─── */
+.dvads-toast-root {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+.dvads-toast {
+  pointer-events: auto;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.10), 0 0 0 1px rgba(0, 0, 0, 0.05);
+  min-width: 280px;
+  /* 키워드 길이에 따라 가로로 자연 확장. viewport 좁아도 잘리지 않도록 보호. */
+  max-width: min(720px, calc(100vw - 40px));
+  width: max-content;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-feature-settings: "tnum";
+  color: #171717;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.dvads-toast.dvads-toast-in {
+  opacity: 1;
+  transform: translateY(0);
+}
+.dvads-toast.dvads-toast-out {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.dvads-toast-body {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.dvads-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  color: #ffffff;
+}
+.dvads-toast-success .dvads-toast-icon {
+  background: #16a34a;
+}
+.dvads-toast-error .dvads-toast-icon {
+  background: #DC2626;
+}
+.dvads-toast-msg {
+  flex: 1 1 auto;
+  word-break: keep-all;
+}
+.dvads-toast-keyword {
+  font-weight: 600;
+}
+.dvads-toast-undo {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #E6783B;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: background 120ms ease;
+}
+.dvads-toast-undo:hover {
+  background: rgba(230, 120, 59, 0.10);
+}
+.dvads-toast-close {
+  flex-shrink: 0;
+  background: transparent;
+  border: 0;
+  color: #a3a3a3;
+  font-size: 16px;
+  line-height: 1;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-toast-close:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-toast-bar {
+  height: 2px;
+  background: #ECEEF0;
+  overflow: hidden;
+}
+.dvads-toast-bar-fill {
+  height: 100%;
+  background: #a3a3a3;
+  transform-origin: left center;
+  animation: dvads-toast-bar linear forwards;
+}
+@keyframes dvads-toast-bar {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+/* ─── F-AssetBulk — 드롭다운 주입 항목 + 일괄 등록 팝업 ─── */
+
+/* 페이지 메뉴의 .ad-cms-dropdown-menu-item 클래스를 그대로 쓰되, 우리 항목임을
+   메뉴 마지막에서 살짝 분리되어 보이도록 상단 보더 + 주황 텍스트. */
+.dvads-asset-bulk-menu-item {
+  border-top: 1px solid #ECEEF0;
+  color: #E6783B !important;
+  font-weight: 500;
+}
+.dvads-asset-bulk-menu-item:hover {
+  background: rgba(230, 120, 59, 0.10) !important;
+}
+
+/* 첫 mount 시 진입 애니메이션 — backdrop fade-in + card scale·translate.
+   기존 popover와 동일한 easing(cubic-bezier(0.16,1,0.3,1))으로 일관성. */
+.dvads-asset-bulk-backdrop {
+  animation: dvads-asset-bulk-backdrop-in 180ms ease-out;
+}
+@keyframes dvads-asset-bulk-backdrop-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* 자동 일괄 등록 진행 중 화면 잠금 오버레이 — 사용자 인터랙션 차단 + 진행 안내.
+   manualCrop 이미지 처리 시에는 잠시 hide (사용자가 페이지 모달과 상호작용해야 함). */
+.dvads-auto-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  animation: dvads-asset-bulk-backdrop-in 180ms ease-out;
+}
+.dvads-auto-overlay-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 28px 40px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+/* 32px 링 스피너 — DV 주황 1/4 호 + 옅은 회색 3/4 trace, 0.8s 등속 회전. */
+.dvads-auto-overlay-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2.5px solid #ECEEF0;
+  border-top-color: #E6783B;
+  border-radius: 50%;
+  animation: dvads-spin 0.8s linear infinite;
+}
+.dvads-auto-overlay-text {
+  font-size: 13px;
+  font-weight: 500;
+  color: #525252;
+  letter-spacing: 0.01em;
+}
+
+/* 팝업 카드 — confirm-dialog 베이스(.dvads-confirm-card) 위에 폭·내부 스크롤 추가.
+   참고 디자인(네이버 ad-cms 모달) 크기에 맞춰 폭·여백 확대. */
+.dvads-asset-bulk-card {
+  width: min(640px, calc(100vw - 32px));
+  padding: 28px 28px 24px;
+  max-height: calc(100vh - 64px);
+  display: flex;
+  flex-direction: column;
+  animation: dvads-asset-bulk-card-in 240ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes dvads-asset-bulk-card-in {
+  from { opacity: 0; transform: scale(0.96) translateY(8px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+/* 헤더: 제목 가운데 정렬, 닫기 버튼은 우상단 absolute. 본문과의 간격 32px. */
+.dvads-asset-bulk-card .dvads-confirm-header {
+  position: relative;
+  justify-content: center;
+  margin-bottom: 32px;
+}
+.dvads-asset-bulk-card .dvads-confirm-title {
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.dvads-asset-bulk-card .dvads-confirm-close {
+  position: absolute;
+  right: -4px;
+  top: -4px;
+  width: 28px;
+  height: 28px;
+  font-size: 22px;
+}
+/* 푸터 액션 — 풀폭 양분 그리드(좌:취소 / 우:등록). 상단 구분선으로 본문과 시각 분리. */
+.dvads-asset-bulk-card .dvads-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid #ECEEF0;
+}
+.dvads-asset-bulk-card .dvads-confirm-actions .dvads-btn {
+  width: 100%;
+  height: 48px;
+  padding: 0;
+  font-size: 16px;
+  font-weight: 600;
+  border-radius: 8px;
+}
+/* 일괄 등록 카드 내부 inline 컨트롤 — input 높이(40)와 시각적 균형. */
+.dvads-asset-bulk-card .dvads-asset-bulk-url-row .dvads-btn,
+.dvads-asset-bulk-card .dvads-dropdown-trigger {
+  height: 40px;
+  font-size: 14px;
+  padding: 0 14px;
+}
+.dvads-asset-bulk-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  /* 스크롤 등장/사라짐 시 가로폭 흔들림 방지 — 항상 스크롤바 자리를 예약. Chrome 94+. */
+  scrollbar-gutter: stable;
+  margin: 0 -4px 16px;
+  padding: 0 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+
+.dvads-asset-bulk-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dvads-asset-bulk-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.dvads-asset-bulk-section-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #171717;
+}
+.dvads-asset-bulk-slots {
+  display: flex;
+  flex-direction: column;
+  /* 슬롯 사이 18px — dup 경고(-16px bottom, ~12px height)가 등장해도 다음 슬롯과 충돌 X.
+     dup 등장/사라짐과 무관하게 row 위치 고정 → layout shift 제거. */
+  gap: 18px;
+}
+
+/* 이미지 영역 — 드랍존 + 첨부 파일 목록 + 상품 URL 후보 그리드 */
+.dvads-asset-bulk-counter {
+  margin-left: auto;
+  font-size: 14px;
+  color: #737373;
+  font-feature-settings: "tnum";
+}
+.dvads-asset-bulk-counter-blocked {
+  color: #B23A3A;
+}
+
+/* 드랍존 — shadcn 패턴(dashed border + 원형 아이콘 + 2-line hint). */
+.dvads-asset-bulk-dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-height: 168px;
+  padding: 22px 16px;
+  border: 1.5px dashed rgba(115, 115, 115, 0.35);
+  border-radius: 10px;
+  background: #fafafa;
+  text-align: center;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.dvads-asset-bulk-dropzone:hover,
+.dvads-asset-bulk-dropzone:focus-visible {
+  background: #f3f4f6;
+  border-color: rgba(115, 115, 115, 0.55);
+}
+.dvads-asset-bulk-dropzone-dragover {
+  border-color: #E6783B !important;
+  background: rgba(230, 120, 59, 0.06) !important;
+}
+.dvads-asset-bulk-dropzone-blocked {
+  opacity: 0.55;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+/* 가운데 원형 배경 + ImagePlus 아이콘 (lucide path inline SVG로 매칭). */
+.dvads-asset-bulk-dropzone-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #ffffff;
+  color: #737373;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.04);
+}
+.dvads-asset-bulk-dropzone-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dvads-asset-bulk-dropzone-primary {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #171717;
+  line-height: 1.4;
+}
+.dvads-asset-bulk-dropzone-secondary {
+  margin: 0;
+  font-size: 12px;
+  color: #737373;
+  line-height: 1.4;
+}
+
+/* 첨부 파일 그리드 — 정사각 썸네일 카드 + 호버 시 어두운 오버레이에 휴지통 액션. */
+.dvads-asset-bulk-file-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, 96px);
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dvads-asset-bulk-file-list:empty {
+  display: none;
+}
+.dvads-asset-bulk-file-item {
+  position: relative;
+  width: 96px;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  background: #ffffff;
+  overflow: hidden;
+}
+.dvads-asset-bulk-file-thumb {
+  display: block;
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  background: #fafafa;
+}
+/* 우상단 × 배지 — 항상 보이는 작은 원형 버튼. 카드 모서리 살짝 밖으로 떠서 시각 단서 강함. */
+.dvads-asset-bulk-file-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.95);
+  color: #525252;
+  border: 1px solid #ECEEF0;
+  border-radius: 50%;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+  z-index: 1;
+}
+.dvads-asset-bulk-file-remove:hover {
+  background: #DC2626;
+  color: #ffffff;
+  border-color: #DC2626;
+}
+.dvads-asset-bulk-file-name {
+  display: block;
+  height: 24px;
+  line-height: 24px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: #525252;
+  background: #fafafa;
+  border-top: 1px solid #ECEEF0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-asset-bulk-url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 수동 자르기 옵션 — 컨테이너는 hit area 아님. 토글/텍스트만 클릭으로 토글.
+   row가 inline-flex라도 부모 flex column에서 늘어나는 걸 막기 위해 align-self:flex-start. */
+.dvads-asset-bulk-option-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  margin-top: -4px;
+  align-self: flex-start;
+}
+.dvads-asset-bulk-option-row .dvads-asset-bulk-option-label {
+  cursor: pointer;
+}
+/* 토글 스위치 — shadcn Switch 비주얼을 native input + ::before thumb로 재현.
+   appearance:none + position:relative로 track, ::before로 thumb. p-0.5(2px) 마진. */
+.dvads-asset-bulk-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  flex-shrink: 0;
+  background: #d4d4d4;
+  border-radius: 9999px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 160ms ease;
+}
+.dvads-asset-bulk-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  transition: transform 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dvads-asset-bulk-switch:hover {
+  background: #bdbdbd;
+}
+.dvads-asset-bulk-switch:checked {
+  background: #E6783B;
+}
+.dvads-asset-bulk-switch:checked:hover {
+  background: #d96d31;
+}
+.dvads-asset-bulk-switch:checked::before {
+  /* thumb 이동 거리 = track 폭 - thumb 폭 - 좌우 padding = 36 - 16 - 4 = 16 */
+  transform: translateX(16px);
+}
+.dvads-asset-bulk-switch:focus-visible {
+  box-shadow: 0 0 0 3px rgba(230, 120, 59, 0.25);
+}
+.dvads-asset-bulk-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.dvads-asset-bulk-option-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: #a3a3a3;
+  transition: color 160ms ease;
+}
+/* 토글이 켜진 상태에서는 라벨 텍스트도 진한 색으로 — 시각적으로 활성 표시.
+   :checked ~ sibling combinator는 input이 label 앞에 있어야 작동(현재 DOM 순서 OK). */
+.dvads-asset-bulk-switch:checked ~ .dvads-asset-bulk-option-label {
+  color: #171717;
+}
+.dvads-asset-bulk-url-input {
+  flex: 1 1 auto;
+  height: 40px;
+  padding: 0 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #171717;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 120ms ease;
+  min-width: 0;
+}
+.dvads-asset-bulk-url-input:focus {
+  border-color: #E6783B;
+}
+.dvads-asset-bulk-url-input:disabled {
+  background: #f5f5f5;
+  color: #999999;
+  cursor: not-allowed;
+}
+
+.dvads-asset-bulk-thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.dvads-asset-bulk-thumb {
+  position: relative;
+  padding: 0;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  cursor: pointer;
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+.dvads-asset-bulk-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.dvads-asset-bulk-thumb:hover {
+  border-color: #cccccc;
+}
+.dvads-asset-bulk-thumb-selected {
+  border: 2.5px solid #E6783B;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.18);
+}
+.dvads-asset-bulk-thumb-selected:hover {
+  border-color: #E6783B;
+}
+
+/* 호버 시 portal로 document.body에 mount되는 큰 프리뷰 패널 —
+   popup `.dvads-asset-bulk-body`의 overflow:auto 클리핑을 회피하기 위해 카드 바깥에 띄움.
+   viewport 우측 상단 모서리에 고정 — 어떤 썸네일 호버해도 같은 자리. */
+.dvads-asset-bulk-thumb-preview {
+  position: fixed;
+  width: 360px;
+  height: 360px;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  z-index: 2147483647;
+}
+.dvads-asset-bulk-thumb-preview[hidden] {
+  display: none;
+}
+.dvads-asset-bulk-thumb-preview img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #fafafa;
+}
+.dvads-asset-bulk-thumb-check {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: #E6783B;
+  color: #ffffff;
+  font-size: 11px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.dvads-asset-bulk-thumb-selected .dvads-asset-bulk-thumb-check {
+  opacity: 1;
+}
+
+.dvads-asset-bulk-image-status {
+  font-size: 12px;
+  color: #666666;
+  padding: 6px 0;
+}
+.dvads-asset-bulk-image-status-loading {
+  color: #666666;
+}
+.dvads-asset-bulk-image-status-error {
+  color: #B23A3A;
+}
+/* 텍스트 슬롯 — [inputWrap (input + counter + ×)] [positionSelect (headline only)] */
+.dvads-asset-bulk-text-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+.dvads-asset-bulk-input-wrap {
+  flex: 1 1 auto;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.dvads-asset-bulk-text-input {
+  flex: 1 1 auto;
+  height: 40px;
+  /* 우측 padding = counter(46px) + clearBtn(28px) + 여백(4px) */
+  padding: 0 78px 0 12px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #171717;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 120ms ease;
+  min-width: 0;
+}
+.dvads-asset-bulk-text-input:focus {
+  border-color: #E6783B;
+}
+/* input 안쪽 오른쪽 끝 — 카운터(0/15)는 최우측. */
+.dvads-asset-bulk-text-counter {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: #a3a3a3;
+  pointer-events: none;
+  font-feature-settings: "tnum";
+}
+/* input 안쪽 — 카운터 좌측에 위치한 슬롯 삭제 × 버튼. value 비어있으면 hidden. */
+.dvads-asset-bulk-text-clear {
+  position: absolute;
+  right: 48px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: #a3a3a3;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-asset-bulk-text-clear:hover {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-asset-bulk-text-clear[hidden] {
+  display: none;
+}
+
+/* 중복 슬롯 경고 — 입력값이 페이지에 이미 등록된 텍스트와 일치하면 빨간 보더 + 메시지. */
+.dvads-asset-bulk-dup-warn {
+  display: none;
+  position: absolute;
+  left: 10px;
+  bottom: -16px;
+  font-size: 11px;
+  color: #dc2626;
+  pointer-events: none;
+  white-space: nowrap;
+}
+/* dup margin-bottom 제거 — 슬롯 gap(18px)에 dup 경고 공간이 항상 포함되어 있어 불필요.
+   dup 등장/사라짐과 무관하게 row 위치 고정 → layout shift 제거. */
+.dvads-asset-bulk-text-row.dvads-asset-bulk-dup .dvads-asset-bulk-text-input {
+  border-color: #dc2626;
+}
+.dvads-asset-bulk-text-row.dvads-asset-bulk-dup .dvads-asset-bulk-dup-warn {
+  display: block;
+}
+
+/* ─── 공용 dropdown — `src/content/ui-dropdown.ts` 가 그리는 단일 진실의 원천.
+   네이티브 <select>는 OS·브라우저별 외관이 갈려 시각 통일이 불가능하므로
+   콘텐츠 오버레이의 모든 dropdown은 본 클래스를 사용한다. (DESIGN.md 참조) */
+.dvads-dropdown-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 32px;
+  padding: 0 10px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  outline: none;
+  cursor: pointer;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.dvads-dropdown-trigger:hover {
+  border-color: #cfd6dc;
+}
+.dvads-dropdown-trigger.is-open {
+  border-color: #E6783B;
+  background: rgba(230, 120, 59, 0.04);
+}
+.dvads-dropdown-label {
+  flex: 1 1 auto;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dvads-dropdown-chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: #a3a3a3;
+  transition: transform 120ms ease, color 120ms ease;
+  line-height: 1;
+}
+.dvads-dropdown-trigger.is-open .dvads-dropdown-chevron {
+  transform: rotate(180deg);
+  color: #E6783B;
+}
+
+/* dropdown 패널 — document.body에 portal로 mount되어 popup overflow를 escape.
+   z-index는 backdrop과 동일 max + DOM order 마지막으로 가시성 확보. */
+.dvads-dropdown-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 130px;
+  padding: 6px;
+  background: #ffffff;
+  border: 1px solid #ECEEF0;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+  max-height: 320px;
+  overflow-y: auto;
+  /* 기본 hidden — 위치 계산 후 data-side가 세팅되면 sweep 애니메이션으로 reveal.
+     side 결정 전 한 프레임 flash 방지. */
+  clip-path: inset(0 0 100% 0 round 10px);
+}
+/* 패널이 trigger 아래로 열림 → 위에서 아래로 sweep */
+.dvads-dropdown-panel[data-side="bottom"] {
+  animation: dvads-dropdown-sweep-down 240ms cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+  transform-origin: top center;
+}
+/* 화면 하단 공간 부족으로 위로 flip → 아래에서 위로 sweep */
+.dvads-dropdown-panel[data-side="top"] {
+  animation: dvads-dropdown-sweep-up 240ms cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+  transform-origin: bottom center;
+}
+@keyframes dvads-dropdown-sweep-down {
+  from {
+    clip-path: inset(0 0 100% 0 round 10px);
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 10px);
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes dvads-dropdown-sweep-up {
+  from {
+    clip-path: inset(100% 0 0 0 round 10px);
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    clip-path: inset(0 0 0 0 round 10px);
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* 모션 줄이기 환경 — 애니메이션·clip-path 비활성, 그냥 즉시 표시 */
+@media (prefers-reduced-motion: reduce) {
+  .dvads-dropdown-panel {
+    clip-path: none !important;
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+}
+.dvads-dropdown-option {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  padding: 9px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+  white-space: nowrap;
+}
+.dvads-dropdown-option:hover {
+  background: #F3F4F6;
+}
+.dvads-dropdown-option.is-selected {
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+}
+/* destructive 액션(삭제 등) — 항상 빨강, hover 시 살짝 더 진하게. */
+.dvads-dropdown-option.is-danger {
+  color: #DC2626;
+}
+.dvads-dropdown-option.is-danger:hover {
+  background: rgba(220, 38, 38, 0.08);
+  color: #B91C1C;
+}
+.dvads-dropdown-option.is-disabled,
+.dvads-dropdown-option:disabled {
+  color: #9CA3AF;
+  cursor: not-allowed;
+}
+.dvads-dropdown-option.is-disabled:hover,
+.dvads-dropdown-option:disabled:hover {
+  background: transparent;
+}
+/* 액션 메뉴 패널 — createDropdown 패널과 동일 베이스, 폭만 살짝 좁게.
+   menu 항목 라벨이 짧은 편(바로가기/삭제 등)이라 컨텐츠 폭에 맞춰 표시. */
+.dvads-action-menu-panel {
+  min-width: 140px;
+}
+/* 메뉴 항목 구분선 — 그룹 사이 가는 hr. dropdown panel 안에서 음수 좌우 마진으로 패널 양끝까지. */
+.dvads-dropdown-separator {
+  height: 1px;
+  background: #F3F4F6;
+  margin: 4px -4px;
+  pointer-events: none;
+}
+
+/* 슬롯 삭제 × */
+.dvads-asset-bulk-remove {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #a3a3a3;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+.dvads-asset-bulk-remove:hover:enabled {
+  background: #F3F4F6;
+  color: #666666;
+}
+.dvads-asset-bulk-remove:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* + 슬롯 추가 버튼 */
+.dvads-asset-bulk-add {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed #ECEEF0;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  color: #666666;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-asset-bulk-add:hover:enabled {
+  background: rgba(230, 120, 59, 0.06);
+  color: #E6783B;
+  border-color: #E6783B;
+}
+.dvads-asset-bulk-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ─── F-DeviceSplit — popover 헤더의 [모바일 | PC] segmented control ─── */
+
+/* 토글 자체는 중성 회색 — DV 주황 면적 ~3% 규칙. popover 안에서 보조 UI라
+   화면에 주황 칠을 더하지 않는다. 선택된 디바이스만 흰 카드로 떠올라 강조. */
+.dvads-device-toggle {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 2px;
+  background: #F3F4F6;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  flex-shrink: 0;
+  user-select: none;
+}
+.dvads-device-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.dvads-device-seg:hover {
+  color: #171717;
+}
+.dvads-device-seg.is-active {
+  background: #ffffff;
+  color: #171717;
+  font-weight: 600;
+  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+.dvads-device-seg.is-loading::after {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+
+/* PC lazy fetch 중 popover body 영역의 빈 자리 안내. ladder 자리 그대로 점유해
+   레이아웃 점프 방지(높이는 ladder 한 화면 분량 ≈ 320px). */
+.dvads-popover-loading {
+  min-height: 320px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 0;
+  font-size: 13px;
+  color: #6B7280;
+}
+.dvads-popover-loading::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  margin-right: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+
+/* ─── F-MultiAccount ─── */
+/* 헤더 광고계정 칩 좌측 형제 노드로 inject. F-PoP `.dvads-period-btn`과 동일 디자인.
+   position fixed 없음 — 페이지 DOM 자식이라 광고관리자 헤더와 함께 자연스럽게 움직임. */
+.dvads-multi-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  background: #ffffff;
+  color: #525252;
+  border: 1px solid #ECEEF0;
+  border-radius: 8px;
+  cursor: pointer;
+  user-select: none;
+  margin-right: 8px;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.dvads-multi-btn svg {
+  display: block;
+}
+.dvads-multi-btn:hover {
+  background: #fafafa;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+/* open 상태 — popover 열려있는 동안 active 시각 cue (테두리 + 색 주황 유지) */
+.dvads-multi-btn.is-open {
+  background: #fff8f3;
+  border-color: #E6783B;
+  color: #E6783B;
+}
+
+/* 햄버거 ↔ close 모핑 아이콘.
+   - svg 자체는 -45deg 회전 (햄버거 두 줄 → X 형태)
+   - 첫 path(.dvads-multi-btn-icon-morph)는 stroke-dasharray로 일부만 렌더 → open 시 위치 이동
+   - 두 번째 path(중간 가로선)는 정적, 회전과 함께 X의 한 획 역할 */
+.dvads-multi-btn-icon {
+  transition: transform 500ms ease-in-out;
+  transform-origin: 50% 50%;
+}
+.dvads-multi-btn.is-open .dvads-multi-btn-icon {
+  transform: rotate(-45deg);
+}
+.dvads-multi-btn-icon-morph {
+  stroke-dasharray: 12 63;
+  stroke-dashoffset: 0;
+  transition: stroke-dasharray 500ms ease-in-out, stroke-dashoffset 500ms ease-in-out;
+}
+.dvads-multi-btn.is-open .dvads-multi-btn-icon-morph {
+  stroke-dasharray: 20 300;
+  stroke-dashoffset: -32.42px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-btn-icon,
+  .dvads-multi-btn-icon-morph {
+    transition: none !important;
+  }
+}
+
+/* popover — 1100px (8지표 컬럼 수용), 흰 배경, rounded, shadow */
+.dvads-multi-popover {
+  /* 폭은 view별 가변 — list(전체 11컬럼 테이블)는 1100px, search(단순 리스트)는 640px.
+     JS가 view 전환 시 CSS 변수로 토글. width transition으로 부드럽게 리사이즈. */
+  width: var(--dvads-multi-popover-width, 1100px);
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 160px);
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* 처음 켜질 때 진입 모션. clip-path는 box-shadow를 같이 잘라서 사용 안 함 — translateY +
+     scale + opacity 조합으로 sweep-down 느낌 유지. 위치는 top/left로 잡으므로 transform 자유. */
+  animation: dvads-multi-popover-enter 280ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+  transform-origin: top center;
+  /* view 전환 시 width 슬라이드. animation 키프레임이 끝난 뒤에만 발화하지만 진입 모션은
+     opacity/transform이라 transition: width와 충돌 없음. */
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-popover { transition: none !important; }
+}
+
+/* 크게 보기(전체화면) 모달 — 사용자가 kebab → "크게 보기" 선택 시 진입.
+   inline 위치 스타일은 JS가 비우고 여기 inset이 인계받음. 폭/높이 viewport 채움.
+   transition은 평소 width transition 그대로 + inset도 부드럽게. */
+.dvads-multi-popover.is-fullscreen {
+  top: 32px;
+  left: 32px;
+  right: 32px;
+  bottom: 32px;
+  width: auto;
+  max-width: none;
+  max-height: none;
+}
+
+/* backdrop — 크게 보기 진입 시 popover 뒤에 회색 dim. 클릭하면 popover 자체 닫힘. */
+.dvads-multi-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483646;
+  animation: dvads-multi-backdrop-fade-in 200ms ease-out both;
+}
+@keyframes dvads-multi-backdrop-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.dvads-period-popover {
+  /* F-PoP popover는 JS에서 popover.style.transform = translate(x,y)로 위치를 매 프레임 잡아서
+     keyframe transform이 들어가면 0,0으로 덮어버린다. opacity-only fade로 충돌 회피 +
+     shadow 보존. */
+  animation: dvads-period-popover-enter 220ms ease-out both;
+}
+@keyframes dvads-multi-popover-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes dvads-period-popover-enter {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-popover {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+  }
+  .dvads-period-popover {
+    /* transform: none 금지 — JS가 inline transform으로 popover 위치를 잡으므로
+       !important로 덮으면 0,0 좌상단으로 튐. animation/opacity만 reset. */
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}
+
+/* 즐겨찾기 셀 */
+.dvads-multi-table th.dvads-multi-th-fav,
+.dvads-multi-table td.dvads-multi-td-fav {
+  width: 32px;
+  padding-left: 8px;
+  padding-right: 0;
+  text-align: center;
+}
+.dvads-multi-fav-btn {
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #D1D5DB;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease;
+}
+.dvads-multi-fav-btn:hover {
+  background: rgba(230, 120, 59, 0.1);
+  color: #E6783B;
+}
+.dvads-multi-fav-btn.is-on {
+  color: #E6783B;
+}
+
+/* 정렬 가능 헤더 */
+.dvads-multi-table th.dvads-multi-th-sort {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+.dvads-multi-table th.dvads-multi-th-sort:hover {
+  background: #f3f4f6;
+  color: #171717;
+}
+.dvads-multi-sort-ind {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-left: 4px;
+  color: #E6783B;
+  vertical-align: middle;
+}
+.dvads-multi-sort-chevron {
+  display: block;
+  transform-origin: 50% 50%;
+}
+/* 정렬 클릭 시 chevron이 새로 렌더되며 pop-in. 컬럼이 바뀌든 같은 컬럼 asc↔desc 토글이든
+   매 클릭에 새 element라 animation이 매번 발화한다. asc/desc 별도 키프레임으로 회전 각도를
+   끝까지 유지(forwards). 스케일 0.5 → 1.15 overshoot → 1 로 통통 튀는 느낌. */
+.dvads-multi-table th.dvads-multi-th-sort.is-asc .dvads-multi-sort-chevron {
+  animation: dvads-chevron-pop-asc 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+.dvads-multi-table th.dvads-multi-th-sort.is-desc .dvads-multi-sort-chevron {
+  animation: dvads-chevron-pop-desc 320ms cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+@keyframes dvads-chevron-pop-asc {
+  0%   { opacity: 0; transform: scale(0.5) rotate(0deg); }
+  60%  { opacity: 1; transform: scale(1.15) rotate(0deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+@keyframes dvads-chevron-pop-desc {
+  0%   { opacity: 0; transform: scale(0.5) rotate(180deg); }
+  60%  { opacity: 1; transform: scale(1.15) rotate(180deg); }
+  100% { opacity: 1; transform: scale(1) rotate(180deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-sort-chevron { animation: none !important; }
+  .dvads-multi-table th.dvads-multi-th-sort.is-desc .dvads-multi-sort-chevron {
+    transform: rotate(180deg);
+  }
+}
+
+/* 컬럼 폭/높이 — 좌우 12px + 상하 12px(행 시각 간격). */
+.dvads-multi-table td.dvads-multi-td-num,
+.dvads-multi-table th.dvads-multi-th-num {
+  padding: 12px 12px;
+}
+/* 접힘(작게보기) 모드에서만 num 셀 explicit width — inline edit colspan 행이 들어와도 컬럼이 squash 안 됨.
+   크게보기에선 width 제거해 num 컬럼이 가용 공간으로 자연스럽게 펴짐(계정 컬럼이 혼자 흡수 X). */
+.dvads-multi-table.is-collapsed td.dvads-multi-td-num,
+.dvads-multi-table.is-collapsed th.dvads-multi-th-num {
+  width: 110px;
+  min-width: 110px;
+}
+
+/* 광고 유형 필터 토글 시 데이터 셀 로딩 스켈레톤 (paintAllRowsSkeleton).
+   period-compare의 .dvads-period-skel과 동일한 shimmer. 숫자 셀이 우측 정렬이라
+   바도 우측에 떠 수치 자리를 점유 -> 데이터 도착 시 레이아웃 점프 없음. width는 인라인. */
+.dvads-multi-skel {
+  display: inline-block;
+  height: 11px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #ECEEF0 0%, #F5F6F7 50%, #ECEEF0 100%);
+  background-size: 200% 100%;
+  animation: dvads-skel-shimmer 1.2s ease-in-out infinite;
+  vertical-align: middle;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-skel { animation: none; }
+}
+.dvads-multi-table td.dvads-multi-td-name {
+  padding: 12px;
+}
+.dvads-multi-table td.dvads-multi-td-cb,
+.dvads-multi-table td.dvads-multi-td-act {
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.dvads-multi-table td.dvads-multi-td-name,
+.dvads-multi-table th:first-child {
+  padding: 7px 12px;
+  min-width: 180px;
+  width: 180px;
+  max-width: 180px;
+  text-align: left;
+}
+/* 내 계정 헤더 "계정" th도 좌측 정렬 — base의 th text-align(우정렬) 덮음. */
+.dvads-multi-table th.dvads-multi-th-sort[data-sort-key="name"] {
+  text-align: left;
+}
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 이름 셀만 페이지 전환 트리거 — 지표 셀 클릭으로 의도치 않은 전환 방지.
+   행 전체 hover bg는 .dvads-bid-table tbody tr:hover td 에서 처리하고,
+   여기선 이름 셀에 cursor + 살짝 더 진한 hover로 클릭 가능 영역임을 시각화. */
+.dvads-multi-table td.dvads-multi-td-name-clickable {
+  cursor: pointer;
+}
+.dvads-multi-table tbody tr:hover td.dvads-multi-td-name-clickable {
+  background: #f3f4f6;
+}
+.dvads-multi-table td.dvads-multi-td-name-clickable:hover .dvads-multi-name {
+  color: #E6783B;
+}
+
+/* 작업 컬럼 (kebab "..." 트리거) — 가운데 정렬, 트리거 hover 영역 충분히 확보. */
+.dvads-multi-table th.dvads-multi-th-act,
+.dvads-multi-table td.dvads-multi-td-act {
+  width: 64px;
+  min-width: 64px;
+  padding: 7px 8px;
+  text-align: center;
+}
+/* 크게 보기 모드 — 화면이 넓고 컬럼이 많아 작업 셀이 비례적으로 좁아 보임. 폭 확장으로 비례 회복. */
+.dvads-multi-popover.is-fullscreen .dvads-multi-table th.dvads-multi-th-act,
+.dvads-multi-popover.is-fullscreen .dvads-multi-table td.dvads-multi-td-act {
+  width: 100px;
+  min-width: 100px;
+}
+.dvads-multi-action-trigger {
+  appearance: none;
+  width: 26px;
+  height: 26px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: #6B7280;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+}
+.dvads-multi-action-trigger:hover,
+.dvads-multi-action-trigger.is-open {
+  background: #F3F4F6;
+  color: #171717;
+}
+
+/* dvads-bid-table의 2번째 컬럼 우측 분리선 제거 (multi-account는 그룹 분리 불필요) */
+.dvads-multi-table th:nth-child(2),
+.dvads-multi-table td:nth-child(2) {
+  border-right: 0 !important;
+}
+/* dvads-bid-table의 2번째 컬럼 weight 600 강조도 제거 (multi-account는 평등) */
+.dvads-multi-table td:nth-child(2) {
+  font-weight: 400 !important;
+}
+
+/* 행 click → 체크박스 토글(이름 셀 클릭은 별도로 바로가기). 마우스 cursor로 어포던스 신호. */
+.dvads-multi-tr {
+  cursor: pointer;
+}
+
+/* 계약 종료 시각 cue — 행 자체에 좌측 빨간 보더 */
+.dvads-multi-tr.dvads-multi-tr-contract-warning td:first-child {
+  position: relative;
+}
+.dvads-multi-tr.dvads-multi-tr-contract-warning td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #DC2626;
+}
+.dvads-multi-tr.dvads-multi-tr-contract-warning .dvads-multi-name::after {
+  content: " ⚠";
+  color: #DC2626;
+  font-size: 11px;
+}
+.dvads-multi-tr.dvads-multi-tr-contract-expired td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #9CA3AF;
+}
+
+/* ─── 알림 cue (사용자 임계값 도달) ───────────────────────────────────── */
+
+/* 비즈머니 임계 미만 셀 — specificity 0,2,1 (기존 .dvads-bid-table td 베이스 0,1,1 덮음) */
+.dvads-multi-table td.dvads-multi-td-biz-alert {
+  color: #DC2626;
+  font-weight: 600;
+}
+
+/* 브랜드검색 임계 도달 행 — 정적 빨강(펄스 없음). 계정명 텍스트만 색 변경.
+   자세한 D-day/연장하기는 호버 툴팁(.dvads-brand-tooltip)에서. */
+.dvads-multi-tr.dvads-multi-tr-brand-alert .dvads-multi-name {
+  color: #DC2626;
+  font-weight: 600;
+  cursor: help;
+}
+
+/* 통합 알림 cue — 비즈머니/브랜드검색 어느 쪽이든 임계 도달 시 행 좌측 빨간 세로 선.
+   "이 계정에 뭔가 알림이 떴음"이라는 단일 시각 신호. 정적(펄스 없음). */
+.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child {
+  position: relative;
+}
+.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: #DC2626;
+}
+
+/* 페이지 우상단 햄버거 버튼 알림 배지 (iOS 스타일) — 가로/세로 동일한 정원 고정.
+   숫자 자릿수가 늘면 font-size를 줄여 원형 유지 (글자가 원을 깨지 않게). */
+.dvads-multi-btn { position: relative; }
+.dvads-multi-btn-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  background: #DC2626;
+  color: #ffffff;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  border: 2px solid #ffffff;
+  box-sizing: content-box;
+  pointer-events: none;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-variant-numeric: tabular-nums;
+}
+/* 두 자리(10~99) — 정원 유지하되 글자 살짝 축소 */
+.dvads-multi-btn-badge.is-two-digit {
+  font-size: 9px;
+  letter-spacing: -0.5px;
+}
+/* "99+" 등 세 자리 — 더 축소 */
+.dvads-multi-btn-badge.is-three-digit {
+  font-size: 8px;
+  letter-spacing: -0.5px;
+}
+
+.dvads-multi-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 14px 8px 16px;
+  /* 8px 하단 패딩 — indicator는 .dvads-multi-tabs(hdr 내부) 바닥에 붙고,
+     그 아래 8px만큼 hdr 자체가 더 내려가 다음 콘텐츠(테이블/검색창)와 간격 확보. */
+}
+.dvads-multi-hdr-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+/* 헤더 우측 "설정" / "설정 (N)" 버튼 — kebab을 대체하는 라벨 트리거. 클릭 시 action menu.
+   라벨에 카운트 유무에 관계없이 버튼 폭 동일하게 — min-width로 "설정 (NN)" 최대 폭 확보.
+   tabular-nums로 숫자 폭 균일. */
+/* 호스트 페이지의 회색 pill 버튼(전체 상태 등)과 톤 맞춤 — 회색 배경 + 진한 텍스트, 보더 없음. */
+.dvads-multi-settings-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 86px;
+  height: 36px;
+  padding: 0 15px;
+  border-radius: 8px;
+  border: 0;
+  background: #F3F4F6;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition: background 120ms ease;
+  flex-shrink: 0;
+}
+.dvads-multi-settings-btn:hover,
+.dvads-multi-settings-btn.is-open {
+  background: #E5E7EB;
+}
+/* has-selection은 background/border 별도 강조 안 함 — 카운트 라벨 자체가 시그널. 클래스는 유지(JS hook). */
+
+/* 검색 input wrapper — 양쪽에 아이콘(돋보기 좌/x 우). list/search view 공통.
+   기본(anchored popover) 280px / 크게 보기 모드 600px로 분기. height도 살짝 차이 둠.
+   shrink:1로 좁은 컨테이너에선 자동 축소 (탭 깨짐 방지). */
+.dvads-multi-search-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 280px;
+  height: 36px;
+  flex-shrink: 1;
+  min-width: 0;
+  /* popover 크기 transition과 같은 곡선/시간으로 검색창 폭/높이도 부드럽게 따라감. */
+  transition: width 320ms cubic-bezier(0.4, 0, 0.2, 1),
+              height 320ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dvads-multi-popover.is-fullscreen .dvads-multi-search-wrap {
+  width: 600px;
+  height: 40px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-search-wrap { transition: none !important; }
+}
+.dvads-multi-search-icon {
+  position: absolute;
+  left: 10px;
+  color: #9CA3AF;
+  pointer-events: none;
+}
+.dvads-multi-search-clear {
+  position: absolute;
+  right: 6px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: #9CA3AF;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-multi-search-clear:hover {
+  background: #E5E7EB;
+  color: #171717;
+}
+.dvads-multi-search-wrap.has-value .dvads-multi-search-clear {
+  display: inline-flex;
+}
+
+/* 접힘 상태 — 5개 추가 컬럼 숨김. 크게 보기 모드 진입 시 JS가 클래스 제거 → 모든 컬럼 노출. */
+.dvads-multi-table.is-collapsed th[data-sort-key="impressions"],
+.dvads-multi-table.is-collapsed th[data-sort-key="clicks"],
+.dvads-multi-table.is-collapsed th[data-sort-key="ctr"],
+.dvads-multi-table.is-collapsed th[data-sort-key="cpc"],
+.dvads-multi-table.is-collapsed th[data-sort-key="conversions"],
+.dvads-multi-table.is-collapsed td[data-k="impressions"],
+.dvads-multi-table.is-collapsed td[data-k="clicks"],
+.dvads-multi-table.is-collapsed td[data-k="ctr"],
+.dvads-multi-table.is-collapsed td[data-k="cpc"],
+.dvads-multi-table.is-collapsed td[data-k="conversions"] {
+  display: none;
+}
+
+/* ─── 다중 선택 체크박스 (커스텀 스타일) ───
+   native input은 시각 숨기고 인접 span에 체크 상태 따라 배경/체크마크 그림. */
+.dvads-multi-cb {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  position: relative;
+  flex-shrink: 0;
+}
+.dvads-multi-cb input {
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 1;
+}
+.dvads-multi-cb-box {
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid #D1D5DB;
+  border-radius: 4px;
+  background: #ffffff;
+  position: relative;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.dvads-multi-cb input:checked + .dvads-multi-cb-box {
+  background: #E6783B;
+  border-color: #E6783B;
+}
+.dvads-multi-cb input:checked + .dvads-multi-cb-box::after {
+  /* 체크마크 — CSS pseudo로 작은 ✓ 그림. transform rotate로 자연스러운 비대칭 stroke. */
+  content: "";
+  position: absolute;
+  left: 4.5px;
+  top: 1px;
+  width: 4px;
+  height: 8.5px;
+  border: solid #ffffff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.dvads-multi-cb input:indeterminate + .dvads-multi-cb-box {
+  background: #E6783B;
+  border-color: #E6783B;
+}
+.dvads-multi-cb input:indeterminate + .dvads-multi-cb-box::after {
+  /* indeterminate — 가운데 가로 막대 (일부만 선택된 상태). */
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 6px;
+  width: 8px;
+  height: 1.5px;
+  background: #ffffff;
+  border-radius: 1px;
+}
+.dvads-multi-cb input:hover:not(:checked):not(:indeterminate) + .dvads-multi-cb-box {
+  border-color: #9CA3AF;
+}
+
+/* 테이블 체크박스 셀/헤더 — 좁고 좌우/상하 가운데 정렬.
+   padding 좌우 동일(9px) + vertical-align: middle로 다중 줄 행(이름+번호)에서도 행 중앙에 위치. */
+.dvads-multi-table th.dvads-multi-th-cb,
+.dvads-multi-table td.dvads-multi-td-cb {
+  width: 36px;
+  min-width: 36px;
+  padding: 0 9px;
+  text-align: center;
+  vertical-align: middle;
+}
+
+
+/* ─── 탭바 (Vercel Tabs 패턴) — 내 계정 / 전체 계정 view 전환 ─── */
+/* 제목("계정 현황") 자리를 대체. hdr 안에 들어가며 탭 폰트는 title 크기(16px)에 맞춤.
+   아래 회색 보더는 의도적으로 없음 — 주황 active indicator만 시각적 baseline 역할. */
+.dvads-multi-tabs {
+  position: relative;
+  flex-shrink: 0;
+}
+.dvads-multi-tabs-list {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* hover 하이라이트 — 마우스 따라 슬라이드. inactive 탭 위에 떴을 때 살짝 강조. */
+.dvads-multi-tabs-hover {
+  position: absolute;
+  top: 4px;
+  height: 32px;
+  background: rgba(14, 15, 17, 0.06);
+  border-radius: 6px;
+  transition: left 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              width 220ms cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 180ms ease;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+/* active 아래 underline — left/width로 슬라이드. DV 주황(브랜드 액센트). */
+.dvads-multi-tabs-indicator {
+  position: absolute;
+  bottom: 0;
+  height: 2px;
+  background: #E6783B;
+  border-radius: 1px;
+  transition: left 280ms cubic-bezier(0.4, 0, 0.2, 1),
+              width 280ms cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  z-index: 1;
+}
+.dvads-multi-tab-item {
+  position: relative;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0 10px;
+  height: 40px;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  color: #9CA3AF;
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: color 220ms ease;
+  z-index: 1;
+}
+/* 크게 보기 시 "전체 계정" 탭 숨김 — 풀스크린은 데이터 분석 컨텍스트라 추가 흐름 불필요.
+   indicator 위치도 "내 계정" 첫 탭에 자연스럽게 맞음. */
+.dvads-multi-popover.is-fullscreen .dvads-multi-tab-item[data-view="search"] {
+  display: none;
+}
+.dvads-multi-tab-item:hover {
+  color: #171717;
+}
+.dvads-multi-tab-item.is-active {
+  color: #171717;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-tabs-hover,
+  .dvads-multi-tabs-indicator,
+  .dvads-multi-tab-item {
+    transition: none !important;
+  }
+}
+
+/* ─── 검색 input — 좌(돋보기)/우(x) 아이콘 자리 확보. height는 wrap 따라감(100%). ─── */
+.dvads-multi-search-input {
+  width: 100%;
+  height: 100%;
+  padding: 0 32px 0 34px;
+  background: #F3F4F6;
+  border: 0;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #171717;
+  font-family: inherit;
+  outline: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-multi-search-input:focus {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
+}
+.dvads-multi-search-input::placeholder {
+  color: #9CA3AF;
+}
+
+.dvads-multi-search-list-wrap,
+.dvads-multi-table-wrap {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  /* 스크롤 체이닝 방지 — popover 내부 스크롤이 끝에 도달해도 호스트 페이지로 스크롤 전파 안 함.
+     `contain`: 경계 도달 시 부모로 전파 차단(자체 bounce는 유지). 모달성 popover의 표준 처리. */
+  overscroll-behavior: contain;
+}
+/* sticky thead 픽셀-jitter 해결 — `border-collapse: collapse`는 sticky th가 스크롤 시 1px씩
+   미세 흔들리는 알려진 버그가 있어 multi-table만 `separate` 모드로 전환. 행 보더는 td에 직접. */
+.dvads-multi-table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.dvads-multi-table tbody td {
+  border-bottom: 1px solid #f3f4f6;
+}
+.dvads-multi-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+/* sticky를 <thead>에 직접 적용 — border-collapse: separate 환경에서 가장 신뢰성 높음.
+   transform/will-change는 GPU 레이어 만들 때 sticky containing block을 망가뜨릴 수 있어 제거. */
+.dvads-multi-table-wrap thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+.dvads-multi-table-wrap thead th {
+  background: #fafafa;
+  border-bottom: 1px solid #ECEEF0;
+}
+/* 헤더 정렬은 각 컬럼의 데이터 셀과 동일하게 — text-align 규칙은 위쪽 dual 셀렉터(th+td)가
+   이미 처리. 헤더만 center로 통일하면 데이터(좌측)와 어긋나서 컬럼 라벨이 데이터 위에 안 놓임. */
+/* ─── 전체 계정(검색 view) 테이블 ─── */
+/* 검색 view 전용 — 계정 컬럼 좌측 정렬 + 200px(220 → 200, ID를 왼쪽으로 당김). */
+.dvads-multi-search-table td.dvads-multi-td-name,
+.dvads-multi-search-table th.dvads-multi-th-search-name {
+  width: 200px;
+  min-width: 200px;
+  max-width: 200px;
+  text-align: left;
+  padding-left: 12px;
+}
+/* 검색 view 작업 컬럼 — kebab "⋯" 하나만 들어가는 영역이라 50px로 더 컴팩트하게. */
+.dvads-multi-search-table th.dvads-multi-th-act,
+.dvads-multi-search-table td.dvads-multi-td-act {
+  width: 50px;
+  min-width: 50px;
+}
+/* 계정 컬럼 보조 "원래 ..." 라인 — 별칭 있는 경우 원본 이름 표시. */
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name + .dvads-multi-no {
+  font-size: 11px;
+  color: #9CA3AF;
+  margin-top: 2px;
+}
+/* 검색 view에서 이미 내 계정에 추가된 행 — 계정명을 DV 주황으로 강조해 한눈에 식별. */
+.dvads-multi-search-table tr.is-added .dvads-multi-name {
+  color: #E6783B;
+}
+/* 상태 컬럼 — 권한 라벨. 좌측 정렬, 보조 색상. ID와 동일 폭(130px)으로 시각 균형. */
+.dvads-multi-table th.dvads-multi-th-search-status,
+.dvads-multi-table td.dvads-multi-td-status {
+  width: 130px;
+  padding: 12px 12px;
+  text-align: left;
+  color: #6B7280;
+  font-size: 12.5px;
+}
+/* ID 컬럼 — 좌측 정렬, tabular-nums, 보조 색상. 상태와 동일 폭(130px). */
+.dvads-multi-table th.dvads-multi-th-search-id,
+.dvads-multi-table td.dvads-multi-td-id {
+  width: 130px;
+  padding: 12px 12px;
+  text-align: left;
+  color: #6B7280;
+  font-variant-numeric: tabular-nums;
+}
+/* 검색 view 작업 컬럼 — 헤더/셀 좌측 정렬(다른 컬럼과 일관). 트리거 자체도 셀 시작점에 정렬. */
+.dvads-multi-search-table th.dvads-multi-th-act,
+.dvads-multi-search-table td.dvads-multi-td-act {
+  text-align: left;
+}
+
+/* 이름 수정 모달 — backdrop dim + 중앙 카드. inline edit(colspan) 대신 별도 모달로 전환해
+   table reflow 이슈 회피. confirm-dialog와 유사한 패턴이지만 rename 전용으로 독립 분리. */
+.dvads-rename-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: dvads-rename-backdrop-fade 200ms ease-out both;
+}
+@keyframes dvads-rename-backdrop-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.dvads-rename-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 22px 24px 20px;
+  min-width: 380px;
+  max-width: 92vw;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  animation: dvads-rename-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+}
+@keyframes dvads-rename-card-enter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.dvads-rename-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #171717;
+  margin-bottom: 14px;
+}
+.dvads-rename-input-wrap {
+  position: relative;
+  margin-bottom: 16px;
+}
+.dvads-rename-input {
+  display: block;
+  width: 100%;
+  height: 40px;
+  padding: 0 36px 0 14px;
+  background: #F3F4F6;
+  border: 0;
+  border-radius: 10px;
+  font-family: inherit;
+  font-size: 14px;
+  color: #171717;
+  outline: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-rename-input:focus {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.30);
+}
+.dvads-rename-clear {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: #9CA3AF;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-rename-clear:hover {
+  background: #E5E7EB;
+  color: #171717;
+}
+.dvads-rename-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.dvads-rename-cancel,
+.dvads-rename-save {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease, filter 120ms ease;
+}
+.dvads-rename-cancel {
+  border: 1px solid #E5E7EB;
+  background: #ffffff;
+  color: #6B7280;
+}
+.dvads-rename-cancel:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-rename-save {
+  border: 0;
+  background: #E6783B;
+  color: #ffffff;
+}
+.dvads-rename-save:hover {
+  filter: brightness(0.95);
+}
+.dvads-multi-search-empty {
+  padding: 32px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #9CA3AF;
+}
+
+.dvads-multi-list-wrap {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.dvads-multi-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+}
+
+.dvads-multi-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 16px;
+  cursor: pointer;
+  border-top: 1px solid #F9FAFB;
+  transition: background 120ms ease;
+}
+.dvads-multi-row:first-child {
+  border-top: 0;
+}
+.dvads-multi-row:hover {
+  background: #FAFAF9;
+}
+.dvads-multi-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-multi-fav {
+  font-size: 14px;
+  color: #D1D5DB;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.dvads-multi-fav.is-on {
+  color: #E6783B;
+}
+.dvads-multi-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-multi-no {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-variant-numeric: tabular-nums;
+}
+.dvads-multi-row-refresh {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #9CA3AF;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 120ms ease, background 120ms ease, color 120ms ease;
+}
+.dvads-multi-row:hover .dvads-multi-row-refresh,
+.dvads-multi-row.dvads-multi-row-loading .dvads-multi-row-refresh {
+  opacity: 1;
+}
+.dvads-multi-row-refresh:hover {
+  background: rgba(230, 120, 59, 0.1);
+  color: #E6783B;
+}
+.dvads-multi-row.dvads-multi-row-loading .dvads-multi-row-refresh {
+  animation: dvads-spin 0.8s linear infinite;
+  color: #E6783B;
+  pointer-events: none;
+}
+
+/* 캐시 stale / 비어있음 상태 시각 표시 */
+.dvads-multi-row.dvads-multi-row-stale .dvads-multi-row-mid,
+.dvads-multi-row.dvads-multi-row-stale .dvads-multi-row-bot {
+  opacity: 0.55;
+}
+.dvads-multi-row.dvads-multi-row-empty .dvads-multi-row-mid,
+.dvads-multi-row.dvads-multi-row-empty .dvads-multi-row-bot {
+  opacity: 0.4;
+}
+.dvads-multi-row-mid,
+.dvads-multi-row-bot {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: #6B7280;
+  padding-left: 22px;
+  flex-wrap: wrap;
+}
+.dvads-multi-metric em,
+.dvads-multi-biz em {
+  font-style: normal;
+  font-weight: 500;
+  color: #171717;
+  margin-left: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.dvads-multi-row-bot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.dvads-multi-contract {
+  font-size: 11px;
+  font-weight: 500;
+  color: #6B7280;
+}
+.dvads-multi-contract.is-warning {
+  color: #DC2626;
+}
+.dvads-multi-contract.is-expired {
+  color: #9CA3AF;
+}
+.dvads-multi-row-error {
+  font-size: 11px;
+  color: #DC2626;
+  padding-left: 22px;
+}
+
+.dvads-multi-loading,
+.dvads-multi-empty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: #6B7280;
+}
+.dvads-multi-loading::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -2px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+}
+
+/* ─── 숫자 입력 다이얼로그 (input-dialog.ts) ─────────────────────────
+   비즈머니/브랜드검색 알림 임계값 입력. rename 모달과 동일 톤. */
+.dvads-input-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: dvads-input-backdrop-fade 200ms ease-out both;
+}
+@keyframes dvads-input-backdrop-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.dvads-input-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 22px 24px 20px;
+  min-width: 380px;
+  max-width: 92vw;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  animation: dvads-input-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  color: #171717;
+}
+@keyframes dvads-input-card-enter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+.dvads-input-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #171717;
+  margin-bottom: 6px;
+}
+.dvads-input-desc {
+  font-size: 12.5px;
+  color: #6B7280;
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+.dvads-input-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: #F3F4F6;
+  border-radius: 10px;
+  padding: 0 14px;
+  height: 40px;
+  margin-bottom: 16px;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-input-input-wrap:focus-within {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.30);
+}
+.dvads-input-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  font-family: inherit;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: #171717;
+  outline: none;
+}
+.dvads-input-suffix {
+  font-size: 13px;
+  color: #6B7280;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+.dvads-input-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-input-actions-spacer {
+  flex: 1;
+}
+.dvads-input-clear {
+  /* 해제 버튼은 위험성보다는 "되돌리기" 톤이라 secondary 그대로 — 다만 좌측에 단독 배치. */
+}
+
+/* ─── 브랜드검색 알림 호버 툴팁 (multi-account.ts) ─────────────────────
+   네이버 광고관리자 native 툴팁 톤 — 검은 배경 + 흰 글자 + 아래쪽 꼬리. 행 상단 가운데
+   정렬, 위쪽 공간 부족하면 행 아래로 fallback (placement 속성으로 꼬리 방향 전환).
+   document.body 자식이라 popover overflow 무관. */
+.dvads-brand-tooltip {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 14px;
+  background: #1F2937;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28), 0 2px 6px rgba(0, 0, 0, 0.18);
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 13px;
+  color: #ffffff;
+  white-space: nowrap;
+  animation: dvads-brand-tooltip-fade 140ms ease-out both;
+  pointer-events: auto;
+  /* 꼬리 가로 위치 — JS에서 --dvads-brand-tooltip-arrow-x를 설정. 미설정 시 중앙. */
+  --dvads-brand-tooltip-arrow-x: 50%;
+}
+@keyframes dvads-brand-tooltip-fade {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+/* 아래로 향하는 꼬리 — placement="top" (기본) */
+.dvads-brand-tooltip[data-placement="top"]::after {
+  content: "";
+  position: absolute;
+  left: var(--dvads-brand-tooltip-arrow-x);
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  background: #1F2937;
+  transform: translateX(-50%) rotate(45deg);
+  border-radius: 2px;
+}
+/* 위로 향하는 꼬리 — placement="bottom" (행 아래로 fallback) */
+.dvads-brand-tooltip[data-placement="bottom"]::after {
+  content: "";
+  position: absolute;
+  left: var(--dvads-brand-tooltip-arrow-x);
+  top: -5px;
+  width: 10px;
+  height: 10px;
+  background: #1F2937;
+  transform: translateX(-50%) rotate(45deg);
+  border-radius: 2px;
+}
+.dvads-brand-tooltip-msg {
+  color: #ffffff;
+  font-weight: 500;
+}
+/* 연장하기 — 버튼 외관 없이 인라인 텍스트 링크. 살짝 연한 DV 주황 + 볼드, 밑줄 없음.
+   .dvads-btn-primary 베이스 스타일(높이/배경/radius/border)을 모두 덮어 평범한 텍스트로. */
+.dvads-brand-tooltip-btn {
+  height: auto !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #F2A06E !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  text-decoration: none !important;
+  cursor: pointer;
+}
+.dvads-brand-tooltip-btn:hover {
+  color: #FFB987 !important;
+}
+
+/* ─── F-Setup 세팅안 생성 모달 ─── */
+.dvads-setup-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  animation: dvads-asset-bulk-backdrop-in 180ms ease-out;
+}
+.dvads-setup-modal {
+  display: flex;
+  flex-direction: column;
+  width: 560px;
+  max-width: calc(100vw - 32px);
+  max-height: 80vh;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.20);
+  overflow: hidden;
+  color: #171717;
+}
+.dvads-setup-head {
+  position: relative;
+  padding: 20px 24px 14px;
+  border-bottom: 1px solid #F1F1F1;
+}
+.dvads-setup-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #171717;
+}
+.dvads-setup-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #737373;
+}
+.dvads-setup-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 20px;
+  line-height: 1;
+  color: #737373;
+  cursor: pointer;
+}
+.dvads-setup-close:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-setup-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.dvads-setup-loading {
+  padding: 48px 24px;
+  text-align: center;
+  font-size: 13px;
+  color: #737373;
+}
+.dvads-setup-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 24px;
+  border-bottom: 1px solid #F6F6F6;
+}
+.dvads-setup-selectall {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #404040;
+  cursor: pointer;
+}
+.dvads-setup-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: #737373;
+}
+.dvads-setup-list {
+  overflow-y: auto;
+  padding: 6px 12px;
+  flex: 1;
+  min-height: 120px;
+}
+.dvads-setup-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.dvads-setup-row:hover {
+  background: #F9FAFB;
+}
+.dvads-setup-row-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: #171717;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-setup-badge {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #F3F4F6;
+  font-size: 11px;
+  font-weight: 500;
+  color: #525252;
+}
+.dvads-setup-row-budget {
+  flex: none;
+  width: 90px;
+  text-align: right;
+  font-size: 12px;
+  color: #737373;
+}
+.dvads-setup-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 24px;
+  border-top: 1px solid #F1F1F1;
+}
+

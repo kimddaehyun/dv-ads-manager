@@ -1,0 +1,67 @@
+/**
+ * 디브이 애드 매니저 디자인 시스템 — Tailwind v4 @theme 통합.
+ *
+ * 단일 진실의 원천: docs/DESIGN.md. 본 파일은 그 문서의 토큰을
+ * Tailwind v4 utility로 컴파일하기 위한 단일 source.
+ *
+ * 사용처: popup/options/demo 진입점. 콘텐츠 스크립트는 별도
+ * src/styles/overlay.css로 격리 (Tailwind 미사용).
+ */
+
+@import "tailwindcss";
+@import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
+
+@theme {
+  /* Brand — DV 주황. 사용 면적 ~3% 이내 (DESIGN.md §Color). */
+  --color-brand: #E6783B;
+  --color-brand-hover: #F08A4F;
+  --color-brand-press: #C66024;
+
+  /* Ink & Neutral */
+  --color-ink: #171717;
+
+  /* Surfaces */
+  --color-bg-soft: #f4f5f7;             /* 페이지 배경 (옵션) — dvmkt 톤 통일 */
+  --color-bg-popup: #fafafa;             /* 팝업 배경만 살짝 다른 톤 */
+  --color-input: #f4f5f7;                /* input 대기 상태 fill */
+  --color-input-hover: #eef0f3;          /* input/secondary radio 카드 hover */
+  --color-divider: #eef0f3;              /* 카드 내 구분선 */
+  --color-card-border: #ECEEF0;          /* 호환 — 일부 호스트 인근 보더 */
+  --color-button-light: #F3F4F6;         /* secondary 버튼 배경 (호환) */
+  --color-button-light-hover: #E5E7EB;
+
+  /* State */
+  --color-state-success: #16a34a;
+  --color-state-warning: #d97706;
+  --color-state-error: #DC2626;
+  --color-state-info: #0072f5;
+  --color-state-neutral: #808080;
+
+  /* Font */
+  --font-sans: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Consolas, Menlo, monospace;
+
+  /* Shadows */
+  --shadow-card:
+    0 1px 3px rgba(15, 23, 42, 0.04),
+    0 1px 2px rgba(15, 23, 42, 0.03);
+  --shadow-popover:
+    0 2px 4px rgba(0, 0, 0, 0.04),
+    0 12px 24px rgba(0, 0, 0, 0.08),
+    0 32px 64px -16px rgba(0, 0, 0, 0.10);
+}
+
+@layer base {
+  :root {
+    font-family: var(--font-sans);
+    font-feature-settings: "tnum";
+    color: var(--color-ink);
+    background: var(--color-bg-soft);
+    color-scheme: light;
+  }
+  body {
+    margin: 0;
+    background: var(--color-bg-soft);
+    color: var(--color-ink);
+  }
+}
