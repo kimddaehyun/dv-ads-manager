@@ -548,12 +548,12 @@ const DEVICE_LABEL: Record<AdDevice, string> = {
   PC: "PC",
 };
 
-// 키워드명 클릭 → 네이버 광고 검색결과 새 탭. device에 따라 분기.
-// PC : `ad.search.naver.com` 파워링크 전용 미리보기 페이지
-// MOBILE: `m.ad.search.naver.com` 모바일 파워링크 전용 미리보기 페이지
+// 키워드명 클릭 → 네이버 통합검색 결과 새 탭. device에 따라 분기.
+// PC : `search.naver.com` 통합검색
+// MOBILE: `m.search.naver.com` 모바일 통합검색
 const SEARCH_URL_BY_DEVICE: Record<AdDevice, string> = {
-  PC: "https://ad.search.naver.com/search.naver?where=ad&query=",
-  MOBILE: "https://m.ad.search.naver.com/search.naver?where=m_expd&query=",
+  PC: "https://search.naver.com/search.naver?query=",
+  MOBILE: "https://m.search.naver.com/search.naver?query=",
 };
 
 function buildPopoverBody(mount: BadgeMount, device: AdDevice): HTMLElement {
@@ -564,8 +564,8 @@ function buildPopoverBody(mount: BadgeMount, device: AdDevice): HTMLElement {
   const hdr = document.createElement("div");
   hdr.className = "dvads-popover-hdr";
 
-  // 키워드명 클릭 → 네이버 광고 검색결과(파워링크 미리보기) 새 탭으로 열기.
-  // device 토글에 따라 PC/모바일 미리보기로 분기 — toggle 클릭 시 selectDevice가
+  // 키워드명 클릭 → 네이버 통합검색 결과 새 탭으로 열기.
+  // device 토글에 따라 PC/모바일 통합검색으로 분기 — toggle 클릭 시 selectDevice가
   // buildPopoverBody를 다시 호출하므로 anchor href도 같이 갱신된다.
   const kw = document.createElement("a");
   kw.className = "kw";
@@ -575,8 +575,8 @@ function buildPopoverBody(mount: BadgeMount, device: AdDevice): HTMLElement {
   kw.rel = "noopener noreferrer";
   kw.title =
     device === "MOBILE"
-      ? "모바일 광고 검색결과로 이동"
-      : "PC 광고 검색결과로 이동";
+      ? "모바일 네이버 검색결과로 이동"
+      : "PC 네이버 검색결과로 이동";
   hdr.append(kw);
 
   // 디바이스 토글 (PC | 모바일) — segmented control. 헤더 우측(이전 X 버튼 자리)에 배치.
