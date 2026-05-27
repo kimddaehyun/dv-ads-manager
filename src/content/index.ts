@@ -874,6 +874,13 @@ function scheduleModalCheck(): void {
   if (modalCheckRaf !== null) return;
   modalCheckRaf = requestAnimationFrame(() => {
     modalCheckRaf = null;
+    // recede 대상(우리 팝오버/확인 다이얼로그)이 안 떠있고 모달도 안 떠있던 상태면 감지할 이유가 없다.
+    // isPageConfirmModalShown()의 document.body.textContent 전체 직렬화는 페이지가 클수록 비싸고
+    // DOM 변경마다(rAF) 호출되므로, 평소 브라우징/로드 중엔 건너뛰어 메인 스레드 부담을 없앤다.
+    // 페이지 모달이 의미를 갖는 건 우리 UI가 떠있을 때뿐(그때만 recede 필요).
+    if (!pageModalShown && !openPopover && !document.querySelector(".dvads-confirm-backdrop")) {
+      return;
+    }
     const shown = isPageConfirmModalShown();
     if (shown && !pageModalShown) {
       pageModalShown = true;

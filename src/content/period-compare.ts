@@ -213,8 +213,11 @@ function findDateRangeContainer(): {
   // 우측 상단 헤더 안에서 2개의 "YYYY.MM.DD." 텍스트가 인접한 요소를 찾는다.
   // 페이지 본문 본문에 같은 패턴이 우연히 출현할 가능성은 낮지만, 가장 작은 공통 조상으로 좁힌다.
   // 우선 document 전체에서 텍스트 매치 → 부모 element 추출 → 두 매치의 LCA가 컨테이너.
-  const matches: { el: HTMLElement; date: Date }[] = [];
+  // 인접한 두 날짜 매치를 만나는 즉시 검사하고, 유효하면 바로 반환한다.
+  // 날짜 picker는 보통 헤더(문서 앞부분)에 있으므로 전체 body를 끝까지 훑지 않고 조기 종료 →
+  // 캠페인/행 많은 큰 페이지에서 TreeWalker 비용을 크게 줄인다. (DOM 변경마다 호출되므로 중요.)
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  let prev: { el: HTMLElement; date: Date } | null = null;
   while (walker.nextNode()) {
     const node = walker.currentNode as Text;
     const text = node.nodeValue;
@@ -223,26 +226,26 @@ function findDateRangeContainer(): {
     let m: RegExpExecArray | null;
     while ((m = DATE_TEXT_RE.exec(text))) {
       const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-      if (Number.isFinite(d.getTime())) {
-        const parent = node.parentElement;
-        if (parent) matches.push({ el: parent, date: d });
+      if (!Number.isFinite(d.getTime())) continue;
+      const parent = node.parentElement;
+      if (!parent) continue;
+      const cur = { el: parent, date: d };
+      if (prev) {
+        // 두 매치가 같은 좁은 영역(헤더 날짜 picker)에 있고 start <= end면 그게 컨테이너.
+        const ancestor = commonAncestor(prev.el, cur.el);
+        if (ancestor) {
+          const rect = ancestor.getBoundingClientRect();
+          if (
+            rect.height <= 200 &&
+            rect.width <= 800 &&
+            prev.date.getTime() <= cur.date.getTime()
+          ) {
+            return { container: ancestor, start: prev.date, end: cur.date };
+          }
+        }
       }
+      prev = cur;
     }
-  }
-  if (matches.length < 2) return null;
-
-  // 헤더 안의 인접 두 날짜 찾기 — 같은 부모 또는 부모-자식 관계
-  for (let i = 0; i < matches.length - 1; i++) {
-    const a = matches[i];
-    const b = matches[i + 1];
-    // 두 매치가 같은 좁은 영역에 있어야 함
-    const ancestor = commonAncestor(a.el, b.el);
-    if (!ancestor) continue;
-    // 너무 큰 컨테이너(body 등)는 제외
-    const rect = ancestor.getBoundingClientRect();
-    if (rect.height > 200 || rect.width > 800) continue;
-    if (a.date.getTime() > b.date.getTime()) continue; // start <= end
-    return { container: ancestor, start: a.date, end: b.date };
   }
   return null;
 }
@@ -305,6 +308,13 @@ const REPORT_PATH_RE = /\/reports?(\/|$)/i;
 function mountButton(): void {
   if (REPORT_PATH_RE.test(location.pathname)) {
     unmountButton();
+    return;
+  }
+  // 버튼이 이미 살아있고 컨테이너도 연결돼 있으면 전체 DOM 스캔(findDateRangeContainer) 생략.
+  // MutationObserver가 DOM 변경마다 mountButton을 부르는데, 매번 전체 body TreeWalker를 돌면
+  // 콘텐츠 많은 페이지에서 메인 스레드 부담이 커진다. 컨테이너가 SPA 재렌더로 detach되면
+  // isConnected=false가 되어 아래 스캔/재mount 경로로 자연히 떨어진다.
+  if (lastButton && lastButton.isConnected && lastContainer && lastContainer.isConnected) {
     return;
   }
   // 매체 pathname 매칭이 부정확한 페이지가 있어 (파워링크/브랜드/파워컨텐츠 캠페인 리스트 등)
@@ -480,7 +490,12 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
 
   // 데이터 로드
   try {
-    if (!cap) {
+    // 현재 보고 있는 페이지로 무엇을 합산할지 결정 (cap.url 아닌 location.pathname 기반).
+    const scope = detectPageScope(location.pathname);
+    const acct = accountNoFromPath(location.pathname);
+    const accountScoped = !!acct && scope.kind !== "other";
+
+    if (!cap && !accountScoped) {
       // 캡처 못한 페이지(아직 stats fetch 미발생 등)는 "학습 중" 안내 대신
       // 빈 metrics(전부 null → 0/0원/0.0%) 그대로 표 렌더. 사용자에게는 자연스럽게 "0건"으로 보임.
       renderPopover(popover, {
@@ -499,7 +514,26 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
     let currentMetrics: NormalizedMetrics;
     let prevMetrics: NormalizedMetrics;
 
-    if (isSaStatsCapture(cap)) {
+    if (accountScoped && acct) {
+      // dashboard/전체캠페인 → 계정 전체(SA,DA). GFA 목적/단일 캠페인 페이지 → DA + 스코프 필터.
+      // 어느 경우든 노출>0 캠페인의 구매완료만 2차 호출로 합산 (multi-account-data.ts와 동일 기준).
+      const platformFilter: "SA,DA" | "DA" = scope.kind === "account" ? "SA,DA" : "DA";
+      const scopeOpts: DashboardScopeOpts =
+        scope.kind === "gfa-objective" ? { objectiveType: `GFA_${scope.objective}` }
+        : scope.kind === "gfa-campaign" ? { campaignId: scope.campaignId }
+        : {};
+      // 인증 헤더는 아무 최근 캡처에서 빌려온다 (dashboard/gfa는 URL-aware라 활성 계정 세션으로 동작).
+      const headerCap = cap ?? recentCaptures[recentCaptures.length - 1] ?? null;
+      if (DEBUG_CAPTURE) {
+        console.log(`[dv-ads/PoP] scope=${scope.kind} acct=${acct} platform=${platformFilter} opts=`, scopeOpts);
+      }
+      const [cur, prv] = await Promise.all([
+        fetchDashboardPurchaseMetrics(headerCap, dateInfo.start, dateInfo.end, acct, platformFilter, scopeOpts),
+        fetchDashboardPurchaseMetrics(headerCap, prev.start, prev.end, acct, platformFilter, scopeOpts),
+      ]);
+      currentMetrics = cur;
+      prevMetrics = prv;
+    } else if (cap && isSaStatsCapture(cap)) {
       // SA 검색광고 stats — 페이지가 요청한 필드(전체전환만 있거나 전환 컬럼 누락 등)에
       // 의존하지 않고, 구매완료 기준 표준 필드로 현재·직전 기간을 직접 재호출.
       // 캡처에서는 ids(캠페인 ID)만 빌려온다. 페이지 열 맞춤 설정과 무관하게 항상 구매완료로 일관.
@@ -514,33 +548,32 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
       ]);
       currentMetrics = extractMetricsFromResponse(adapterMedia, curResp);
       prevMetrics = extractMetricsFromResponse(adapterMedia, prevResp);
+    } else if (cap && extractDashboardAccountNo(cap.url)) {
+      // fallback — pathname으로 스코프를 못 잡은 계정 스코프 캡처 (비표준 페이지 등).
+      // cap.url 기반으로 dashboard/GFA 합산 (구 동작 유지).
+      const accountNo = extractDashboardAccountNo(cap.url)!;
+      const platformFilter: "SA,DA" | "DA" = /\/apis\/gfa\/v1\//.test(cap.url) ? "DA" : "SA,DA";
+      const [cur, prv] = await Promise.all([
+        fetchDashboardPurchaseMetrics(cap, dateInfo.start, dateInfo.end, accountNo, platformFilter, {}),
+        fetchDashboardPurchaseMetrics(cap, prev.start, prev.end, accountNo, platformFilter, {}),
+      ]);
+      currentMetrics = cur;
+      prevMetrics = prv;
+    } else if (cap) {
+      // 그 외 매체(플레이스 등) — 페이지가 요청한 그대로 replay (날짜만 shift).
+      currentMetrics = extractMetricsFromResponse(adapterMedia, cap.response);
+      const shifted = shiftDateParams(cap, dateInfo.start, dateInfo.end, prev.start, prev.end);
+      const prevResp = await replayFetch(shifted);
+      prevMetrics = extractMetricsFromResponse(adapterMedia, prevResp);
     } else {
-      const accountNo = extractDashboardAccountNo(cap.url);
-      if (accountNo) {
-        // dashboard / GFA / 계정 스코프 캡처 — campaigns/search + SA stats + GFA campaignStats
-        // 2차 호출로 구매완료만 합산. URL이 GFA campaignStats여도 항상 이 경로로 처리.
-        // 현재 기간은 campaigns/search 캡처이면 재사용, 아니면 재호출.
-        const isCampaignsSearch = /\/campaigns\/search(\?|$)/.test(cap.url);
-        // GFA 전용 페이지 캡처는 DA만 필터 — dashboard/전체캠페인은 SA+DA 모두.
-        // 혼재하면 SA 전환수가 GFA 수치에 더해져 over-count.
-        const platformFilter: "SA,DA" | "DA" = /\/apis\/gfa\/v1\//.test(cap.url) ? "DA" : "SA,DA";
-        const [cur, prv] = await Promise.all([
-          fetchDashboardPurchaseMetrics(
-            cap, dateInfo.start, dateInfo.end, accountNo,
-            isCampaignsSearch ? (cap.response as DashboardSearchResp) : undefined,
-            platformFilter,
-          ),
-          fetchDashboardPurchaseMetrics(cap, prev.start, prev.end, accountNo, undefined, platformFilter),
-        ]);
-        currentMetrics = cur;
-        prevMetrics = prv;
-      } else {
-        // 그 외 매체(플레이스 등) — 페이지가 요청한 그대로 replay (날짜만 shift).
-        currentMetrics = extractMetricsFromResponse(adapterMedia, cap.response);
-        const shifted = shiftDateParams(cap, dateInfo.start, dateInfo.end, prev.start, prev.end);
-        const prevResp = await replayFetch(shifted);
-        prevMetrics = extractMetricsFromResponse(adapterMedia, prevResp);
-      }
+      // accountScoped인데 acct 없음 등 — 안전하게 빈 표.
+      renderPopover(popover, {
+        media,
+        currentRange: { start: dateInfo.start, end: dateInfo.end },
+        previousRange: prev,
+        state: "ok",
+      });
+      return;
     }
     if (DEBUG_CAPTURE) {
       console.log("[dv-ads/PoP] current metrics=", currentMetrics, "prev metrics=", prevMetrics);
@@ -679,7 +712,7 @@ function buildDashboardCampaignsRequest(
 // 매출/노출/클릭/비용은 대시보드 응답 그대로 사용.
 interface DashboardSearchResp {
   results?: Array<{
-    campaign?: { campaignId?: string; adPlatform?: string };
+    campaign?: { campaignId?: string; adPlatform?: string; type?: string };
     metrics?: {
       impressions?: number;
       clicks?: number;
@@ -706,22 +739,64 @@ function extractDashboardAccountNo(url: string): string | null {
   return m ? m[2] : null;
 }
 
+// ─── 페이지 스코프 판정 (location.pathname 기반) ───
+//
+// 어떤 capture가 잡혔는지(cap.url)가 아니라 *현재 보고 있는 페이지*로 무엇을 합산할지 결정한다.
+// dashboard/전체캠페인은 계정 전체(SA+DA), GFA 목적 페이지는 그 목적의 DA 캠페인만 합산해야
+// 페이지가 화면에 보여주는 범위와 일치한다. (cap.url 기반이면 GFA 페이지에서도 dashboard
+// 캡처가 잡혀 전체 DA를 합산하는 등 페이지 스코프와 어긋남 — 2026-05-27 라이브 정찰로 확인.)
+//
+// URL 패턴:
+//   /manage/ad-accounts/{no}/dashboard            → 계정 대시보드 (SA+DA 전체)
+//   /manage/ad-accounts/{no}/all-campaigns        → 전체 캠페인 (SA+DA 전체)
+//   /manage/ad-accounts/{no}/da/campaigns-by/{OBJ}→ GFA 목적별 (DA + type GFA_{OBJ})
+//   /manage/ad-accounts/{no}/da/dashboard/campaign/{id} → GFA 단일 캠페인
+type PageScope =
+  | { kind: "account" }
+  | { kind: "gfa-objective"; objective: string }
+  | { kind: "gfa-campaign"; campaignId: string }
+  | { kind: "other" };
+
+function detectPageScope(pathname: string): PageScope {
+  if (/\/manage\/ad-accounts\/\d+\/(dashboard|all-campaigns)(\/|$|\?)/.test(pathname)) {
+    return { kind: "account" };
+  }
+  let m = pathname.match(/\/manage\/ad-accounts\/\d+\/da\/dashboard\/campaign\/(\d+)/);
+  if (m) return { kind: "gfa-campaign", campaignId: m[1] };
+  m = pathname.match(/\/manage\/ad-accounts\/\d+\/da\/campaigns-by\/([A-Z_]+)/);
+  if (m) return { kind: "gfa-objective", objective: m[1] };
+  return { kind: "other" };
+}
+
+function accountNoFromPath(pathname: string): string | null {
+  const m = pathname.match(/\/manage\/ad-accounts\/(\d+)/);
+  return m ? m[1] : null;
+}
+
+// 페이지 스코프 필터 — GFA 목적 페이지는 그 type만, 단일 캠페인 페이지는 그 캠페인만 합산.
+interface DashboardScopeOpts {
+  objectiveType?: string; // 예: "GFA_CONVERSION" — campaign.type 일치만
+  campaignId?: string;    // 단일 캠페인만
+}
+
 async function fetchDashboardPurchaseMetrics(
-  cap: PeriodCompareCapture,
+  cap: PeriodCompareCapture | null,
   since: Date,
   until: Date,
   accountNo: string | null,
-  prefetchedResp?: DashboardSearchResp,
   platformFilter: "SA,DA" | "DA" = "SA,DA",
+  scope: DashboardScopeOpts = {},
 ): Promise<NormalizedMetrics> {
   const empty: NormalizedMetrics = {
     impressions: 0, clicks: 0, ctr: null, cpc: null,
     cost: 0, revenue: 0, conversions: 0, roas: null,
   };
   if (!accountNo) return empty;
-  // 현재 기간은 캡처 응답 재사용 가능 — 직전 기간은 항상 재호출.
-  const resp = prefetchedResp
-    ?? (await replayFetch(buildDashboardCampaignsRequest(accountNo, cap.headers, since, until, platformFilter)) as DashboardSearchResp);
+  const headers = cap?.headers ?? {};
+  // 페이지의 캡처 body(pageSize 10·필터 없음·다른 날짜)는 신뢰 못 하므로 항상 통제된 body로 재호출.
+  const resp = await replayFetch(
+    buildDashboardCampaignsRequest(accountNo, headers, since, until, platformFilter),
+  ) as DashboardSearchResp;
 
   let impressions = 0;
   let clicks = 0;
@@ -729,13 +804,22 @@ async function fetchDashboardPurchaseMetrics(
   const saIds: string[] = [];
   const daIds: string[] = [];
   for (const row of resp.results ?? []) {
+    const c = row.campaign ?? {};
+    // 페이지 스코프 필터 — 화면에 보이는 캠페인 범위와 일치시킨다.
+    if (scope.campaignId && c.campaignId !== scope.campaignId) continue;
+    if (scope.objectiveType && c.type !== scope.objectiveType) continue;
     const m = row.metrics ?? {};
-    impressions += Number(m.impressions ?? 0);
-    clicks += Number(m.clicks ?? 0);
-    costMicros += Number(m.grossCostMicros ?? 0);
-    const id = row.campaign?.campaignId;
+    const imp = Number(m.impressions ?? 0);
+    const clk = Number(m.clicks ?? 0);
+    const cost = Number(m.grossCostMicros ?? 0);
+    impressions += imp;
+    clicks += clk;
+    costMicros += cost;
+    const id = c.campaignId;
     if (!id) continue;
-    if (row.campaign?.adPlatform === "DA") daIds.push(id);
+    // 노출·클릭·비용이 모두 0이면 전환도 0 — 구매완료 2차 호출 대상에서 제외(호출 수↓ → 속도↑).
+    if (imp <= 0 && clk <= 0 && cost <= 0) continue;
+    if (c.adPlatform === "DA") daIds.push(id);
     else saIds.push(id);
   }
 
@@ -746,8 +830,8 @@ async function fetchDashboardPurchaseMetrics(
   const [saResult, daResult] = await Promise.all([
     platformFilter === "DA"
       ? Promise.resolve({ conv: 0, revenueMicros: 0 })
-      : sumSaPurchaseConversions(cap, saIds, sinceStr, untilStr),
-    sumGfaPurchaseConversions(cap, accountNo, daIds, sinceStr, untilStr),
+      : sumSaPurchaseConversions(headers, saIds, sinceStr, untilStr),
+    sumGfaPurchaseConversions(headers, accountNo, daIds, sinceStr, untilStr),
   ]);
 
   const cost = costMicros / 1_000_000;
@@ -761,7 +845,7 @@ async function fetchDashboardPurchaseMetrics(
 
 // SA 캠페인 구매완료 전환수 + 매출 — /apis/sa/api/stats purchaseCcnt + purchaseConvAmtMicros 합산.
 async function sumSaPurchaseConversions(
-  cap: PeriodCompareCapture,
+  headers: Record<string, string>,
   ids: string[],
   since: string,
   until: string,
@@ -777,7 +861,7 @@ async function sumSaPurchaseConversions(
       ids: ids.slice(i, i + SA_CONV_CHUNK).join(","),
     });
     chunks.push(
-      replayFetch({ url, method: "POST", headers: cap.headers, body })
+      replayFetch({ url, method: "POST", headers, body })
         .then((r) => r as SaPurchaseStatsResp)
         .catch(() => ({}) as SaPurchaseStatsResp),
     );
@@ -796,7 +880,7 @@ async function sumSaPurchaseConversions(
 // GFA(DA) 캠페인 구매완료 전환수 + 매출 — gfa campaignStats purchaseConvCount + purchaseConvSalesKRW 합산.
 // purchaseConvSalesKRW는 원 단위 (Micros 아님) — multi-account-data.ts와 동일.
 async function sumGfaPurchaseConversions(
-  cap: PeriodCompareCapture,
+  headers: Record<string, string>,
   accountNo: string | null,
   ids: string[],
   since: string,
@@ -810,7 +894,7 @@ async function sumGfaPurchaseConversions(
       `${location.origin}/apis/gfa/v1/adAccounts/${accountNo}/stats/campaignStats` +
       `?campaignNoList=${list}&startDate=${since}&endDate=${until}`;
     chunks.push(
-      replayFetch({ url, method: "GET", headers: cap.headers, body: null })
+      replayFetch({ url, method: "GET", headers, body: null })
         .then((r) => r as GfaStatsResp)
         .catch(() => ({}) as GfaStatsResp),
     );

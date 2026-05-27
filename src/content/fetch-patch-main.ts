@@ -28,7 +28,13 @@ declare const __APP_VERSION__: string;
       // 정적 리소스 제외
       if (/\.(png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|otf|css|js|mjs|map)(\?|$)/i.test(u.pathname))
         return false;
-      if (u.pathname === "/" || u.pathname === "") return false;
+      // stats를 담은 endpoint만 캡처. GFA 등 광고관리자 페이지는 한 번에 수십 개의 noise
+      // API(constants/authorities/billing/user/regulations/managed-customers 등)를 호출하는데,
+      // 이를 전부 clone+JSON.parse+stringify+dispatch+walk하면 페이지 데이터 로딩이 느려진다.
+      // F-PoP가 쓰는 6개 매체 데이터 소스는 모두 stats/search/reports 경로:
+      //   SA `/apis/sa/api/stats`, dashboard `campaigns/search`·`reports/search`,
+      //   GFA `stats/campaignStats`. URL 단계에서 이 셋만 통과시켜 noise를 배제.
+      if (!/\/(stats|search|reports?)(\/|$)/i.test(u.pathname)) return false;
       return true;
     } catch {
       return false;
@@ -80,8 +86,9 @@ declare const __APP_VERSION__: string;
     }
   }
 
-  // 디버그 — 모든 fetch/XHR 호출이 우리 wrap을 통과하는지 진단. 너무 시끄러우면 false.
-  const DEBUG_TRACE = true;
+  // 디버그 — 모든 fetch/XHR 호출이 우리 wrap을 통과하는지 진단. 평소엔 false (요청마다 console.log는
+  // 비용이 크고 GFA처럼 요청 많은 페이지를 느리게 함). 가로채기 진단 필요할 때만 일시 true.
+  const DEBUG_TRACE = false;
 
   // ─── fetch wrap ───
   const originalFetch = window.fetch;
