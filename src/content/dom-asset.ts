@@ -278,11 +278,6 @@ export function scanExistingAssets(): ExistingAssets {
       if (parsed && parsed.description) {
         promos.add(promoDedupKey(parsed.kind, parsed.description));
       }
-      console.log(
-        "[dv-ads/asset-scan-row]",
-        "type=홍보문구",
-        "parsed=", parsed,
-      );
       continue;
     }
 
@@ -294,15 +289,12 @@ export function scanExistingAssets(): ExistingAssets {
     const firstLi = cells[2].querySelector<HTMLElement>(
       ".extension-text ul li:first-child",
     );
-    let stage = "none";
     if (firstLi) {
       const dot = firstLi.querySelector<HTMLElement>(".extension-dot");
       if (dot && (dot.textContent ?? "").trim()) {
         text = (dot.textContent ?? "").trim();
-        stage = "dot";
       } else if ((firstLi.textContent ?? "").trim()) {
         text = (firstLi.textContent ?? "").trim();
-        stage = "li";
       }
     }
     if (!text) {
@@ -312,32 +304,12 @@ export function scanExistingAssets(): ExistingAssets {
         .querySelectorAll("button, input, a, .ad-cms-button, [role='button']")
         .forEach((el) => el.remove());
       text = (cloned.textContent ?? "").trim();
-      stage = "cell";
     }
-    console.log(
-      "[dv-ads/asset-scan-row]",
-      "type=" + typeText,
-      "firstLi=" + !!firstLi,
-      "stage=" + stage,
-      "text=" + JSON.stringify(text),
-    );
     if (!text) continue;
 
     if (typeText === "추가제목") headlines.add(text);
     else descriptions.add(text);
   }
-
-  // 진단 로그 — 출시 전 제거. scan 결과를 콘솔에서 즉시 확인 가능.
-  console.log(
-    "[dv-ads/asset-scan] headlines:",
-    Array.from(headlines),
-    "descriptions:",
-    Array.from(descriptions),
-    "promos:",
-    Array.from(promos),
-    "imageCount:",
-    imageCount,
-  );
 
   return { headlines, descriptions, promos, imageCount };
 }
@@ -762,11 +734,6 @@ async function registerImageItem(
   const dt = new DataTransfer();
   for (const f of validFiles) dt.items.add(f);
   fileInput.files = dt.files;
-  validFiles.forEach((f) => {
-    console.log(
-      `[dv-ads/asset-bulk] image inject name="${f.name}" size=${f.size}b type="${f.type}"`,
-    );
-  });
   fileInput.dispatchEvent(new Event("input", { bubbles: true }));
   await raf();
   fileInput.dispatchEvent(new Event("change", { bubbles: true }));

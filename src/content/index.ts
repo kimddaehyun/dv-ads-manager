@@ -38,6 +38,7 @@ import { invalidatePerformance } from "@/lib/performance-cache";
 import { initPeriodCompare } from "@/content/period-compare";
 import { initAssetBulk } from "@/content/asset-bulk";
 import { initMultiAccount } from "@/content/multi-account";
+import { initShoppingImageImport } from "@/content/shopping-image-import";
 import { attachTooltip } from "@/content/tooltip";
 
 declare const __APP_VERSION__: string;
@@ -1100,6 +1101,10 @@ initAssetBulk();
 // F-MultiAccount — 다계정 대시보드. 광고관리자 페이지 우상단에 fixed 버튼 주입.
 // 명단/어제 데이터/비즈머니/계약 D-day 표시. F001/F-PoP과 독립적으로 동작.
 initMultiAccount();
+
+// F-ShoppingImage — 쇼핑검색 소재 수정 모달에 상세페이지 대표 이미지 불러오기 주입.
+// 모달의 네이티브 이미지 업로드칸 하단에 후보 그리드 추가, 클릭 시 file input에 주입.
+initShoppingImageImport();
 
 const observer = new MutationObserver(schedule);
 observer.observe(document.body, { childList: true, subtree: true });
