@@ -78,6 +78,8 @@ export default defineManifest({
       resources: [
         "src/assets/icon-128.png",
         "src/assets/fonts/PretendardVariable.woff2",
+        // F-Report — 리포트 엑셀 양식(템플릿 주입용). content script가 runtime에 fetch.
+        "src/assets/report-template.xlsx",
       ],
       matches: ["https://ads.naver.com/*"],
     },

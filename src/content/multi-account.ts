@@ -44,6 +44,7 @@ import type {
 import { attachActionMenu, type ActionMenuItem } from "./ui-dropdown";
 import { openInputDialog } from "./input-dialog";
 import { openSetupFlow } from "./setup";
+import { openReportFlow, openReportFlowBatch } from "./report";
 
 const ADACCT_URL_PATTERN = /\/manage\/ad-accounts\//;
 const BTN_MARK = "data-dvads-multi-btn";
@@ -1240,6 +1241,16 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       disabled: !hasSelection,
       onClick: () => openBrandSearchDialogFor(Array.from(selectedAccountNos)),
     },
+    {
+      label: "리포트 생성",
+      disabled: !hasSelection,
+      onClick: () =>
+        openReportFlowBatch(
+          entries
+            .filter((e) => selectedAccountNos.has(e.adAccountNo))
+            .map((e) => ({ adAccountNo: e.adAccountNo, masterCustomerId: e.masterCustomerId, name: e.name })),
+        ),
+    },
     { separator: true },
     {
       label: "삭제",
@@ -1472,6 +1483,15 @@ function renderTableRow(
           label: "세팅안 생성",
           onClick: () =>
             void openSetupFlow({
+              adAccountNo: entry.adAccountNo,
+              masterCustomerId: entry.masterCustomerId,
+              name: meta?.displayName?.trim() || entry.name,
+            }),
+        },
+        {
+          label: "리포트 생성",
+          onClick: () =>
+            openReportFlow({
               adAccountNo: entry.adAccountNo,
               masterCustomerId: entry.masterCustomerId,
               name: meta?.displayName?.trim() || entry.name,
