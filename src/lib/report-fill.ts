@@ -9,7 +9,7 @@
 import { applyCells, readText, writeText, setString, setNumber, setRowHidden, setColumnWidths, centerCells } from "./report-excel";
 import type { ZipFiles } from "./report-excel";
 import {
-  metricValues, visualLen, widthFor, metricStr, METRIC_HEADERS, ZERO_METRICS, type ReportMetrics,
+  metricValues, visualLen, widthFor, metricStr, METRIC_HEADERS, ZERO_METRICS, addMetrics, type ReportMetrics,
 } from "./report-data";
 
 // 라벨열(B) + 12지표열(C~N) 너비 계산. metricRows=표시 지표행, labels=B열 라벨 후보.
@@ -45,9 +45,15 @@ export interface ReportModel {
   byPlacement: NamedMetrics[]; // 7 버킷(양식 라벨)
   byGender: NamedMetrics[]; // 남성/여성/알수없음
   byAge: NamedMetrics[]; // 8 버킷(양식 라벨)
+  // 디스플레이_상세 (hasDisplayDetail일 때만 채움)
+  displayByDay: NamedMetrics[];
+  displayByPlacement: NamedMetrics[]; // 동적(노출>0 총비용순)
+  displayByGender: NamedMetrics[];
+  displayByAge: NamedMetrics[];
   // 시트 제거 판단
   hasSearch: boolean;
-  hasDisplay: boolean;
+  hasDisplay: boolean; // 종합 디스플레이행/유형별 (gfa 합계 기준)
+  hasDisplayDetail: boolean; // 디스플레이_상세 시트 (분해 수집 성공)
 }
 
 const div = (a: number, b: number) => (b ? a / b : 0);
@@ -154,28 +160,52 @@ function fillSearchSummary(files: ZipFiles, model: ReportModel): void {
   writeText(files, SEARCH_PATH, setColumnWidths(readText(files, SEARCH_PATH), metricColWidths([model.searchCurrent, model.searchPrev], labels)));
 }
 
-// ── 검색_상세 시트 (sheet4) ──
-// 일자별 15~21(7행, 합계22) / 지면별 49~55(합계56) / 성별 76~78(합계79) / 연령 82~89(합계90)
-const DETAIL_PATH = "xl/worksheets/sheet4.xml";
-const DAY_ROWS = [15, 16, 17, 18, 19, 20, 21];
-const GENDER_ROWS: Record<string, number> = { 남성: 76, 여성: 77, 알수없음: 78 };
-const AGE_ROWS: Record<string, number> = {
-  "만 13~18세": 82,
-  "19~24세": 83,
-  "25~29세": 84,
-  "30~34세": 85,
-  "35~39세": 86,
-  "40~44세": 87,
-  "45~49세": 88,
-  "50세 이상": 89,
+// ── 검색_상세(sheet4) / 디스플레이_상세(sheet8) ──
+// 두 시트는 레이아웃 동일, 지면·성별·연령 영역 행 번호만 다름. 지면별은 차트와 얽혀
+// 맨 아래로 동적 이동(renderDetailPlacement)하므로 여기선 일자/성별/연령만 채운다.
+interface DetailLayout {
+  path: string;
+  dayRows: number[]; // 일자별 데이터행 (7행 고정)
+  dayTotalRow: number;
+  genderRows: Record<string, number>; // 양식 라벨 → 행
+  genderTotalRow: number;
+  ageRows: Record<string, number>;
+  ageTotalRow: number;
+}
+
+const SEARCH_DETAIL: DetailLayout = {
+  path: "xl/worksheets/sheet4.xml",
+  dayRows: [15, 16, 17, 18, 19, 20, 21],
+  dayTotalRow: 22,
+  genderRows: { 남성: 76, 여성: 77, 알수없음: 78 },
+  genderTotalRow: 79,
+  ageRows: { "만 13~18세": 82, "19~24세": 83, "25~29세": 84, "30~34세": 85, "35~39세": 86, "40~44세": 87, "45~49세": 88, "50세 이상": 89 },
+  ageTotalRow: 90,
 };
 
-function fillDetail(files: ZipFiles, model: ReportModel): void {
-  let xml = readText(files, DETAIL_PATH);
+const DISPLAY_DETAIL: DetailLayout = {
+  path: "xl/worksheets/sheet8.xml",
+  dayRows: [15, 16, 17, 18, 19, 20, 21],
+  dayTotalRow: 22,
+  genderRows: { 남성: 68, 여성: 69, 알수없음: 70 },
+  genderTotalRow: 71,
+  // 연령은 '알 수 없음' 행(82) 포함 9행 — 양식 패치(patch-template-age-unknown.ts)로 추가됨.
+  ageRows: { "만 13~18세": 74, "19~24세": 75, "25~29세": 76, "30~34세": 77, "35~39세": 78, "40~44세": 79, "45~49세": 80, "50세 이상": 81, "알 수 없음": 82 },
+  ageTotalRow: 83,
+};
+
+interface DetailData {
+  byDay: NamedMetrics[];
+  byGender: NamedMetrics[];
+  byAge: NamedMetrics[];
+}
+
+function fillDetailSheet(files: ZipFiles, layout: DetailLayout, data: DetailData, dashConv = false): void {
+  let xml = readText(files, layout.path);
 
   // 일자별 — byDay를 7행에 채우고 남는 행은 비움 (월간 N>7 확장은 별도 처리 예정)
-  DAY_ROWS.forEach((r, i) => {
-    const d = model.byDay[i];
+  layout.dayRows.forEach((r, i) => {
+    const d = data.byDay[i];
     if (d) {
       xml = setString(xml, `B${r}`, d.label);
       for (const [addr, v] of Object.entries(rowCells(r, display(d.metrics)))) xml = setNumber(xml, addr, v);
@@ -184,41 +214,64 @@ function fillDetail(files: ZipFiles, model: ReportModel): void {
     }
   });
 
-  // 지면별 / 성별 / 연령 — 양식 고정 라벨 행에 매칭
-  const byLabel = (rows: Record<string, number>, data: NamedMetrics[]) => {
-    const map = new Map(data.map((d) => [d.label, d.metrics]));
+  // 성별 / 연령 — 양식 고정 라벨 행에 매칭
+  const byLabel = (rows: Record<string, number>, named: NamedMetrics[]) => {
+    const map = new Map(named.map((d) => [d.label, d.metrics]));
     for (const [label, r] of Object.entries(rows)) {
       const m = map.get(label) ?? ZERO_METRICS;
       for (const [addr, v] of Object.entries(rowCells(r, display(m)))) xml = setNumber(xml, addr, v);
     }
   };
-  // 지면별은 차트와 얽혀 맨 아래로 동적 이동(renderDetailPlacement). 여기선 일자/성별/연령만.
-  byLabel(GENDER_ROWS, model.byGender);
-  byLabel(AGE_ROWS, model.byAge);
+  byLabel(layout.genderRows, data.byGender);
+  byLabel(layout.ageRows, data.byAge);
+
+  // 합계행 — 양식의 일부 칸이 SUM 수식이 아니라 샘플 숫자(구매완료 H=319 등)이거나, 성별 H는
+  // =M+N 수식이라 직접/간접이 0인 디스플레이에선 0이 된다. 합계행도 합산값으로 직접 채워 정합.
+  const fillTotal = (totalRow: number, named: NamedMetrics[]) => {
+    let sum = ZERO_METRICS;
+    for (const n of named) sum = addMetrics(sum, n.metrics);
+    for (const [addr, v] of Object.entries(rowCells(totalRow, display(sum)))) xml = setNumber(xml, addr, v);
+  };
+  fillTotal(layout.dayTotalRow, data.byDay);
+  fillTotal(layout.genderTotalRow, data.byGender);
+  fillTotal(layout.ageTotalRow, data.byAge);
+
+  // 디스플레이는 직접/간접 전환 split이 없어 M/N 칸을 '-'로 (데이터행 + 합계행 전부).
+  if (dashConv) {
+    const dashRows = [
+      ...layout.dayRows.filter((_, i) => data.byDay[i]), layout.dayTotalRow,
+      ...Object.values(layout.genderRows), layout.genderTotalRow,
+      ...Object.values(layout.ageRows), layout.ageTotalRow,
+    ];
+    for (const r of dashRows) {
+      xml = setString(xml, `M${r}`, "-");
+      xml = setString(xml, `N${r}`, "-");
+    }
+  }
 
   // 열 너비 — B열은 일자/성별/연령 라벨.
   const labels = [
     "일자", "성별", "연령대", "합계",
-    ...model.byDay.map((d) => d.label),
-    ...model.byGender.map((d) => d.label),
-    ...model.byAge.map((d) => d.label),
+    ...data.byDay.map((d) => d.label),
+    ...data.byGender.map((d) => d.label),
+    ...data.byAge.map((d) => d.label),
   ];
-  const rows = [...model.byDay, ...model.byGender, ...model.byAge].map((n) => n.metrics);
+  const rows = [...data.byDay, ...data.byGender, ...data.byAge].map((n) => n.metrics);
   xml = setColumnWidths(xml, metricColWidths(rows, labels));
 
-  writeText(files, DETAIL_PATH, xml);
+  writeText(files, layout.path, xml);
 
   // 일자별/성별/연령 표는 데이터행 + 합계행까지 B~N 가운데 정렬.
-  // (지면별은 renderDetailPlacement에서 이 행들을 -34행 당기므로 정렬 스타일은 셀과 함께 이동)
+  // (지면별은 renderDetailPlacement에서 이 행들을 위로 당기므로 정렬 스타일은 셀과 함께 이동)
   const cols = ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
   const centerRows = [
-    ...DAY_ROWS, 22, // 일자별 + 합계
-    76, 77, 78, 79, // 성별 + 합계
-    82, 83, 84, 85, 86, 87, 88, 89, 90, // 연령 + 합계
+    ...layout.dayRows, layout.dayTotalRow,
+    ...Object.values(layout.genderRows), layout.genderTotalRow,
+    ...Object.values(layout.ageRows), layout.ageTotalRow,
   ];
   const addrs: string[] = [];
   for (const r of centerRows) for (const c of cols) addrs.push(`${c}${r}`);
-  centerCells(files, DETAIL_PATH, addrs);
+  centerCells(files, layout.path, addrs);
 }
 
 // ── 표지 시트 (sheet1) ──
@@ -241,5 +294,12 @@ export function fillFixedSheets(files: ZipFiles, model: ReportModel): void {
   fillCover(files, model);
   fillSummary(files, model);
   fillSearchSummary(files, model);
-  fillDetail(files, model);
+  fillDetailSheet(files, SEARCH_DETAIL, { byDay: model.byDay, byGender: model.byGender, byAge: model.byAge });
+  if (model.hasDisplayDetail) {
+    fillDetailSheet(files, DISPLAY_DETAIL, {
+      byDay: model.displayByDay,
+      byGender: model.displayByGender,
+      byAge: model.displayByAge,
+    }, true);
+  }
 }

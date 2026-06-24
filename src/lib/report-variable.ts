@@ -171,11 +171,12 @@ export function renderCampaignSheet(
   const sSubtotal = harvestRowStyles(xml, 14);
   const sTotal = harvestRowStyles(xml, 27);
 
-  // 캠페인(B)/그룹(C) 가운데 정렬 — 데이터행·소계행 각각 스타일 복제. B는 유형별 세로 병합.
-  const ci = (st: Record<string, string>, col: string) =>
-    ` s="${addCenteredStyle(files, Number((st[col]?.match(/s="(\d+)"/) ?? [])[1] ?? 0))}"`;
-  const dataStyle = { ...sFirst, B: ci(sFirst, "B"), C: ci(sFirst, "C") };
-  const subStyle = { ...sSubtotal, B: ci(sSubtotal, "B"), C: ci(sSubtotal, "C") };
+  // 캠페인유형(B)=가운데, 캠페인(C)=왼쪽 정렬. 데이터행·소계행 각각 스타일 복제.
+  // B는 유형별 세로 병합(세로는 항상 가운데).
+  const ci = (st: Record<string, string>, col: string, h: "center" | "left") =>
+    ` s="${addCenteredStyle(files, Number((st[col]?.match(/s="(\d+)"/) ?? [])[1] ?? 0), h)}"`;
+  const dataStyle = { ...sFirst, B: ci(sFirst, "B", "center"), C: ci(sFirst, "C", "left") };
+  const subStyle = { ...sSubtotal, B: ci(sSubtotal, "B", "center"), C: ci(sSubtotal, "C", "left") };
 
   const CAMP_HEADERS: Record<string, string> = {
     B: "캠페인 유형", C: "캠페인", D: "노출", E: "클릭", F: "클릭률", G: "CPC", H: "총비용",
@@ -294,10 +295,10 @@ export function renderSummaryTypes(
   writeText(files, path, xml);
 }
 
-// ── 검색_상세 지면별 (sheet4) — 맨 아래로 이동 + 동적(노출된 모든 지면) ──
-// 옛 지면 섹션(행 24~57, 지면 그래프 자리 포함)을 진짜 삭제 → 성별/연령(58~)을 위로 당김(한 칸만 띄움).
-// 지면 그래프(chart4)는 제거, 성별/연령 그래프(chart5/6)는 데이터·앵커를 -34행 이동해 유지.
-// 표본 스타일은 삭제 전에 떠둔다: 24=타이틀 / 48=헤더 / 49=데이터 / 56=합계.
+// ── 검색_상세(sheet4) / 디스플레이_상세(sheet8) 지면별 — 맨 아래로 이동 + 동적(노출된 모든 지면) ──
+// 옛 지면 섹션(타이틀~지면 그래프 자리)을 진짜 삭제 → 성별/연령을 위로 당김(한 칸만 띄움).
+// 지면 그래프는 제거, 성별/연령 그래프는 데이터·앵커를 -DELTA 이동해 유지.
+// 표본 스타일은 삭제 전에 떠둔다(타이틀/헤더/데이터/합계 행).
 const DETAIL_PLACEMENT_COLS = ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
 const DETAIL_METRIC_COLS = ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
 
@@ -306,26 +307,60 @@ export interface PlacementRow {
   metrics: ReportMetrics;
 }
 
-export function renderDetailPlacement(files: ZipFiles, placements: PlacementRow[]): void {
-  const path = "xl/worksheets/sheet4.xml";
-  const DRAWING = "xl/drawings/drawing2.xml";
-  const DEL_FROM = 24, DEL_TO = 57, DELTA = DEL_TO - DEL_FROM + 1; // 34
+// 시트별 지면 영역 레이아웃. delFrom~delTo = 삭제할 옛 지면 영역(지면 그래프 자리 포함, 성별 타이틀 직전까지).
+export interface PlacementLayout {
+  sheetPath: string;
+  drawingPath: string;
+  placeChart: string; // 제거할 지면 그래프 파일명 (예: "chart4.xml")
+  shiftCharts: string[]; // 성별/연령 그래프 경로 — 데이터 ref/앵커 -DELTA 이동
+  delFrom: number;
+  delTo: number;
+  titleRow: number;
+  headerRow: number;
+  dataRow: number;
+  totalRow: number;
+}
+
+export const SEARCH_PLACEMENT: PlacementLayout = {
+  sheetPath: "xl/worksheets/sheet4.xml",
+  drawingPath: "xl/drawings/drawing2.xml",
+  placeChart: "chart4.xml",
+  shiftCharts: ["xl/charts/chart5.xml", "xl/charts/chart6.xml"],
+  delFrom: 24, delTo: 57, titleRow: 24, headerRow: 48, dataRow: 49, totalRow: 56,
+};
+
+export const DISPLAY_PLACEMENT: PlacementLayout = {
+  sheetPath: "xl/worksheets/sheet8.xml",
+  drawingPath: "xl/drawings/drawing3.xml",
+  placeChart: "chart8.xml",
+  shiftCharts: ["xl/charts/chart9.xml", "xl/charts/chart10.xml"],
+  delFrom: 24, delTo: 55, titleRow: 24, headerRow: 46, dataRow: 47, totalRow: 54,
+};
+
+export function renderDetailPlacement(
+  files: ZipFiles,
+  placements: PlacementRow[],
+  layout: PlacementLayout = SEARCH_PLACEMENT,
+  dashConv = false, // 디스플레이는 직접/간접 전환 split 없음 → M/N 칸 '-'
+): void {
+  const path = layout.sheetPath;
+  const DRAWING = layout.drawingPath;
+  const DEL_FROM = layout.delFrom, DEL_TO = layout.delTo, DELTA = DEL_TO - DEL_FROM + 1;
 
   // 1) 삭제 전에 지면 표본 스타일 확보
   let xml = readText(files, path);
-  const sTitle = harvestRowStyles(xml, 24);
-  const sHeader = harvestRowStyles(xml, 48);
-  const sData = harvestRowStyles(xml, 49);
-  const sTotal = harvestRowStyles(xml, 56);
+  const sTitle = harvestRowStyles(xml, layout.titleRow);
+  const sHeader = harvestRowStyles(xml, layout.headerRow);
+  const sData = harvestRowStyles(xml, layout.dataRow);
+  const sTotal = harvestRowStyles(xml, layout.totalRow);
 
-  // 2) 지면 그래프(chart4) 제거 → 3) 옛 지면 영역 진짜 삭제(아래 당겨 올림)
-  removeChartFromDrawing(files, DRAWING, "chart4.xml");
+  // 2) 지면 그래프 제거 → 3) 옛 지면 영역 진짜 삭제(아래 당겨 올림)
+  removeChartFromDrawing(files, DRAWING, layout.placeChart);
   xml = deleteRows(xml, DEL_FROM, DEL_TO);
   writeText(files, path, xml);
 
-  // 4) 성별/연령 그래프(chart5/6) 데이터 ref + 앵커를 -DELTA 이동(일자 chart3는 24행 미만이라 무영향)
-  shiftChartRowRefs(files, "xl/charts/chart5.xml", DEL_TO, DELTA);
-  shiftChartRowRefs(files, "xl/charts/chart6.xml", DEL_TO, DELTA);
+  // 4) 성별/연령 그래프 데이터 ref + 앵커를 -DELTA 이동(일자 그래프는 24행 미만이라 무영향)
+  for (const chart of layout.shiftCharts) shiftChartRowRefs(files, chart, DEL_TO, DELTA);
   shiftDrawingRowAnchors(files, DRAWING, DEL_TO, DELTA);
 
   // 5) 맨 아래에 지면 섹션 새로 생성(노출된 지면, 총비용순)
@@ -356,6 +391,7 @@ export function renderDetailPlacement(files: ZipFiles, placements: PlacementRow[
     noteMetrics(p.metrics);
     const v: Record<string, CellValue> = { B: p.label };
     metricValues(p.metrics).forEach((val, i) => (v[DETAIL_METRIC_COLS[i]] = val));
+    if (dashConv) { v.M = "-"; v.N = "-"; }
     rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sData, v));
     total = addMetrics(total, p.metrics);
   }
@@ -363,6 +399,7 @@ export function renderDetailPlacement(files: ZipFiles, placements: PlacementRow[
   noteMetrics(total);
   const tv: Record<string, CellValue> = { B: "합계" };
   metricValues(total).forEach((val, i) => (tv[DETAIL_METRIC_COLS[i]] = val));
+  if (dashConv) { tv.M = "-"; tv.N = "-"; }
   rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sTotal, tv));
 
   xml = appendRows(xml, rows);

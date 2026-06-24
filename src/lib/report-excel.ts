@@ -337,7 +337,9 @@ export function deleteRows(xml: string, from: number, to: number): string {
   const sdM = xml.match(/<sheetData>([\s\S]*?)<\/sheetData>/);
   if (!sdM) return xml;
   const out: string[] = [];
-  for (const m of sdM[1].matchAll(/<row r="(\d+)"[^>]*(?:\/>|>[\s\S]*?<\/row>)/g)) {
+  // [^>]*? non-greedy: self-closing 빈 행(<row .../>)에서 `/`를 먹어 \/> 분기를 놓치고
+  // 다음 행까지 삼키는 것 방지(sheet8 차트 자리 빈행에서 발생). sheet4 일반 행엔 영향 없음.
+  for (const m of sdM[1].matchAll(/<row r="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/row>)/g)) {
     const r = Number(m[1]);
     if (r >= from && r <= to) continue; // 삭제
     if (r > to) {
@@ -453,9 +455,10 @@ export function setRowHidden(xml: string, rowNum: number): string {
   );
 }
 
-// 기존 셀 스타일(cellXfs의 baseIdx)을 복제해 가로·세로 가운데 정렬을 추가한 새 스타일 인덱스 반환.
-// 병합 셀(캠페인/그룹)을 "병합하고 가운데 맞춤"으로 보이게 하는 데 사용.
-export function addCenteredStyle(files: ZipFiles, baseIdx: number): number {
+// 기존 셀 스타일(cellXfs의 baseIdx)을 복제해 정렬을 추가한 새 스타일 인덱스 반환.
+// 세로는 항상 가운데(병합 셀 대비), 가로는 horizontal 인자(기본 가운데). 병합 셀(캠페인/그룹)을
+// "병합하고 가운데/왼쪽 맞춤"으로 보이게 하는 데 사용.
+export function addCenteredStyle(files: ZipFiles, baseIdx: number, horizontal: "center" | "left" = "center"): number {
   let styles = readText(files, "xl/styles.xml");
   const cxM = styles.match(/<cellXfs count="(\d+)">([\s\S]*?)<\/cellXfs>/);
   if (!cxM) return baseIdx;
@@ -467,7 +470,7 @@ export function addCenteredStyle(files: ZipFiles, baseIdx: number): number {
     /\sapplyAlignment="[^"]*"/g,
     "",
   );
-  const newXf = `<xf${openAttrs} applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>`;
+  const newXf = `<xf${openAttrs} applyAlignment="1"><alignment horizontal="${horizontal}" vertical="center"/></xf>`;
   styles = styles.replace(
     /<cellXfs count="\d+">([\s\S]*?)<\/cellXfs>/,
     (_m, body) => `<cellXfs count="${count + 1}">${body}${newXf}</cellXfs>`,

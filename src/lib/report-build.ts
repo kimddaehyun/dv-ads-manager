@@ -13,7 +13,7 @@ import {
 } from "./report-excel";
 import { fillFixedSheets, type ReportModel, type NamedMetrics } from "./report-fill";
 import {
-  renderKeywordSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement,
+  renderKeywordSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement, DISPLAY_PLACEMENT,
   type KeywordGroup, type CampaignTypeGroup, type SummaryType,
 } from "./report-variable";
 import {
@@ -25,6 +25,7 @@ import {
   type DateRange, type ReportPreset,
 } from "./report-period";
 import { fetchGfaTotal, fetchGfaData, type DisplayType } from "./report-gfa";
+import { fetchGfaDetail } from "./report-gfa-detail";
 
 export interface ReportTarget {
   adAccountNo: number;
@@ -70,6 +71,14 @@ function ageLabel(api: string): string | null {
   return "50세 이상";
 }
 const AGE_ORDER = ["만 13~18세", "19~24세", "25~29세", "30~34세", "35~39세", "40~44세", "45~49세", "50세 이상"];
+
+// 디스플레이(GFA)는 연령표에 '알 수 없음' 칸이 있어(양식 sheet8 9행) 살린다. 검색광고는 양식에
+// 칸이 없어 ageLabel이 null로 제외한다.
+function displayAgeLabel(api: string): string | null {
+  if (api.replace(/\s/g, "").includes("알수없")) return "알 수 없음";
+  return ageLabel(api);
+}
+const DISPLAY_AGE_ORDER = [...AGE_ORDER, "알 수 없음"];
 
 function genderLabel(api: string): string {
   const t = (api || "").replace(/\s/g, "");
@@ -137,6 +146,32 @@ export async function buildReportModel(target: ReportTarget, range: DateRange, m
 
   const hasDisplay = gfaCur.impressions > 0 || gfaCur.cost > 0;
 
+  // 디스플레이_상세(일자/지면/성별/연령) — 비동기 다운로드 보고서(느림, 순차). 디스플레이 있을 때만.
+  // 실패하면(rate-limit/권한) graceful: hasDisplayDetail=false로 시트 제거.
+  let displayByDay: NamedMetrics[] = [];
+  let displayByPlacement: NamedMetrics[] = [];
+  let displayByGender: NamedMetrics[] = [];
+  let displayByAge: NamedMetrics[] = [];
+  let hasDisplayDetail = false;
+  if (hasDisplay) {
+    try {
+      const detail = await fetchGfaDetail(target.adAccountNo, cid, range);
+      const dayMap = new Map(detail.byDay.map((r) => [ymdToIso(r.label), r.metrics]));
+      displayByDay = eachDay(range).map((d) => {
+        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+        return { label: dayLabel(d), metrics: dayMap.get(k) ?? ZERO_METRICS };
+      });
+      displayByPlacement = detail.byPlacement
+        .filter((p) => p.metrics.impressions > 0)
+        .sort((a, b) => b.metrics.cost - a.metrics.cost);
+      displayByGender = orderedNamed(normalizeNamed(detail.byGender, genderLabel), GENDER_ORDER);
+      displayByAge = orderedNamed(normalizeNamed(detail.byAge, displayAgeLabel), DISPLAY_AGE_ORDER);
+      hasDisplayDetail = true;
+    } catch (e) {
+      console.warn("[dv-ads/report] 디스플레이 상세 수집 실패", e);
+    }
+  }
+
   return {
     advertiserName: target.name,
     periodText: `${range.since.replace(/-/g, ".")} ~ ${range.until.replace(/-/g, ".")}`,
@@ -151,9 +186,28 @@ export async function buildReportModel(target: ReportTarget, range: DateRange, m
     byPlacement: byPlaceRows, // 이미 동적 정렬된 NamedMetrics[]
     byGender: orderedNamed(byGenderMap, GENDER_ORDER),
     byAge: orderedNamed(byAgeMap, AGE_ORDER),
+    displayByDay,
+    displayByPlacement,
+    displayByGender,
+    displayByAge,
     hasSearch: true,
     hasDisplay,
+    hasDisplayDetail,
   };
+}
+
+// CSV raw 라벨 NamedMetrics[] → 양식 라벨로 정규화·합산 (성별/연령). labelFn null이면 제외.
+function normalizeNamed(
+  rows: NamedMetrics[],
+  labelFn: (raw: string) => string | null,
+): Map<string, ReportMetrics> {
+  const out = new Map<string, ReportMetrics>();
+  for (const r of rows) {
+    const label = labelFn(r.label);
+    if (!label) continue;
+    out.set(label, addMetrics(out.get(label) ?? ZERO_METRICS, r.metrics));
+  }
+  return out;
 }
 
 // 지면별: mediaNm별 동적. 노출(impressions)>0인 지면만, 총비용 내림차순. (고정 7버킷 폐기)
@@ -262,9 +316,16 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   // 검색_상세 지면별 → 맨 아래 동적 + 옛 영역 삭제 + 지면 그래프 제거(내부 처리) + 성별 그래프 여성색
   renderDetailPlacement(files, model.byPlacement);
   replaceChartColor(files, "xl/charts/chart5.xml", "92D050", "F67676");
+  // 디스플레이_상세도 동일 처리 (수집 성공 시). fillFixedSheets가 일자/성별/연령은 이미 채움.
+  if (model.hasDisplayDetail) {
+    renderDetailPlacement(files, model.displayByPlacement, DISPLAY_PLACEMENT, true);
+    replaceChartColor(files, "xl/charts/chart9.xml", "92D050", "F67676");
+  }
 
-  // 비진행 매체 시트 제거 (디스플레이 미연동 → 항상 제거. 파워링크/쇼핑 키워드 없으면 해당 시트 제거)
-  const toRemove = ["디스플레이", "디스플레이_상세"];
+  // 비진행 매체 시트 제거. 디스플레이(캠페인 표) 시트는 이번 범위 밖 → 항상 제거.
+  // 디스플레이_상세는 분해 수집 성공 시 유지. 키워드 시트는 데이터 없으면 제거.
+  const toRemove = ["디스플레이"];
+  if (!model.hasDisplayDetail) toRemove.push("디스플레이_상세");
   if (plKeywords.length === 0) toRemove.push("파워링크_키워드");
   if (shKeywords.length === 0) toRemove.push("쇼핑검색_키워드");
   removeSheets(files, toRemove);
