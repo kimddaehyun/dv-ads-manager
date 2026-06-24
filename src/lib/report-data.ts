@@ -84,11 +84,13 @@ export function num(v: string | undefined): number {
 }
 
 // 양식 한 행(금주/전주/매체별/일자별...)에 들어갈 정규화 지표.
+// 전환 파생값(전환율/전환당비용/ROAS)은 모두 '구매완료' 기준. 직접/간접 전환수만 별도 표기.
 export interface ReportMetrics {
   impressions: number; // C 노출
   clicks: number; // D 클릭
   cost: number; // G 총비용 (salesAmt)
-  revenue: number; // K 매출액 (convAmt 전체전환매출)
+  purchaseConv: number; // H 구매완료 전환수 (purchaseCcnt)
+  revenue: number; // K 매출액 = 구매완료 전환매출 (purchaseConvAmt)
   directConv: number; // M 직접 전환수 (drtCcnt)
   indirectConv: number; // N 간접 전환수 (idrtCcnt)
 }
@@ -97,18 +99,20 @@ export const ZERO_METRICS: ReportMetrics = {
   impressions: 0,
   clicks: 0,
   cost: 0,
+  purchaseConv: 0,
   revenue: 0,
   directConv: 0,
   indirectConv: 0,
 };
 
-// advanced-report row → ReportMetrics (양식 입력칸 6종만 추출, 파생은 양식 수식이 계산).
+// advanced-report row → ReportMetrics (양식 입력칸 추출, 파생은 양식 수식/metricValues가 계산).
 export function rowMetrics(row: string[], idx: Record<string, number>): ReportMetrics {
   return {
     impressions: num(row[idx["impCnt"]]),
     clicks: num(row[idx["clkCnt"]]),
     cost: num(row[idx["salesAmt"]]),
-    revenue: num(row[idx["convAmt"]]),
+    purchaseConv: num(row[idx["purchaseCcnt"]]),
+    revenue: num(row[idx["purchaseConvAmt"]]),
     directConv: num(row[idx["drtCcnt"]]),
     indirectConv: num(row[idx["idrtCcnt"]]),
   };
@@ -117,7 +121,6 @@ export function rowMetrics(row: string[], idx: Record<string, number>): ReportMe
 // 양식 12지표 순서: 노출/클릭/클릭률/CPC/총비용/구매완료/전환율/전환당비용/매출액/ROAS/직접/간접.
 // 비율(클릭률/전환율/ROAS)은 소수 — 양식 셀 서식이 %로 표시.
 export function metricValues(m: ReportMetrics): number[] {
-  const conv = m.directConv + m.indirectConv;
   const d = (a: number, b: number) => (b ? a / b : 0);
   return [
     m.impressions,
@@ -125,11 +128,11 @@ export function metricValues(m: ReportMetrics): number[] {
     d(m.clicks, m.impressions),
     d(m.cost, m.clicks),
     m.cost,
-    conv,
-    d(conv, m.clicks),
-    d(m.cost, conv),
-    m.revenue,
-    d(m.revenue, m.cost),
+    m.purchaseConv, // 구매완료
+    d(m.purchaseConv, m.clicks), // 전환율 (구매완료 기준)
+    d(m.cost, m.purchaseConv), // 전환당비용 (구매완료 기준)
+    m.revenue, // 매출액 (구매완료 전환매출)
+    d(m.revenue, m.cost), // ROAS (구매완료 기준)
     m.directConv,
     m.indirectConv,
   ];
@@ -166,6 +169,7 @@ export function addMetrics(a: ReportMetrics, b: ReportMetrics): ReportMetrics {
     impressions: a.impressions + b.impressions,
     clicks: a.clicks + b.clicks,
     cost: a.cost + b.cost,
+    purchaseConv: a.purchaseConv + b.purchaseConv,
     revenue: a.revenue + b.revenue,
     directConv: a.directConv + b.directConv,
     indirectConv: a.indirectConv + b.indirectConv,

@@ -164,6 +164,9 @@ export function renderCampaignSheet(
   groups: CampaignTypeGroup[],
 ): void {
   let xml = readText(files, sheetPath);
+  // 헤더(행 10) 라벨 변경: 캠페인 → 캠페인 유형, 그룹 → 캠페인 (B열=유형, C열=광고그룹 데이터는 그대로)
+  xml = setString(xml, "B10", "캠페인 유형");
+  xml = setString(xml, "C10", "캠페인");
   const sFirst = harvestRowStyles(xml, 11);
   const sSubtotal = harvestRowStyles(xml, 14);
   const sTotal = harvestRowStyles(xml, 27);
@@ -175,7 +178,7 @@ export function renderCampaignSheet(
   const subStyle = { ...sSubtotal, B: ci(sSubtotal, "B"), C: ci(sSubtotal, "C") };
 
   const CAMP_HEADERS: Record<string, string> = {
-    B: "캠페인", C: "그룹", D: "노출", E: "클릭", F: "클릭률", G: "CPC", H: "총비용",
+    B: "캠페인 유형", C: "캠페인", D: "노출", E: "클릭", F: "클릭률", G: "CPC", H: "총비용",
     I: "구매완료", J: "전환율", K: "전환당비용", L: "매출액", M: "ROAS", N: "직접 전환수", O: "간접 전환수",
   };
   const wmax: Record<string, number> = {};
@@ -266,19 +269,25 @@ export function renderSummaryTypes(
   let r = 31;
   let grand = ZERO_METRICS;
 
-  const emitTypes = (types: SummaryType[], subLabel: string, subStyle: Record<string, string>) => {
+  // dashConv=true면 직접(M)/간접(N) 전환 칸을 '-'로 (디스플레이는 직간접 데이터 없음)
+  const cellsFor = (m: ReportMetrics, dashConv: boolean): Record<string, CellValue> => {
+    const cells = metricCells(TYPE_METRIC_COLS, m);
+    if (dashConv) { cells.M = "-"; cells.N = "-"; }
+    return cells;
+  };
+  const emitTypes = (types: SummaryType[], subLabel: string, subStyle: Record<string, string>, dashConv: boolean) => {
     if (types.length === 0) return;
     let sum = ZERO_METRICS;
     for (const t of types) {
-      rows.push(buildRow(r++, TYPE_COLS, sType, { B: t.label, ...metricCells(TYPE_METRIC_COLS, t.metrics) }));
+      rows.push(buildRow(r++, TYPE_COLS, sType, { B: t.label, ...cellsFor(t.metrics, dashConv) }));
       sum = addMetrics(sum, t.metrics);
     }
-    rows.push(buildRow(r++, TYPE_COLS, subStyle, { B: subLabel, ...metricCells(TYPE_METRIC_COLS, sum) }));
+    rows.push(buildRow(r++, TYPE_COLS, subStyle, { B: subLabel, ...cellsFor(sum, dashConv) }));
     grand = addMetrics(grand, sum);
   };
 
-  emitTypes(searchTypes, "검색광고 소계", sSearchSub);
-  emitTypes(displayTypes, "디스플레이 소계", sDisplaySub);
+  emitTypes(searchTypes, "검색광고 소계", sSearchSub, false);
+  emitTypes(displayTypes, "디스플레이 소계", sDisplaySub, true);
   rows.push(buildRow(r, TYPE_COLS, sTotal, { B: "전체 합계", ...metricCells(TYPE_METRIC_COLS, grand) }));
 
   xml = replaceRowsFrom(xml, 31, rows);

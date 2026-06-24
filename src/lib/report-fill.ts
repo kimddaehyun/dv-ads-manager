@@ -6,10 +6,10 @@
 //
 // 가변형 시트(검색광고 섹션2, 키워드 시트)는 행 수가 가변이라 별도 모듈에서 동적 생성.
 
-import { applyCells, readText, writeText, setString, setNumber, setRowHidden, setColumnWidths } from "./report-excel";
+import { applyCells, readText, writeText, setString, setNumber, setRowHidden, setColumnWidths, centerCells } from "./report-excel";
 import type { ZipFiles } from "./report-excel";
 import {
-  metricValues, visualLen, widthFor, metricStr, METRIC_HEADERS, type ReportMetrics,
+  metricValues, visualLen, widthFor, metricStr, METRIC_HEADERS, ZERO_METRICS, type ReportMetrics,
 } from "./report-data";
 
 // 라벨열(B) + 12지표열(C~N) 너비 계산. metricRows=표시 지표행, labels=B열 라벨 후보.
@@ -54,18 +54,17 @@ const div = (a: number, b: number) => (b ? a / b : 0);
 
 // 지표 → 양식 12열(C~N) 표시값. ctr/crto/roas는 비율(소수), 양식 셀 서식이 %로 표시.
 function display(m: ReportMetrics): Record<string, number> {
-  const conv = m.directConv + m.indirectConv;
   return {
     C: m.impressions,
     D: m.clicks,
     E: div(m.clicks, m.impressions),
     F: div(m.cost, m.clicks),
     G: m.cost,
-    H: conv,
-    I: div(conv, m.clicks),
-    J: div(m.cost, conv),
-    K: m.revenue,
-    L: div(m.revenue, m.cost),
+    H: m.purchaseConv, // 구매완료
+    I: div(m.purchaseConv, m.clicks), // 전환율 (구매완료 기준)
+    J: div(m.cost, m.purchaseConv), // 전환당비용 (구매완료 기준)
+    K: m.revenue, // 매출액 (구매완료 전환매출)
+    L: div(m.revenue, m.cost), // ROAS (구매완료 기준)
     M: m.directConv,
     N: m.indirectConv,
   };
@@ -126,6 +125,12 @@ function fillSummary(files: ZipFiles, model: ReportModel): void {
   });
   if (!model.hasDisplay) {
     writeText(files, SUMMARY_PATH, setRowHidden(readText(files, SUMMARY_PATH), 26));
+  } else {
+    // 디스플레이(GFA)는 직접/간접 전환 데이터가 없어 M/N 칸은 '-' 표기 (합계행 SUM은 텍스트 무시 → 검색광고분만)
+    let xml = readText(files, SUMMARY_PATH);
+    xml = setString(xml, "M26", "-");
+    xml = setString(xml, "N26", "-");
+    writeText(files, SUMMARY_PATH, xml);
   }
   // 열 너비 — B열은 섹션3 캠페인유형명까지 들어가므로 알려진 라벨 전부 고려.
   const labels = [
@@ -183,7 +188,7 @@ function fillDetail(files: ZipFiles, model: ReportModel): void {
   const byLabel = (rows: Record<string, number>, data: NamedMetrics[]) => {
     const map = new Map(data.map((d) => [d.label, d.metrics]));
     for (const [label, r] of Object.entries(rows)) {
-      const m = map.get(label) ?? { impressions: 0, clicks: 0, cost: 0, revenue: 0, directConv: 0, indirectConv: 0 };
+      const m = map.get(label) ?? ZERO_METRICS;
       for (const [addr, v] of Object.entries(rowCells(r, display(m)))) xml = setNumber(xml, addr, v);
     }
   };
@@ -202,6 +207,18 @@ function fillDetail(files: ZipFiles, model: ReportModel): void {
   xml = setColumnWidths(xml, metricColWidths(rows, labels));
 
   writeText(files, DETAIL_PATH, xml);
+
+  // 일자별/성별/연령 표는 데이터행 + 합계행까지 B~N 가운데 정렬.
+  // (지면별은 renderDetailPlacement에서 이 행들을 -34행 당기므로 정렬 스타일은 셀과 함께 이동)
+  const cols = ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+  const centerRows = [
+    ...DAY_ROWS, 22, // 일자별 + 합계
+    76, 77, 78, 79, // 성별 + 합계
+    82, 83, 84, 85, 86, 87, 88, 89, 90, // 연령 + 합계
+  ];
+  const addrs: string[] = [];
+  for (const r of centerRows) for (const c of cols) addrs.push(`${c}${r}`);
+  centerCells(files, DETAIL_PATH, addrs);
 }
 
 // ── 표지 시트 (sheet1) ──

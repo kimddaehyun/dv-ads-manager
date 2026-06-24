@@ -476,6 +476,31 @@ export function addCenteredStyle(files: ZipFiles, baseIdx: number): number {
   return count;
 }
 
+// 지정 셀들의 스타일을 '가로·세로 가운데 정렬' 변형으로 교체. 기존 스타일별 centered 변형을
+// 캐시 재사용해 중복 스타일 폭증을 막는다(고정 시트의 일자/성별/연령 표 가운데정렬용).
+export function centerCells(files: ZipFiles, sheetPath: string, addrs: string[]): void {
+  let xml = readText(files, sheetPath);
+  const cache = new Map<number, number>();
+  const centeredFor = (base: number): number => {
+    let c = cache.get(base);
+    if (c == null) { c = addCenteredStyle(files, base); cache.set(base, c); }
+    return c;
+  };
+  for (const addr of addrs) {
+    const re = new RegExp(`<c r="${addr}"([^>]*?)(/?)>`);
+    const m = xml.match(re);
+    if (!m) continue;
+    const attrs = m[1];
+    const base = Number((attrs.match(/\ss="(\d+)"/) ?? [])[1] ?? 0);
+    const idx = centeredFor(base);
+    const newAttrs = /\ss="\d+"/.test(attrs)
+      ? attrs.replace(/\ss="\d+"/, ` s="${idx}"`)
+      : `${attrs} s="${idx}"`;
+    xml = xml.replace(re, `<c r="${addr}"${newAttrs}${m[2]}>`);
+  }
+  writeText(files, sheetPath, xml);
+}
+
 // 열 너비 설정(letter→width). 기존 <cols> 너비는 유지하고 지정 열만 덮어씀.
 function colLetterToNum(c: string): number {
   let n = 0;

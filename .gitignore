@@ -12,3 +12,4 @@ dist-zip
 *.tsbuildinfo
 .superpowers
 .playwright-mcp
+.gstack/

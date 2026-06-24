@@ -1,7 +1,8 @@
 // F-Report orchestration — 실데이터(advanced-report) 수집 → ReportModel 조립 → 양식 주입 → xlsx bytes.
 //
-// 검색광고(SA)만 완전 연결(advanced-report 동기, 메모리 project_f_report_endpoints). 디스플레이(GFA)는
-// 분해 endpoint 미정찰이라 이번 단계 제외 — hasDisplay=false로 디스플레이 시트 2개 제거.
+// 검색광고(SA)는 advanced-report 동기 수집으로 완전 연결(메모리 project_f_report_endpoints).
+// 디스플레이(GFA)는 종합(합계+유형별)까지 연결(report-gfa.ts) - 분해(일자/지면/성별/연령)
+// 디스플레이_상세 시트는 비동기 다운로드 보고서 파이프라인 작업 후 연결 예정, 현재는 시트 제거.
 //
 // 라벨 매핑(캠페인유형/지면/연령/성별)은 best-effort. 실데이터로 검증·보정 필요(특히 지면 7버킷).
 
@@ -23,6 +24,7 @@ import {
   rangeForPreset, previousRange, eachDay, dayLabel, ymdToIso,
   type DateRange, type ReportPreset,
 } from "./report-period";
+import { fetchGfaTotal, fetchGfaData, type DisplayType } from "./report-gfa";
 
 export interface ReportTarget {
   adAccountNo: number;
@@ -36,32 +38,36 @@ export interface ReportMeta {
 }
 
 // ── 라벨 매핑 (advanced-report 값 → 양식 라벨) ──
-// 캠페인유형: nccCampaignTp. 브랜드검색+신제품검색은 양식상 한 줄("브랜드·신제품검색")로 합산.
+// 캠페인유형: nccCampaignTp. 실데이터 raw 값(2026-06-24 라이브 확인):
+// "파워링크" / "쇼핑검색" / "브랜드검색/신제품검색" / "플레이스" / "파워컨텐츠".
+// 브랜드+신제품은 API가 이미 한 문자열로 합쳐 주므로 그 키로 양식 라벨에 매핑.
 const CAMPAIGN_TYPE_LABEL: Record<string, string> = {
   파워링크: "파워링크",
   쇼핑검색: "쇼핑검색광고",
   플레이스: "플레이스",
+  "브랜드검색/신제품검색": "브랜드·신제품검색",
+  파워컨텐츠: "파워컨텐츠",
+  // 방어: 혹시 분리되어 오는 계정 대비
   브랜드검색: "브랜드·신제품검색",
   신제품검색: "브랜드·신제품검색",
-  파워컨텐츠: "파워컨텐츠",
 };
 function campaignTypeLabel(apiTp: string): string {
   return CAMPAIGN_TYPE_LABEL[apiTp.trim()] ?? apiTp.trim();
 }
 
+// 연령 raw("14세 ~ 18세","50세 ~ 54세","60세 이상"...)의 시작 나이로 양식 8버킷에 매핑.
+// 50세 이상은 잘게 쪼개진 버킷(50~54/55~59/60+)이 와도 모두 "50세 이상"으로 합산.
 function ageLabel(api: string): string | null {
-  const n = (api.match(/(\d+)/) ?? [])[1];
-  switch (n) {
-    case "13": case "14": return "만 13~18세";
-    case "19": return "19~24세";
-    case "25": return "25~29세";
-    case "30": return "30~34세";
-    case "35": return "35~39세";
-    case "40": return "40~44세";
-    case "45": return "45~49세";
-    case "50": return "50세 이상";
-    default: return null;
-  }
+  const n = Number((api.match(/(\d+)/) ?? [])[1]);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n < 19) return "만 13~18세";
+  if (n < 25) return "19~24세";
+  if (n < 30) return "25~29세";
+  if (n < 35) return "30~34세";
+  if (n < 40) return "35~39세";
+  if (n < 45) return "40~44세";
+  if (n < 50) return "45~49세";
+  return "50세 이상";
 }
 const AGE_ORDER = ["만 13~18세", "19~24세", "25~29세", "30~34세", "35~39세", "40~44세", "45~49세", "50세 이상"];
 
@@ -110,13 +116,17 @@ export async function buildReportModel(target: ReportTarget, range: DateRange, m
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
   const prev = previousRange(range);
 
-  const [totalCur, totalPrev, byDayMap, byPlaceRows, byGenderMap, byAgeMap] = await Promise.all([
+  // GFA(디스플레이)는 계정에 없거나 권한 문제면 0으로 graceful — hasDisplay로 시트/행 표시 결정.
+  const gfaSafe = (r: DateRange) => fetchGfaTotal(target.adAccountNo, cid, r).catch(() => ZERO_METRICS);
+  const [saCur, saPrev, byDayMap, byPlaceRows, byGenderMap, byAgeMap, gfaCur, gfaPrev] = await Promise.all([
     fetchTotal(cid, range),
     fetchTotal(cid, prev),
     fetchAggregated(cid, range, "ymd", (v) => ymdToIso(v)),
     fetchPlacement(cid, range),
     fetchAggregated(cid, range, "criterionGenderNm", genderLabel),
     fetchAggregated(cid, range, "criterionAgeTpNm", ageLabel),
+    gfaSafe(range),
+    gfaSafe(prev),
   ]);
 
   // 일자별: 기간 내 모든 날짜를 라벨로, 데이터 매칭(없으면 0)
@@ -125,22 +135,24 @@ export async function buildReportModel(target: ReportTarget, range: DateRange, m
     return { label: dayLabel(d), metrics: byDayMap.get(iso) ?? ZERO_METRICS };
   });
 
+  const hasDisplay = gfaCur.impressions > 0 || gfaCur.cost > 0;
+
   return {
     advertiserName: target.name,
     periodText: `${range.since.replace(/-/g, ".")} ~ ${range.until.replace(/-/g, ".")}`,
     authorName: meta.authorName,
     createdDate: meta.createdDate,
-    totalCurrent: totalCur,
-    totalPrev: totalPrev,
-    searchCurrent: totalCur, // SA 전용(디스플레이 미연동) → 전체=검색광고
-    searchPrev: totalPrev,
-    displayCurrent: ZERO_METRICS,
+    totalCurrent: addMetrics(saCur, gfaCur), // 종합 = 검색광고 + 디스플레이
+    totalPrev: addMetrics(saPrev, gfaPrev),
+    searchCurrent: saCur,
+    searchPrev: saPrev,
+    displayCurrent: gfaCur,
     byDay,
     byPlacement: byPlaceRows, // 이미 동적 정렬된 NamedMetrics[]
     byGender: orderedNamed(byGenderMap, GENDER_ORDER),
     byAge: orderedNamed(byAgeMap, AGE_ORDER),
     hasSearch: true,
-    hasDisplay: false,
+    hasDisplay,
   };
 }
 
@@ -227,9 +239,10 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   const url = chrome.runtime.getURL("src/assets/report-template.xlsx");
   const files: ZipFiles = openXlsx(new Uint8Array(await (await fetch(url)).arrayBuffer()));
 
-  const [model, searchTypes, campGroups, plKeywords, shKeywords] = await Promise.all([
+  const [model, searchTypes, displayTypes, campGroups, plKeywords, shKeywords] = await Promise.all([
     buildReportModel(target, range, meta),
     fetchSummarySearchTypes(cid, range),
+    fetchGfaData(target.adAccountNo, cid, range).then((d) => d.byType).catch(() => [] as DisplayType[]),
     fetchCampaignGroups(cid, range),
     // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님). 비용 상위 N개.
     fetchKeywordGroups(cid, range, "파워링크", "expKeyword", 50),
@@ -242,7 +255,7 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   removeSheetDrawing(files, "xl/worksheets/sheet2.xml");
   writeText(files, "xl/worksheets/sheet2.xml", hideRowRange(readText(files, "xl/worksheets/sheet2.xml"), 3, 16));
   // 동적: 종합 유형별 / 검색광고 캠페인별 / 키워드
-  renderSummaryTypes(files, searchTypes, []);
+  renderSummaryTypes(files, searchTypes, displayTypes);
   renderCampaignSheet(files, "xl/worksheets/sheet3.xml", campGroups);
   renderKeywordSheet(files, "xl/worksheets/sheet5.xml", plKeywords);
   renderKeywordSheet(files, "xl/worksheets/sheet6.xml", shKeywords, "쇼핑검색 키워드별 성과");
