@@ -263,7 +263,11 @@ async function fetchPlacement(customerId: number, range: DateRange): Promise<Nam
 // 표가 그룹 행이라 그룹 일할 비용으로 주입한다. 일할 공식·날짜 규칙은 report-period.ts 참조.
 // raw 계약을 한 번 받아 금주/전주 두 기간으로 각각 proratedBrand()를 돌린다(전주는 다른 기간).
 interface BrandCampaignRow { nccCampaignId?: string }
-interface BrandContractBlock {
+// time-contracts 평면 배열 1건 = 계약 1건 (현재·예약·종료·취소 전부 포함).
+interface BrandTimeContract {
+  nccTimeContractId?: string;
+  nccAdgroupId?: string;
+  campaignTp?: string;
   contractAmt?: number;
   contractStatus?: string;
   contractStartDt?: string;
@@ -272,11 +276,6 @@ interface BrandContractBlock {
   exposureEndDt?: string;
   cancelStatus?: string;
   cancelTm?: string;
-}
-interface BrandContractRow {
-  nccAdgroupId: string;
-  currentTimeContract?: BrandContractBlock;
-  nextTimeContract?: BrandContractBlock;
 }
 // 일할 입력으로 쓸 raw 계약 1건 (광고그룹ID + 계약 기간/금액/노출·취소 필드).
 export type BrandRawContract = ProrationContract & { adgroupId: string; contractStatus?: string };
@@ -293,39 +292,42 @@ async function fetchBrandContracts(customerId: number): Promise<BrandRawContract
   const adgroupIds = agLists.flat().map((a) => a.nccAdgroupId).filter((x): x is string => !!x);
   if (adgroupIds.length === 0) return [];
 
+  // /time-contracts 는 x-ad-customer-id 계정 범위로 브랜드검색 계약 전체(현재·예약·종료·취소)를
+  // 평면 배열로 준다 — after-current-summaries(현재+다음만)와 달리 과거 종료 계약까지 포함하므로
+  // 지난달 등 과거 기간 리포트의 일할 비용이 정확히 잡힌다(겹침 없는 계약은 proration이 0으로 제외).
+  // nccAdgroupIds 파라미터는 실제 필터링하지 않고(계정 전체 반환) 라우트 충족용이라, chunk마다 같은
+  // 집합이 와도 nccTimeContractId로 dedup. 삭제된 옛 광고그룹 소속 계약도 함께 와 과거 집행분을 보존.
   const out: BrandRawContract[] = [];
+  const seen = new Set<string>();
   const CHUNK = 100;
   for (let i = 0; i < adgroupIds.length; i += CHUNK) {
     const chunk = adgroupIds.slice(i, i + CHUNK);
-    const rows = await authFetch<BrandContractRow[]>(
-      "/apis/sa/api/ncc/time-contracts/after-current-summaries?nccAdgroupIds=" +
-        encodeURIComponent(chunk.join(",")),
+    const rows = await authFetch<BrandTimeContract[]>(
+      "/apis/sa/api/ncc/time-contracts?nccAdgroupIds=" + encodeURIComponent(chunk.join(",")),
       undefined, customerId,
-    ).catch(() => [] as BrandContractRow[]);
-    for (const row of rows ?? []) {
-      // current + next 둘 다 후보 — 일할 겹침이 0이면 자연 제외되므로 status 필터 불필요.
-      for (const block of [row.currentTimeContract, row.nextTimeContract]) {
-        if (!block?.contractAmt) continue;
-        out.push({
-          adgroupId: row.nccAdgroupId,
-          contractAmt: block.contractAmt,
-          contractStartDt: block.contractStartDt,
-          contractEndDt: block.contractEndDt,
-          exposureStartDt: block.exposureStartDt,
-          exposureEndDt: block.exposureEndDt,
-          // 정상 계약은 cancelStatus="NOT_CANCELED"(truthy) + cancelTm=null (라이브 확인).
-          // 실제 취소된 계약만 cancelTm을 일할 끝으로 반영한다.
-          cancelTm:
-            block.cancelStatus && block.cancelStatus !== "NOT_CANCELED" && block.cancelTm
-              ? block.cancelTm
-              : undefined,
-          contractStatus: block.contractStatus,
-        });
-      }
+    ).catch(() => [] as BrandTimeContract[]);
+    for (const c of rows ?? []) {
+      if (!c?.contractAmt || !c.nccAdgroupId) continue;
+      const key = c.nccTimeContractId ?? `${c.nccAdgroupId}:${c.contractStartDt}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        adgroupId: c.nccAdgroupId,
+        contractAmt: c.contractAmt,
+        contractStartDt: c.contractStartDt,
+        contractEndDt: c.contractEndDt,
+        exposureStartDt: c.exposureStartDt,
+        exposureEndDt: c.exposureEndDt,
+        // 정상 계약은 cancelStatus="NOT_CANCELED" + cancelTm=null. 실제 취소된 계약만 cancelTm을
+        // 일할 끝으로 반영(노출전 취소는 cancelTm이 시작보다 앞이라 overlap 0으로 자연 제외).
+        cancelTm:
+          c.cancelStatus && c.cancelStatus !== "NOT_CANCELED" && c.cancelTm
+            ? c.cancelTm
+            : undefined,
+        contractStatus: c.contractStatus,
+      });
     }
   }
-  // 라이브 검증용 raw 1회 덤프 (날짜 규칙/필드 확인). 운영엔 영향 없음.
-  if (out.length > 0) console.debug("[dv-ads/report] 브랜드 계약 raw", out);
   return out;
 }
 
