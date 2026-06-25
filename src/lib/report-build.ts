@@ -51,11 +51,11 @@ const CAMPAIGN_TYPE_LABEL: Record<string, string> = {
   파워링크: "파워링크",
   쇼핑검색: "쇼핑검색광고",
   플레이스: "플레이스",
-  "브랜드검색/신제품검색": "브랜드·신제품검색",
+  "브랜드검색/신제품검색": "브랜드검색/신제품검색",
   파워컨텐츠: "파워컨텐츠",
   // 방어: 혹시 분리되어 오는 계정 대비
-  브랜드검색: "브랜드·신제품검색",
-  신제품검색: "브랜드·신제품검색",
+  브랜드검색: "브랜드검색/신제품검색",
+  신제품검색: "브랜드검색/신제품검색",
 };
 function campaignTypeLabel(apiTp: string): string {
   return CAMPAIGN_TYPE_LABEL[apiTp.trim()] ?? apiTp.trim();
@@ -93,7 +93,7 @@ function genderLabel(api: string): string {
 }
 const GENDER_ORDER = ["남성", "여성", "알수없음"];
 
-const SEARCH_TYPE_ORDER = ["파워링크", "쇼핑검색광고", "플레이스", "브랜드·신제품검색", "파워컨텐츠"];
+const SEARCH_TYPE_ORDER = ["파워링크", "쇼핑검색광고", "플레이스", "브랜드검색/신제품검색", "파워컨텐츠"];
 
 // ── advanced-report 헬퍼 ──
 async function fetchTotal(customerId: number, range: DateRange): Promise<ReportMetrics> {
@@ -336,7 +336,7 @@ async function fetchSummarySearchTypes(
   const map = await fetchAggregated(customerId, range, "nccCampaignTp", campaignTypeLabel);
   return SEARCH_TYPE_ORDER.filter((l) => map.has(l)).map((label) => {
     const metrics = map.get(label)!;
-    if (label === "브랜드·신제품검색" && brandTotal > 0) {
+    if (label === "브랜드검색/신제품검색" && brandTotal > 0) {
       return { label, metrics: { ...metrics, cost: metrics.cost + brandTotal } };
     }
     return { label, metrics };
