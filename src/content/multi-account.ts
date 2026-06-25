@@ -600,9 +600,11 @@ async function renderListView(wrap: HTMLElement) {
   wrap.replaceChildren(fragment);
 
   // ─── 4단계: paint (이제 table이 popoverEl 서브트리에 있어 findRow 동작) ───
+  // 캐시가 있으면 즉시 표시. 없는 행은 직후 backgroundRefreshStale이 반드시 새로고침하므로
+  // "-" 대신 스켈레톤으로 시작해 로딩 중임을 보여준다 (데이터 도착 시 paintRow가 교체).
   for (const { entry, snap } of sorted) {
     if (snap) paintRow(entry.adAccountNo, snap, meta[entry.adAccountNo]);
-    else paintRowEmpty(entry.adAccountNo);
+    else paintRowLoading(entry.adAccountNo);
   }
   void refreshBadge();
 
@@ -1628,8 +1630,7 @@ function paintRowLoading(adAccountNo: number) {
   if (!popoverEl) return;
   const row = findRow(adAccountNo);
   if (!row) return;
-  row.classList.add("dvads-multi-tr-loading");
-  row.classList.remove("dvads-multi-tr-empty");
+  paintRowSkeleton(row);
 }
 
 // 데이터 셀(data-k)별 스켈레톤 바 폭. 컬럼 성격에 맞춰 살짝씩 다르게 줘 자연스러운 로딩 모양.
@@ -1645,21 +1646,24 @@ const SKEL_CELL_WIDTHS: Record<string, number> = {
   roas: 44,
 };
 
+// 한 행의 데이터 셀(data-k)을 shimmer 스켈레톤으로 덮는다. 로딩 시작 시 호출 -> 이후
+// paintRow가 setCell(textContent 대입)로 실제 수치를 넣으면 스켈레톤 span이 자동으로 밀려난다.
+function paintRowSkeleton(row: HTMLTableRowElement): void {
+  row.classList.add("dvads-multi-tr-loading");
+  row.classList.remove("dvads-multi-tr-empty");
+  for (const [k, w] of Object.entries(SKEL_CELL_WIDTHS)) {
+    const td = row.querySelector<HTMLTableCellElement>(`td[data-k="${k}"]`);
+    if (td) td.innerHTML = `<span class="dvads-multi-skel" style="width:${w}px"></span>`;
+  }
+}
+
 // 광고 유형 필터 토글 시 list view 전 행의 데이터 셀을 shimmer 스켈레톤으로 덮는다.
-// 이후 refreshRow -> paintRow가 행별 실제 수치로 setCell(textContent 대입) 하면서
-// 스켈레톤 span을 자동으로 밀어낸다. 토글은 list view kebab에서만 트리거되므로 search view는 무관.
+// 토글은 list view kebab에서만 트리거되므로 search view는 무관.
 function paintAllRowsSkeleton(): void {
   if (!popoverEl) return;
   popoverEl
     .querySelectorAll<HTMLTableRowElement>("tr.dvads-multi-tr")
-    .forEach((row) => {
-      row.classList.add("dvads-multi-tr-loading");
-      row.classList.remove("dvads-multi-tr-empty");
-      for (const [k, w] of Object.entries(SKEL_CELL_WIDTHS)) {
-        const td = row.querySelector<HTMLTableCellElement>(`td[data-k="${k}"]`);
-        if (td) td.innerHTML = `<span class="dvads-multi-skel" style="width:${w}px"></span>`;
-      }
-    });
+    .forEach((row) => paintRowSkeleton(row));
 }
 
 // ─── 알림 임계값 다이얼로그 + 배지 갱신 ─────────────────────────────────
