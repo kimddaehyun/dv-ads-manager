@@ -345,25 +345,49 @@ async function fetchSummarySearchTypes(
   });
 }
 
-// 검색광고 캠페인별(섹션2): 유형 → 광고그룹 행. 브랜드 그룹은 비용을 노출중 계약금액으로 대체.
+// 검색광고 캠페인별(섹션2): 유형 → 캠페인 → 광고그룹 행. 브랜드 그룹은 비용을 계약 일할금액으로 대체.
+type CampGroupRow = { campaign: string; group: string; metrics: ReportMetrics };
 async function fetchCampaignGroups(
   customerId: number, range: DateRange, brandByAdgroup: Map<string, number>,
 ): Promise<CampaignTypeGroup[]> {
-  const res = await fetchAdvancedReport({ attributes: ["nccCampaignTp", "nccAdgroupId"], range, customerId });
+  const res = await fetchAdvancedReport({
+    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId"], range, customerId,
+  });
   const idx = colIndex(res.head);
-  const byType = new Map<string, { group: string; metrics: ReportMetrics }[]>();
+  const byType = new Map<string, CampGroupRow[]>();
   for (const r of res.rows) {
     const type = campaignTypeLabel(r[idx["nccCampaignTp"]] ?? "");
-    const ent = parseEntity(r[idx["nccAdgroupId"]] ?? "");
-    if (!ent.name) continue;
+    const campEnt = parseEntity(r[idx["nccCampaignId"]] ?? "");
+    const groupEnt = parseEntity(r[idx["nccAdgroupId"]] ?? "");
+    if (!groupEnt.name) continue;
     let metrics = rowMetrics(r, idx);
-    const contract = brandByAdgroup.get(ent.id);
+    const contract = brandByAdgroup.get(groupEnt.id);
     if (contract) metrics = { ...metrics, cost: metrics.cost + contract };
     const arr = byType.get(type) ?? [];
-    arr.push({ group: ent.name, metrics });
+    arr.push({ campaign: campEnt.name, group: groupEnt.name, metrics });
     byType.set(type, arr);
   }
-  return SEARCH_TYPE_ORDER.filter((t) => byType.has(t)).map((type) => ({ type, rows: byType.get(type)! }));
+  return SEARCH_TYPE_ORDER.filter((t) => byType.has(t))
+    .map((type) => ({ type, rows: sortByCampaign(byType.get(type)!) }));
+}
+
+// 같은 캠페인 행을 인접하게 정렬(세로 병합 전제). 캠페인은 총비용 desc, 캠페인 내 그룹도 총비용 desc.
+function sortByCampaign(rows: CampGroupRow[]): CampGroupRow[] {
+  const byCamp = new Map<string, CampGroupRow[]>();
+  for (const row of rows) {
+    const arr = byCamp.get(row.campaign) ?? [];
+    arr.push(row);
+    byCamp.set(row.campaign, arr);
+  }
+  const ordered = [...byCamp.values()]
+    .map((list) => ({ list, cost: list.reduce((s, x) => s + x.metrics.cost, 0) }))
+    .sort((a, b) => b.cost - a.cost);
+  const out: CampGroupRow[] = [];
+  for (const { list } of ordered) {
+    list.sort((a, b) => b.metrics.cost - a.metrics.cost);
+    out.push(...list);
+  }
+  return out;
 }
 
 // 키워드 시트: 파워링크(등록 키워드) / 쇼핑검색(실제 검색어 비용 TOP)

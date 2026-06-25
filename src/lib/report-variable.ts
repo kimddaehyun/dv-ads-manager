@@ -147,25 +147,26 @@ export function renderKeywordSheet(
 }
 
 // ── 검색광고 캠페인별 성과 (sheet3 섹션2, 차트 없음) ──
-// 열: B유형 C그룹 D~O(12지표). 표본행: 11첫데이터/12후속/14소계/27전체합계(B:C 병합).
+// 표본행(11/소계/합계)의 지표 스타일은 항상 D~O(12개)에 있다 — 거기서 떠와 실제 배치로 옮긴다.
 // 섹션1(주간요약 4~7행)은 report-fill이 채우므로 11행부터 재생성(이상 행만 교체).
-const CAMP_LABEL_COLS = ["B", "C"];
-const CAMP_METRIC_COLS = ["D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
-const CAMP_COLS = [...CAMP_LABEL_COLS, ...CAMP_METRIC_COLS];
+const CAMP_SAMPLE_METRIC_COLS = ["D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
 
 export interface CampaignTypeGroup {
   type: string; // 파워링크/쇼핑검색광고/...
-  rows: { group: string; metrics: ReportMetrics }[];
+  rows: { campaign?: string; group: string; metrics: ReportMetrics }[]; // campaign은 withGroup일 때만
 }
 
 // 시트별 표본 행 위치. 검색광고(sheet3)=14/27, 디스플레이(sheet7)=13/35.
-// dashConv=true면 직접/간접 전환(마지막 2개 지표열 N/O)을 '-'로 (디스플레이는 split 없음).
+// dashConv=true면 직접/간접 전환(마지막 2개 지표열)을 '-'로 (디스플레이는 split 없음).
+// withGroup=true면 [유형|캠페인|그룹|지표(E~P)] 3단계 + 같은 캠페인 세로병합 (검색광고).
+// false면 [유형|캠페인|지표(D~O)] 2단계 (디스플레이는 캠페인 단위라 그룹 없음).
 export interface CampaignSheetLayout {
   subtotalSampleRow: number;
   totalSampleRow: number;
   dashConv?: boolean;
+  withGroup?: boolean;
 }
-const SEARCH_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 14, totalSampleRow: 27 };
+const SEARCH_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 14, totalSampleRow: 27, withGroup: true };
 export const DISPLAY_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 13, totalSampleRow: 35, dashConv: true };
 
 export function renderCampaignSheet(
@@ -175,40 +176,66 @@ export function renderCampaignSheet(
   layout: CampaignSheetLayout = SEARCH_CAMPAIGN_LAYOUT,
 ): void {
   let xml = readText(files, sheetPath);
-  // 헤더(행 10) 라벨 변경: 캠페인 → 캠페인 유형, 그룹 → 캠페인 (B열=유형, C열=광고그룹 데이터는 그대로)
-  xml = setString(xml, "B10", "캠페인 유형");
-  xml = setString(xml, "C10", "캠페인");
+  const withGroup = !!layout.withGroup;
+
+  // 열 배치: withGroup이면 그룹 열 신설로 지표가 E~P로 한 칸 밀린다.
+  const labelCols = withGroup ? ["B", "C", "D"] : ["B", "C"];
+  const metricCols = withGroup
+    ? ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"]
+    : ["D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
+  const cols = [...labelCols, ...metricCols];
+  const lastCol = cols[cols.length - 1];
+
   const sFirst = harvestRowStyles(xml, 11);
   const sSubtotal = harvestRowStyles(xml, layout.subtotalSampleRow);
   const sTotal = harvestRowStyles(xml, layout.totalSampleRow);
-  // 디스플레이는 직접(N)/간접(O) 전환 split이 없어 마지막 2개 지표열을 '-'로 표시.
+
+  // 표본행 지표 스타일(D~O)을 실제 배치(metricCols)로 이동. align=true면 유형(가운데)/캠페인·그룹(왼쪽)
+  // 정렬 변형을 만들어 적용. 그룹(D) 텍스트 스타일은 캠페인(C) 것을 재사용한다.
+  const ci = (st: Record<string, string>, col: string, h: "center" | "left") =>
+    ` s="${addCenteredStyle(files, Number((st[col]?.match(/s="(\d+)"/) ?? [])[1] ?? 0), h)}"`;
+  const styleFor = (st: Record<string, string>, align: boolean): Record<string, string> => {
+    const out: Record<string, string> = {};
+    out.B = align ? ci(st, "B", "center") : (st.B ?? "");
+    out.C = align ? ci(st, "C", "left") : (st.C ?? "");
+    if (withGroup) out.D = align ? ci(st, "C", "left") : (st.C ?? "");
+    metricCols.forEach((mc, i) => { out[mc] = st[CAMP_SAMPLE_METRIC_COLS[i]] ?? ""; });
+    return out;
+  };
+  const dataStyle = styleFor(sFirst, true);
+  const subStyle = styleFor(sSubtotal, true);
+  const totalStyle = styleFor(sTotal, false);
+
+  // 헤더(행 10). withGroup이면 지표 라벨이 E~P로 밀리므로 행 전체 재구성(D10=그룹 신설).
+  // 아니면 B/C 라벨만 교체(디스플레이는 지표 라벨이 양식 그대로 D~O).
+  if (withGroup) {
+    const headerStyle = styleFor(harvestRowStyles(xml, 10), false);
+    const headerValues: Record<string, CellValue> = { B: "캠페인 유형", C: "캠페인", D: "그룹" };
+    metricCols.forEach((mc, i) => { headerValues[mc] = METRIC_HEADERS[i]; });
+    xml = xml.replace(/<row r="10"[^>]*>[\s\S]*?<\/row>/, buildRow(10, cols, headerStyle, headerValues));
+  } else {
+    xml = setString(xml, "B10", "캠페인 유형");
+    xml = setString(xml, "C10", "캠페인");
+  }
+
   const dashLast = (cells: Record<string, CellValue>): Record<string, CellValue> => {
     if (!layout.dashConv) return cells;
-    const last2 = CAMP_METRIC_COLS.slice(-2);
+    const last2 = metricCols.slice(-2);
     return { ...cells, [last2[0]]: "-", [last2[1]]: "-" };
   };
 
-  // 캠페인유형(B)=가운데, 캠페인(C)=왼쪽 정렬. 데이터행·소계행 각각 스타일 복제.
-  // B는 유형별 세로 병합(세로는 항상 가운데).
-  const ci = (st: Record<string, string>, col: string, h: "center" | "left") =>
-    ` s="${addCenteredStyle(files, Number((st[col]?.match(/s="(\d+)"/) ?? [])[1] ?? 0), h)}"`;
-  const dataStyle = { ...sFirst, B: ci(sFirst, "B", "center"), C: ci(sFirst, "C", "left") };
-  const subStyle = { ...sSubtotal, B: ci(sSubtotal, "B", "center"), C: ci(sSubtotal, "C", "left") };
-
-  const CAMP_HEADERS: Record<string, string> = {
-    B: "캠페인 유형", C: "캠페인", D: "노출", E: "클릭", F: "클릭률", G: "CPC", H: "총비용",
-    I: "구매완료", J: "전환율", K: "전환당비용", L: "매출액", M: "ROAS", N: "직접 전환수", O: "간접 전환수",
-  };
+  const headerLabel: Record<string, string> = { B: "캠페인 유형", C: "캠페인", D: "그룹" };
   const wmax: Record<string, number> = {};
-  for (const c of CAMP_COLS) wmax[c] = visualLen(CAMP_HEADERS[c] ?? "");
+  for (const c of labelCols) wmax[c] = visualLen(headerLabel[c] ?? "");
+  metricCols.forEach((mc, i) => { wmax[mc] = visualLen(METRIC_HEADERS[i]); });
   const noteText = (col: string, s: string) => { wmax[col] = Math.max(wmax[col] ?? 0, visualLen(s)); };
   const noteMetrics = (m: ReportMetrics) => {
     const vals = metricValues(m);
-    CAMP_METRIC_COLS.forEach((c, i) => noteText(c, metricStr(i, vals[i])));
+    metricCols.forEach((c, i) => noteText(c, metricStr(i, vals[i])));
   };
 
   const rows: string[] = [];
-  const merges = ["B2:N2", "B9:O9"];
+  const merges = ["B2:N2", `B9:${lastCol}9`];
   let r = 11;
   let grand = ZERO_METRICS;
 
@@ -216,45 +243,57 @@ export function renderCampaignSheet(
     if (g.rows.length === 0) continue;
     noteText("B", g.type);
     const r0 = r;
+    let campStart = r;          // 현재 캠페인 병합 시작행
+    let campName: string | null = null;
     g.rows.forEach((gr, i) => {
-      noteText("C", gr.group);
+      const values: Record<string, CellValue> = {
+        B: i === 0 ? g.type : null,
+        ...dashLast(metricCells(metricCols, gr.metrics)),
+      };
+      if (withGroup) {
+        const camp = gr.campaign ?? "";
+        if (i === 0 || camp !== campName) {
+          if (campName !== null && r - 1 > campStart) merges.push(`C${campStart}:C${r - 1}`);
+          campStart = r;
+          campName = camp;
+        }
+        values.C = r === campStart ? camp : null; // 병합 top-left에만 캠페인명
+        values.D = gr.group;
+        noteText("C", camp);
+        noteText("D", gr.group);
+      } else {
+        values.C = gr.group;
+        noteText("C", gr.group);
+      }
       noteMetrics(gr.metrics);
-      rows.push(
-        buildRow(r++, CAMP_COLS, dataStyle, {
-          B: i === 0 ? g.type : null,
-          C: gr.group,
-          ...dashLast(metricCells(CAMP_METRIC_COLS, gr.metrics)),
-        }),
-      );
+      rows.push(buildRow(r++, cols, dataStyle, values));
     });
+    if (withGroup && campName !== null && r - 1 > campStart) merges.push(`C${campStart}:C${r - 1}`);
+
     let typeSum = ZERO_METRICS;
     for (const gr of g.rows) typeSum = addMetrics(typeSum, gr.metrics);
     noteMetrics(typeSum);
-    rows.push(
-      buildRow(r++, CAMP_COLS, subStyle, {
-        B: null,
-        C: "소계",
-        ...dashLast(metricCells(CAMP_METRIC_COLS, typeSum)),
-      }),
-    );
-    merges.push(`B${r0}:B${r - 1}`); // 캠페인(유형) 데이터+소계 세로 병합
+    const subValues: Record<string, CellValue> = {
+      B: null, C: "소계", ...dashLast(metricCells(metricCols, typeSum)),
+    };
+    if (withGroup) subValues.D = null;
+    rows.push(buildRow(r++, cols, subStyle, subValues));
+    merges.push(`B${r0}:B${r - 1}`); // 유형 데이터+소계 세로 병합
     grand = addMetrics(grand, typeSum);
   }
   noteMetrics(grand);
 
-  merges.push(`B${r}:C${r}`);
-  rows.push(
-    buildRow(r, CAMP_COLS, sTotal, {
-      B: "전체 합계",
-      C: null,
-      ...dashLast(metricCells(CAMP_METRIC_COLS, grand)),
-    }),
-  );
+  merges.push(`B${r}:${withGroup ? "D" : "C"}${r}`);
+  const totalValues: Record<string, CellValue> = {
+    B: "전체 합계", C: null, ...dashLast(metricCells(metricCols, grand)),
+  };
+  if (withGroup) totalValues.D = null;
+  rows.push(buildRow(r, cols, totalStyle, totalValues));
 
   xml = replaceRowsFrom(xml, 11, rows);
   xml = setMergeCells(xml, merges);
   const widths: Record<string, number> = {};
-  for (const c of CAMP_COLS) widths[c] = widthFor(wmax[c]);
+  for (const c of cols) widths[c] = widthFor(wmax[c]);
   xml = setColumnWidths(xml, widths);
   writeText(files, sheetPath, xml);
 }
