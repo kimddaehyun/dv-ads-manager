@@ -400,6 +400,60 @@ export function appendRows(xml: string, newRows: string[]): string {
   return updateDimension(result);
 }
 
+// beforeRow 위치에 newRows를 삽입(beforeRow 이상 기존 행을 아래로 밀어 내림).
+// 행번호·셀ref·수식ref·mergeCells 모두 이동. 차트 c:f / 그림 앵커는 별도로 맞춰야 함
+// (shiftChartRowRefs/shiftDrawingRowAnchors에 delta=-count). deleteRows의 역연산.
+export function insertRowsAt(xml: string, beforeRow: number, newRows: string[]): string {
+  if (newRows.length === 0) return xml;
+  const count = newRows.length;
+  const sdM = xml.match(/<sheetData>([\s\S]*?)<\/sheetData>/);
+  if (!sdM) return xml;
+  const shiftF = (s: string) =>
+    s.replace(/<f>([\s\S]*?)<\/f>/g, (_f, body) =>
+      `<f>${body.replace(/([A-Z]+)(\d+)/g, (mm: string, col: string, row: string) =>
+        Number(row) >= beforeRow ? `${col}${Number(row) + count}` : mm,
+      )}</f>`,
+    );
+  const before: string[] = [];
+  const after: string[] = [];
+  for (const m of sdM[1].matchAll(/<row r="(\d+)"[^>]*?(?:\/>|>[\s\S]*?<\/row>)/g)) {
+    const r = Number(m[1]);
+    if (r < beforeRow) {
+      before.push(shiftF(m[0]));
+    } else {
+      const nr = r + count;
+      const s = m[0]
+        .replace(/^<row r="\d+"/, `<row r="${nr}"`)
+        .replace(/<c r="([A-Z]+)\d+"/g, (_c, col) => `<c r="${col}${nr}"`);
+      after.push(shiftF(s));
+    }
+  }
+  const body = before.join("") + newRows.join("") + after.join("");
+  let result = xml.replace(/<sheetData>[\s\S]*?<\/sheetData>/, `<sheetData>${body}</sheetData>`);
+  result = result.replace(/<mergeCells[\s\S]*?<\/mergeCells>/, (block) => {
+    const kept: string[] = [];
+    for (const mm of block.matchAll(/<mergeCell ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"\/>/g)) {
+      let r1 = Number(mm[2]), r2 = Number(mm[4]);
+      if (r1 >= beforeRow) r1 += count;
+      if (r2 >= beforeRow) r2 += count;
+      kept.push(`<mergeCell ref="${mm[1]}${r1}:${mm[3]}${r2}"/>`);
+    }
+    return kept.length ? `<mergeCells count="${kept.length}">${kept.join("")}</mergeCells>` : block;
+  });
+  return updateDimension(result);
+}
+
+// 차트 c:f의 범위 끝 행(":$COL$fromEnd")을 toEnd로 교체(일자 그래프 범위 확장).
+// 시작 행·단일 셀 ref(헤더 $K$14)는 건드리지 않는다.
+export function setChartRangeEndRow(files: ZipFiles, chartPath: string, fromEnd: number, toEnd: number): void {
+  if (!files[chartPath] || fromEnd === toEnd) return;
+  const x = readText(files, chartPath).replace(
+    new RegExp(`(:\\$[A-Z]+\\$)${fromEnd}(?=<)`, "g"),
+    `$1${toEnd}`,
+  );
+  writeText(files, chartPath, x);
+}
+
 // 차트의 특정 색 HEX를 교체(예: 성별 도넛 여성 92D050 → F67676).
 export function replaceChartColor(files: ZipFiles, chartPath: string, fromHex: string, toHex: string): void {
   if (!files[chartPath]) return;

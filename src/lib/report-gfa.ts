@@ -16,7 +16,7 @@ import type { DateRange } from "./report-period";
 
 interface DashboardSearchResponse {
   results?: Array<{
-    campaign?: { campaignId?: string; type?: string };
+    campaign?: { campaignId?: string; type?: string; name?: string };
     metrics?: { impressions?: number; clicks?: number; grossCostMicros?: number };
   }>;
 }
@@ -51,9 +51,15 @@ export interface DisplayType {
   label: string;
   metrics: ReportMetrics;
 }
+// 디스플레이 시트(sheet7) 캠페인별 표 — 유형(label)별 캠페인 행. CampaignTypeGroup과 동형.
+export interface DisplayCampaignGroup {
+  type: string; // 양식 디스플레이 유형 라벨 (웹사이트전환 등)
+  rows: { group: string; metrics: ReportMetrics }[]; // group = 캠페인명
+}
 export interface GfaData {
   total: ReportMetrics;
   byType: DisplayType[];
+  byCampaign: DisplayCampaignGroup[]; // sheet7 캠페인별 표
 }
 
 // 디스플레이 합계 + 유형별 (단일 소스 = dashboard + campaignStats).
@@ -72,14 +78,15 @@ export async function fetchGfaData(
     { method: "POST", body },
     customerId,
   );
-  // 캠페인별 imp/clk/cost + type 집계
-  const perCampaign = new Map<string, { type: string; m: ReportMetrics }>();
+  // 캠페인별 imp/clk/cost + type + name 집계
+  const perCampaign = new Map<string, { type: string; name: string; m: ReportMetrics }>();
   for (const row of dash.results ?? []) {
     const id = row.campaign?.campaignId;
     if (!id) continue;
     const me = row.metrics ?? {};
     perCampaign.set(id, {
       type: row.campaign?.type ?? "",
+      name: row.campaign?.name ?? "",
       m: {
         impressions: Number(me.impressions ?? 0),
         clicks: Number(me.clicks ?? 0),
@@ -111,19 +118,34 @@ export async function fetchGfaData(
     }
   }
 
-  // 3) 유형별 그룹핑 + 합계
+  // 3) 유형별 그룹핑 + 합계 + 캠페인별 행
   const byLabel = new Map<string, ReportMetrics>();
+  const campaignsByLabel = new Map<string, { group: string; metrics: ReportMetrics }[]>();
   let total = ZERO_METRICS;
-  for (const { type, m } of perCampaign.values()) {
+  for (const { type, name, m } of perCampaign.values()) {
     const label = typeLabel(type);
     byLabel.set(label, addMetrics(byLabel.get(label) ?? ZERO_METRICS, m));
     total = addMetrics(total, m);
+    if (m.impressions > 0) {
+      const arr = campaignsByLabel.get(label) ?? [];
+      arr.push({ group: name, metrics: m });
+      campaignsByLabel.set(label, arr);
+    }
   }
   const byType = DISPLAY_TYPE_ORDER
     .filter((l) => (byLabel.get(l)?.impressions ?? 0) > 0)
     .map((label) => ({ label, metrics: byLabel.get(label)! }));
+  // 캠페인별: 유형 순서(DISPLAY_TYPE_ORDER, 미지정 유형은 뒤로) + 유형 내 총비용순
+  const orderedLabels = [
+    ...DISPLAY_TYPE_ORDER.filter((l) => campaignsByLabel.has(l)),
+    ...[...campaignsByLabel.keys()].filter((l) => !DISPLAY_TYPE_ORDER.includes(l)),
+  ];
+  const byCampaign: DisplayCampaignGroup[] = orderedLabels.map((label) => ({
+    type: label,
+    rows: campaignsByLabel.get(label)!.sort((a, b) => b.metrics.cost - a.metrics.cost),
+  }));
 
-  return { total, byType };
+  return { total, byType, byCampaign };
 }
 
 // 합계만 필요할 때(전주 등). byType는 버림.

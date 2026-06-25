@@ -128,3 +128,80 @@ export function ymdToIso(ymd: string): string {
   const m = ymd.match(/(\d{4})\.(\d{2})\.(\d{2})/);
   return m ? `${m[1]}-${m[2]}-${m[3]}` : ymd;
 }
+
+// ── 브랜드검색 계약 일할 계산(proration) ──
+//
+// 브랜드검색/신제품검색은 계약(구좌) 기반이라 소진비용(salesAmt)이 0이다. 비용은 계약금액
+// (contractAmt)을 리포트 기간에 실제 집행(노출)된 일수만큼만 안분해 잡는다.
+//   1일 단가 = contractAmt ÷ 총 계약일수(contractStartDt~contractEndDt)
+//   비용     = 1일 단가 × (리포트 기간 ∩ 실집행 기간)의 일수
+//
+// 날짜 필드는 모두 UTC ISO("2026-07-07T15:00:00.000Z"). KST(+9h) 기준 day-number로 환산해
+// 계산한다. 종료 경계는 배타적(exclusive): contractEndDt의 KST 날짜는 "마지막 집행일의 다음 날"
+// (multi-account의 D-day 계산 computeMinDday와 동일 규칙). exposureEndDt/cancelTm도 동일.
+// 기간 내 중단/종료(취소·노출종료)는 실집행 끝을 그만큼 앞당겨 반영한다.
+
+export interface ProrationContract {
+  contractAmt: number;
+  contractStartDt?: string;
+  contractEndDt?: string;
+  exposureStartDt?: string; // 실제 노출 시작 (있으면 시작을 늦춤)
+  exposureEndDt?: string;   // 실제 노출 종료 (있으면 끝을 앞당김)
+  cancelTm?: string;        // 취소 시각 (있으면 끝을 앞당김)
+}
+
+// UTC ISO → KST 기준 day-number (epoch부터의 일수). +9h 후 UTC 날짜로 환산해 호스트 TZ 무관.
+function kstDayNum(utcIso: string): number {
+  return Math.floor((new Date(utcIso).getTime() + 9 * 3600 * 1000) / 86400000);
+}
+// "YYYY-MM-DD"(KST 캘린더 날짜) → day-number.
+function isoDayNum(isoDate: string): number {
+  return Math.floor(new Date(isoDate + "T00:00:00Z").getTime() / 86400000);
+}
+
+// 계약 1건의 리포트 기간 내 일할 비용. 겹치는 집행일 없으면 0.
+export function proratedContractAmount(c: ProrationContract, range: DateRange): number {
+  const amt = c.contractAmt || 0;
+  if (amt <= 0) return 0;
+  if (!c.contractStartDt || !c.contractEndDt) return 0; // 일할 불가(정상 응답엔 항상 존재)
+  const cStart = kstDayNum(c.contractStartDt); // 첫 집행일 (포함)
+  const cEnd = kstDayNum(c.contractEndDt);     // 종료 경계 (배타)
+  const totalDays = cEnd - cStart;
+  if (!Number.isFinite(totalDays) || totalDays <= 0) return 0;
+
+  // 실집행 구간을 노출/취소로 좁힌다.
+  let aStart = cStart;
+  let aEnd = cEnd;
+  if (c.exposureStartDt) { const v = kstDayNum(c.exposureStartDt); if (Number.isFinite(v)) aStart = Math.max(aStart, v); }
+  if (c.exposureEndDt) { const v = kstDayNum(c.exposureEndDt); if (Number.isFinite(v)) aEnd = Math.min(aEnd, v); }
+  if (c.cancelTm) { const v = kstDayNum(c.cancelTm); if (Number.isFinite(v)) aEnd = Math.min(aEnd, v); }
+
+  // 리포트 기간 [since, until](둘 다 포함) → 배타 끝 +1.
+  const rStart = isoDayNum(range.since);
+  const rEnd = isoDayNum(range.until) + 1;
+  const overlap = Math.max(0, Math.min(aEnd, rEnd) - Math.max(aStart, rStart));
+  if (overlap <= 0) return 0;
+  return Math.round((amt / totalDays) * overlap);
+}
+
+export interface ProratedBrand {
+  total: number; // 일할 비용 합계
+  byAdgroup: Map<string, number>; // 광고그룹ID → 일할 비용
+}
+
+// 계약 목록(광고그룹ID 포함)을 한 리포트 기간으로 일할 집계. PC/모바일이 별도 계약 행이라도
+// 광고그룹별로 합산된다.
+export function proratedBrand(
+  contracts: Array<ProrationContract & { adgroupId: string }>,
+  range: DateRange,
+): ProratedBrand {
+  const byAdgroup = new Map<string, number>();
+  let total = 0;
+  for (const c of contracts) {
+    const amt = proratedContractAmount(c, range);
+    if (amt <= 0) continue;
+    byAdgroup.set(c.adgroupId, (byAdgroup.get(c.adgroupId) ?? 0) + amt);
+    total += amt;
+  }
+  return { total, byAdgroup };
+}

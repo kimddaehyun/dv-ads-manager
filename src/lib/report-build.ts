@@ -11,20 +11,25 @@ import {
   replaceChartColor,
   readText, writeText, hideRowRange, type ZipFiles,
 } from "./report-excel";
-import { fillFixedSheets, type ReportModel, type NamedMetrics } from "./report-fill";
 import {
-  renderKeywordSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement, DISPLAY_PLACEMENT,
+  fillFixedSheets, expandDailyRows, SEARCH_DAILY_EXPAND, DISPLAY_DAILY_EXPAND,
+  type ReportModel, type NamedMetrics,
+} from "./report-fill";
+import {
+  renderKeywordSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement,
+  DISPLAY_PLACEMENT, DISPLAY_CAMPAIGN_LAYOUT,
   type KeywordGroup, type CampaignTypeGroup, type SummaryType,
 } from "./report-variable";
+import { authFetch, fetchAdgroupRowsByCampaign } from "./multi-account-data";
 import {
   fetchAdvancedReport, colIndex, parseEntity, rowMetrics, addMetrics,
   ZERO_METRICS, type ReportMetrics,
 } from "./report-data";
 import {
-  rangeForPreset, previousRange, eachDay, dayLabel, ymdToIso,
-  type DateRange, type ReportPreset,
+  rangeForPreset, previousRange, eachDay, dayLabel, ymdToIso, proratedBrand,
+  type DateRange, type ReportPreset, type ProrationContract,
 } from "./report-period";
-import { fetchGfaTotal, fetchGfaData, type DisplayType } from "./report-gfa";
+import { fetchGfaTotal, fetchGfaData, type GfaData } from "./report-gfa";
 import { fetchGfaDetail } from "./report-gfa-detail";
 
 export interface ReportTarget {
@@ -120,14 +125,35 @@ function orderedNamed(map: Map<string, ReportMetrics>, order: string[]): NamedMe
 }
 
 // ── ReportModel 조립 (검색광고) ──
-export async function buildReportModel(target: ReportTarget, range: DateRange, meta: ReportMeta): Promise<ReportModel> {
+// brandCur/brandPrev = 브랜드검색 계약금액의 금주/전주 일할(proration) 비용 합계. 검색광고
+// 비용(salesAmt)은 브랜드가 0으로 잡히므로, 각 기간에 실제 집행된 일할 금액을 검색 총비용에
+// 가산해 종합·검색광고 시트의 비용·합계가 섹션3 브랜드 행과 정합되게 한다.
+// 전주도 동일 계약을 전주 기간으로 일할 계산하므로, 계약이 기간을 걸쳐 시작/종료되면 증감이
+// 실제 집행 변화를 반영한다(미변동 구간이면 증감 0).
+export async function buildReportModel(
+  target: ReportTarget, range: DateRange, meta: ReportMeta, brandCur = 0, brandPrev = 0,
+): Promise<ReportModel> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
   const prev = previousRange(range);
 
   // GFA(디스플레이)는 계정에 없거나 권한 문제면 0으로 graceful — hasDisplay로 시트/행 표시 결정.
-  const gfaSafe = (r: DateRange) => fetchGfaTotal(target.adAccountNo, cid, r).catch(() => ZERO_METRICS);
-  const [saCur, saPrev, byDayMap, byPlaceRows, byGenderMap, byAgeMap, gfaCur, gfaPrev] = await Promise.all([
+  // ⚠️ 일시적 네트워크/인증 실패도 여기서 0이 되면 디스플레이가 통째로 빠진 리포트가 조용히 나온다.
+  // 동시 요청 폭주 중 한 번의 일시 오류로 디스플레이가 통째로 사라지지 않게 1회 재시도 + 에러 로그.
+  const gfaSafe = async (r: DateRange) => {
+    try {
+      return await fetchGfaTotal(target.adAccountNo, cid, r);
+    } catch (e1) {
+      console.warn("[dv-ads/report] 디스플레이 합계 1차 조회 실패 → 재시도", e1);
+      try {
+        return await fetchGfaTotal(target.adAccountNo, cid, r);
+      } catch (e2) {
+        console.warn("[dv-ads/report] 디스플레이 합계 조회 최종 실패 → 0으로 처리(디스플레이 누락 가능)", e2);
+        return ZERO_METRICS;
+      }
+    }
+  };
+  const [saCurRaw, saPrevRaw, byDayMap, byPlaceRows, byGenderMap, byAgeMap, gfaCur, gfaPrev] = await Promise.all([
     fetchTotal(cid, range),
     fetchTotal(cid, prev),
     fetchAggregated(cid, range, "ymd", (v) => ymdToIso(v)),
@@ -137,6 +163,9 @@ export async function buildReportModel(target: ReportTarget, range: DateRange, m
     gfaSafe(range),
     gfaSafe(prev),
   ]);
+  // 브랜드 일할 계약금액 가산 (금주/전주 검색 총비용에 각각 반영)
+  const saCur = brandCur > 0 ? { ...saCurRaw, cost: saCurRaw.cost + brandCur } : saCurRaw;
+  const saPrev = brandPrev > 0 ? { ...saPrevRaw, cost: saPrevRaw.cost + brandPrev } : saPrevRaw;
 
   // 일자별: 기간 내 모든 날짜를 라벨로, 데이터 매칭(없으면 0)
   const byDay: NamedMetrics[] = eachDay(range).map((d) => {
@@ -182,6 +211,7 @@ export async function buildReportModel(target: ReportTarget, range: DateRange, m
     searchCurrent: saCur,
     searchPrev: saPrev,
     displayCurrent: gfaCur,
+    displayPrev: gfaPrev,
     byDay,
     byPlacement: byPlaceRows, // 이미 동적 정렬된 NamedMetrics[]
     byGender: orderedNamed(byGenderMap, GENDER_ORDER),
@@ -226,23 +256,109 @@ async function fetchPlacement(customerId: number, range: DateRange): Promise<Nam
     .sort((a, b) => b.metrics.cost - a.metrics.cost);
 }
 
-// 종합 캠페인 유형별(섹션3) 검색 유형 리스트
-async function fetchSummarySearchTypes(customerId: number, range: DateRange): Promise<SummaryType[]> {
-  const map = await fetchAggregated(customerId, range, "nccCampaignTp", campaignTypeLabel);
-  return SEARCH_TYPE_ORDER.filter((l) => map.has(l)).map((label) => ({ label, metrics: map.get(label)! }));
+// ── 브랜드검색 계약금액 (일할 계산) ──
+// 브랜드검색/신제품검색은 소진비용(salesAmt)이 0이라 advanced-report로 비용이 안 잡힌다.
+// 대신 계약금액(contractAmt)을 리포트 기간에 실제 집행된 일수만큼 안분(proration)해 비용으로
+// 쓴다. 계약은 광고그룹(PC/모바일 별도) 단위라 그룹별로 보관 — 검색광고 시트 섹션2 캠페인별
+// 표가 그룹 행이라 그룹 일할 비용으로 주입한다. 일할 공식·날짜 규칙은 report-period.ts 참조.
+// raw 계약을 한 번 받아 금주/전주 두 기간으로 각각 proratedBrand()를 돌린다(전주는 다른 기간).
+interface BrandCampaignRow { nccCampaignId?: string }
+interface BrandContractBlock {
+  contractAmt?: number;
+  contractStatus?: string;
+  contractStartDt?: string;
+  contractEndDt?: string;
+  exposureStartDt?: string;
+  exposureEndDt?: string;
+  cancelStatus?: string;
+  cancelTm?: string;
+}
+interface BrandContractRow {
+  nccAdgroupId: string;
+  currentTimeContract?: BrandContractBlock;
+  nextTimeContract?: BrandContractBlock;
+}
+// 일할 입력으로 쓸 raw 계약 1건 (광고그룹ID + 계약 기간/금액/노출·취소 필드).
+export type BrandRawContract = ProrationContract & { adgroupId: string; contractStatus?: string };
+
+async function fetchBrandContracts(customerId: number): Promise<BrandRawContract[]> {
+  const camps = await authFetch<BrandCampaignRow[]>(
+    "/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=BRAND_SEARCH",
+    undefined, customerId,
+  ).catch(() => [] as BrandCampaignRow[]);
+  const campIds = (camps ?? []).map((c) => c.nccCampaignId).filter((x): x is string => !!x);
+  if (campIds.length === 0) return [];
+
+  const agLists = await Promise.all(campIds.map((id) => fetchAdgroupRowsByCampaign(id, customerId)));
+  const adgroupIds = agLists.flat().map((a) => a.nccAdgroupId).filter((x): x is string => !!x);
+  if (adgroupIds.length === 0) return [];
+
+  const out: BrandRawContract[] = [];
+  const CHUNK = 100;
+  for (let i = 0; i < adgroupIds.length; i += CHUNK) {
+    const chunk = adgroupIds.slice(i, i + CHUNK);
+    const rows = await authFetch<BrandContractRow[]>(
+      "/apis/sa/api/ncc/time-contracts/after-current-summaries?nccAdgroupIds=" +
+        encodeURIComponent(chunk.join(",")),
+      undefined, customerId,
+    ).catch(() => [] as BrandContractRow[]);
+    for (const row of rows ?? []) {
+      // current + next 둘 다 후보 — 일할 겹침이 0이면 자연 제외되므로 status 필터 불필요.
+      for (const block of [row.currentTimeContract, row.nextTimeContract]) {
+        if (!block?.contractAmt) continue;
+        out.push({
+          adgroupId: row.nccAdgroupId,
+          contractAmt: block.contractAmt,
+          contractStartDt: block.contractStartDt,
+          contractEndDt: block.contractEndDt,
+          exposureStartDt: block.exposureStartDt,
+          exposureEndDt: block.exposureEndDt,
+          // 정상 계약은 cancelStatus="NOT_CANCELED"(truthy) + cancelTm=null (라이브 확인).
+          // 실제 취소된 계약만 cancelTm을 일할 끝으로 반영한다.
+          cancelTm:
+            block.cancelStatus && block.cancelStatus !== "NOT_CANCELED" && block.cancelTm
+              ? block.cancelTm
+              : undefined,
+          contractStatus: block.contractStatus,
+        });
+      }
+    }
+  }
+  // 라이브 검증용 raw 1회 덤프 (날짜 규칙/필드 확인). 운영엔 영향 없음.
+  if (out.length > 0) console.debug("[dv-ads/report] 브랜드 계약 raw", out);
+  return out;
 }
 
-// 검색광고 캠페인별(섹션2): 유형 → 광고그룹 행
-async function fetchCampaignGroups(customerId: number, range: DateRange): Promise<CampaignTypeGroup[]> {
+// 종합 캠페인 유형별(섹션3) 검색 유형 리스트. 브랜드검색 행은 비용(cost)을 계약금액으로 대체.
+async function fetchSummarySearchTypes(
+  customerId: number, range: DateRange, brandTotal: number,
+): Promise<SummaryType[]> {
+  const map = await fetchAggregated(customerId, range, "nccCampaignTp", campaignTypeLabel);
+  return SEARCH_TYPE_ORDER.filter((l) => map.has(l)).map((label) => {
+    const metrics = map.get(label)!;
+    if (label === "브랜드·신제품검색" && brandTotal > 0) {
+      return { label, metrics: { ...metrics, cost: metrics.cost + brandTotal } };
+    }
+    return { label, metrics };
+  });
+}
+
+// 검색광고 캠페인별(섹션2): 유형 → 광고그룹 행. 브랜드 그룹은 비용을 노출중 계약금액으로 대체.
+async function fetchCampaignGroups(
+  customerId: number, range: DateRange, brandByAdgroup: Map<string, number>,
+): Promise<CampaignTypeGroup[]> {
   const res = await fetchAdvancedReport({ attributes: ["nccCampaignTp", "nccAdgroupId"], range, customerId });
   const idx = colIndex(res.head);
   const byType = new Map<string, { group: string; metrics: ReportMetrics }[]>();
   for (const r of res.rows) {
     const type = campaignTypeLabel(r[idx["nccCampaignTp"]] ?? "");
-    const group = parseEntity(r[idx["nccAdgroupId"]] ?? "").name;
-    if (!group) continue;
+    const ent = parseEntity(r[idx["nccAdgroupId"]] ?? "");
+    if (!ent.name) continue;
+    let metrics = rowMetrics(r, idx);
+    const contract = brandByAdgroup.get(ent.id);
+    if (contract) metrics = { ...metrics, cost: metrics.cost + contract };
     const arr = byType.get(type) ?? [];
-    arr.push({ group, metrics: rowMetrics(r, idx) });
+    arr.push({ group: ent.name, metrics });
     byType.set(type, arr);
   }
   return SEARCH_TYPE_ORDER.filter((t) => byType.has(t)).map((type) => ({ type, rows: byType.get(type)! }));
@@ -293,15 +409,29 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   const url = chrome.runtime.getURL("src/assets/report-template.xlsx");
   const files: ZipFiles = openXlsx(new Uint8Array(await (await fetch(url)).arrayBuffer()));
 
-  const [model, searchTypes, displayTypes, campGroups, plKeywords, shKeywords] = await Promise.all([
-    buildReportModel(target, range, meta),
-    fetchSummarySearchTypes(cid, range),
-    fetchGfaData(target.adAccountNo, cid, range).then((d) => d.byType).catch(() => [] as DisplayType[]),
-    fetchCampaignGroups(cid, range),
+  // 브랜드검색 계약 raw 수집(없거나 실패 시 빈 목록) → 금주/전주 기간으로 각각 일할 계산.
+  // 검색 비용 가산(금주/전주)·종합 섹션3·검색 섹션2 그룹 비용에 공통 사용.
+  const brandRaw = await fetchBrandContracts(cid).catch((e) => {
+    console.warn("[dv-ads/report] 브랜드 계약 조회 실패 → 빈 값", e);
+    return [] as BrandRawContract[];
+  });
+  const brandCur = proratedBrand(brandRaw, range);
+  const brandPrev = proratedBrand(brandRaw, previousRange(range));
+
+  const emptyGfa: GfaData = { total: ZERO_METRICS, byType: [], byCampaign: [] };
+  const [model, searchTypes, displayData, campGroups, plKeywords, shKeywords] = await Promise.all([
+    buildReportModel(target, range, meta, brandCur.total, brandPrev.total),
+    fetchSummarySearchTypes(cid, range, brandCur.total),
+    fetchGfaData(target.adAccountNo, cid, range).catch((e) => {
+      console.warn("[dv-ads/report] 디스플레이 유형별/캠페인별 조회 실패 → 빈 값", e);
+      return emptyGfa;
+    }),
+    fetchCampaignGroups(cid, range, brandCur.byAdgroup),
     // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님). 비용 상위 N개.
     fetchKeywordGroups(cid, range, "파워링크", "expKeyword", 50),
     fetchKeywordGroups(cid, range, "쇼핑검색", "expKeyword", 50),
   ]);
+  const displayTypes = displayData.byType;
 
   // 고정형
   fillFixedSheets(files, model);
@@ -316,19 +446,27 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   // 검색_상세 지면별 → 맨 아래 동적 + 옛 영역 삭제 + 지면 그래프 제거(내부 처리) + 성별 그래프 여성색
   renderDetailPlacement(files, model.byPlacement);
   replaceChartColor(files, "xl/charts/chart5.xml", "92D050", "F67676");
+  // 월간(일수>7) 일자별 확장 — 지면 동적 이동 후 마지막에. 주간이면 no-op.
+  expandDailyRows(files, SEARCH_DAILY_EXPAND, model.byDay);
   // 디스플레이_상세도 동일 처리 (수집 성공 시). fillFixedSheets가 일자/성별/연령은 이미 채움.
   if (model.hasDisplayDetail) {
     renderDetailPlacement(files, model.displayByPlacement, DISPLAY_PLACEMENT, true);
     replaceChartColor(files, "xl/charts/chart9.xml", "92D050", "F67676");
+    expandDailyRows(files, DISPLAY_DAILY_EXPAND, model.displayByDay, true);
+  }
+  // 디스플레이 시트(sheet7) 캠페인별 표 — 디스플레이 운영 계정일 때만(섹션1은 fillFixedSheets에서).
+  if (model.hasDisplay) {
+    renderCampaignSheet(files, "xl/worksheets/sheet7.xml", displayData.byCampaign, DISPLAY_CAMPAIGN_LAYOUT);
   }
 
-  // 비진행 매체 시트 제거. 디스플레이(캠페인 표) 시트는 이번 범위 밖 → 항상 제거.
+  // 비진행 매체 시트 제거. 디스플레이 시트는 디스플레이 미진행 시 제거.
   // 디스플레이_상세는 분해 수집 성공 시 유지. 키워드 시트는 데이터 없으면 제거.
-  const toRemove = ["디스플레이"];
+  const toRemove: string[] = [];
+  if (!model.hasDisplay) toRemove.push("디스플레이");
   if (!model.hasDisplayDetail) toRemove.push("디스플레이_상세");
   if (plKeywords.length === 0) toRemove.push("파워링크_키워드");
   if (shKeywords.length === 0) toRemove.push("쇼핑검색_키워드");
-  removeSheets(files, toRemove);
+  if (toRemove.length > 0) removeSheets(files, toRemove);
 
   removeCalcChain(files); // stale 수식 캐시 제거 → 엑셀 "복구" 대화상자 방지
   forceRecalc(files);

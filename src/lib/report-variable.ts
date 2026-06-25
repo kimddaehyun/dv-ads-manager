@@ -158,18 +158,35 @@ export interface CampaignTypeGroup {
   rows: { group: string; metrics: ReportMetrics }[];
 }
 
+// 시트별 표본 행 위치. 검색광고(sheet3)=14/27, 디스플레이(sheet7)=13/35.
+// dashConv=true면 직접/간접 전환(마지막 2개 지표열 N/O)을 '-'로 (디스플레이는 split 없음).
+export interface CampaignSheetLayout {
+  subtotalSampleRow: number;
+  totalSampleRow: number;
+  dashConv?: boolean;
+}
+const SEARCH_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 14, totalSampleRow: 27 };
+export const DISPLAY_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 13, totalSampleRow: 35, dashConv: true };
+
 export function renderCampaignSheet(
   files: ZipFiles,
   sheetPath: string,
   groups: CampaignTypeGroup[],
+  layout: CampaignSheetLayout = SEARCH_CAMPAIGN_LAYOUT,
 ): void {
   let xml = readText(files, sheetPath);
   // 헤더(행 10) 라벨 변경: 캠페인 → 캠페인 유형, 그룹 → 캠페인 (B열=유형, C열=광고그룹 데이터는 그대로)
   xml = setString(xml, "B10", "캠페인 유형");
   xml = setString(xml, "C10", "캠페인");
   const sFirst = harvestRowStyles(xml, 11);
-  const sSubtotal = harvestRowStyles(xml, 14);
-  const sTotal = harvestRowStyles(xml, 27);
+  const sSubtotal = harvestRowStyles(xml, layout.subtotalSampleRow);
+  const sTotal = harvestRowStyles(xml, layout.totalSampleRow);
+  // 디스플레이는 직접(N)/간접(O) 전환 split이 없어 마지막 2개 지표열을 '-'로 표시.
+  const dashLast = (cells: Record<string, CellValue>): Record<string, CellValue> => {
+    if (!layout.dashConv) return cells;
+    const last2 = CAMP_METRIC_COLS.slice(-2);
+    return { ...cells, [last2[0]]: "-", [last2[1]]: "-" };
+  };
 
   // 캠페인유형(B)=가운데, 캠페인(C)=왼쪽 정렬. 데이터행·소계행 각각 스타일 복제.
   // B는 유형별 세로 병합(세로는 항상 가운데).
@@ -206,7 +223,7 @@ export function renderCampaignSheet(
         buildRow(r++, CAMP_COLS, dataStyle, {
           B: i === 0 ? g.type : null,
           C: gr.group,
-          ...metricCells(CAMP_METRIC_COLS, gr.metrics),
+          ...dashLast(metricCells(CAMP_METRIC_COLS, gr.metrics)),
         }),
       );
     });
@@ -217,7 +234,7 @@ export function renderCampaignSheet(
       buildRow(r++, CAMP_COLS, subStyle, {
         B: null,
         C: "소계",
-        ...metricCells(CAMP_METRIC_COLS, typeSum),
+        ...dashLast(metricCells(CAMP_METRIC_COLS, typeSum)),
       }),
     );
     merges.push(`B${r0}:B${r - 1}`); // 캠페인(유형) 데이터+소계 세로 병합
@@ -230,7 +247,7 @@ export function renderCampaignSheet(
     buildRow(r, CAMP_COLS, sTotal, {
       B: "전체 합계",
       C: null,
-      ...metricCells(CAMP_METRIC_COLS, grand),
+      ...dashLast(metricCells(CAMP_METRIC_COLS, grand)),
     }),
   );
 

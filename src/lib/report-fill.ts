@@ -6,8 +6,11 @@
 //
 // 가변형 시트(검색광고 섹션2, 키워드 시트)는 행 수가 가변이라 별도 모듈에서 동적 생성.
 
-import { applyCells, readText, writeText, setString, setNumber, setRowHidden, setColumnWidths, centerCells } from "./report-excel";
-import type { ZipFiles } from "./report-excel";
+import {
+  applyCells, readText, writeText, setString, setNumber, setRowHidden, setColumnWidths, centerCells,
+  harvestRowStyles, buildRow, insertRowsAt, shiftDrawingRowAnchors, shiftChartRowRefs, setChartRangeEndRow,
+} from "./report-excel";
+import type { ZipFiles, CellValue } from "./report-excel";
 import {
   metricValues, visualLen, widthFor, metricStr, METRIC_HEADERS, ZERO_METRICS, addMetrics, type ReportMetrics,
 } from "./report-data";
@@ -39,7 +42,8 @@ export interface ReportModel {
   totalPrev: ReportMetrics; // 계정 전체 전주
   searchCurrent: ReportMetrics; // 검색광고 금주 (매체별 + 검색광고 시트 섹션1)
   searchPrev: ReportMetrics; // 검색광고 전주
-  displayCurrent: ReportMetrics; // 디스플레이 금주 (매체별)
+  displayCurrent: ReportMetrics; // 디스플레이 금주 (매체별 + 디스플레이 시트 섹션1)
+  displayPrev: ReportMetrics; // 디스플레이 전주 (디스플레이 시트 섹션1)
   // 검색_상세
   byDay: NamedMetrics[];
   byPlacement: NamedMetrics[]; // 7 버킷(양식 라벨)
@@ -158,6 +162,23 @@ function fillSearchSummary(files: ZipFiles, model: ReportModel): void {
   // 섹션1(C~N) 열 너비 — 섹션2(renderCampaignSheet)와 max 병합됨
   const labels = ["구분", "금주", "전주", "증감", "증감률"];
   writeText(files, SEARCH_PATH, setColumnWidths(readText(files, SEARCH_PATH), metricColWidths([model.searchCurrent, model.searchPrev], labels)));
+}
+
+// ── 디스플레이 시트 섹션1 (sheet7) ──
+// 주간요약: 4 금주 / 5 전주 / 6 증감 / 7 증감률 (열 C~N, 검색광고와 동일 레이아웃). 섹션2는 동적.
+// 디스플레이(GFA)는 직접/간접 전환 split이 없어 M/N 칸은 '-'.
+const DISPLAY_PATH = "xl/worksheets/sheet7.xml";
+
+function fillDisplaySummary(files: ZipFiles, model: ReportModel): void {
+  applyCells(files, DISPLAY_PATH, summaryBlock(4, 5, 6, 7, model.displayCurrent, model.displayPrev));
+  let xml = readText(files, DISPLAY_PATH);
+  for (const r of [4, 5, 6, 7]) {
+    xml = setString(xml, `M${r}`, "-");
+    xml = setString(xml, `N${r}`, "-");
+  }
+  const labels = ["구분", "금주", "전주", "증감", "증감률"];
+  xml = setColumnWidths(xml, metricColWidths([model.displayCurrent, model.displayPrev], labels));
+  writeText(files, DISPLAY_PATH, xml);
 }
 
 // ── 검색_상세(sheet4) / 디스플레이_상세(sheet8) ──
@@ -289,11 +310,67 @@ function fillCover(files: ZipFiles, model: ReportModel): void {
   writeText(files, COVER_PATH, xml);
 }
 
+// ── 월간(N>7일) 일자별 표 확장 ──
+// 양식 일자별 표는 7행(주간) 고정. 기간 일수 N>7이면 8일째~N일째 행을 표 아래에 삽입하고,
+// 그 아래의 성별/연령 표·차트·지면 섹션을 모두 아래로 밀고, 일자 그래프 데이터 범위를 N행으로 넓힌다.
+// **renderDetailPlacement(지면 동적 이동) 이후 마지막에 호출** — 그래야 성별/연령이 최종 위치에
+// 와 있고 한 번에 -extra만큼만 밀면 된다. N<=7이면 아무것도 안 한다(주간 경로 그대로).
+export interface DailyExpandConfig {
+  sheetPath: string;
+  drawingPath: string;
+  dailyChart: string; // 일자 그래프 (chart3 / chart7) — 데이터 범위 끝행 확장
+  otherCharts: string[]; // 성별/연령 그래프 — 데이터 ref를 아래로 이동
+}
+export const SEARCH_DAILY_EXPAND: DailyExpandConfig = {
+  sheetPath: "xl/worksheets/sheet4.xml",
+  drawingPath: "xl/drawings/drawing2.xml",
+  dailyChart: "xl/charts/chart3.xml",
+  otherCharts: ["xl/charts/chart5.xml", "xl/charts/chart6.xml"],
+};
+export const DISPLAY_DAILY_EXPAND: DailyExpandConfig = {
+  sheetPath: "xl/worksheets/sheet8.xml",
+  drawingPath: "xl/drawings/drawing3.xml",
+  dailyChart: "xl/charts/chart7.xml",
+  otherCharts: ["xl/charts/chart9.xml", "xl/charts/chart10.xml"],
+};
+
+const DAY_COLS = ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+const DAY_METRIC_COLS = ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+
+export function expandDailyRows(
+  files: ZipFiles, cfg: DailyExpandConfig, byDay: NamedMetrics[], dashConv = false,
+): void {
+  const extra = byDay.length - 7; // 양식 일자행 7개 기준 초과분
+  if (extra <= 0) return;
+
+  // 8일째(인덱스 7)부터 추가 행 빌드 — 표본은 이미 가운데 정렬된 데이터행(15).
+  let xml = readText(files, cfg.sheetPath);
+  const style = harvestRowStyles(xml, 15);
+  const rows: string[] = [];
+  for (let i = 7; i < byDay.length; i++) {
+    const r = 15 + i; // 22, 23, ...
+    const disp = display(byDay[i].metrics);
+    const v: Record<string, CellValue> = { B: byDay[i].label };
+    for (const c of DAY_METRIC_COLS) v[c] = disp[c];
+    if (dashConv) { v.M = "-"; v.N = "-"; }
+    rows.push(buildRow(r, DAY_COLS, style, v));
+  }
+  // 합계행(22)과 그 아래 전부를 extra만큼 아래로 밀며 새 일자행 삽입
+  xml = insertRowsAt(xml, 22, rows);
+  writeText(files, cfg.sheetPath, xml);
+
+  // 아래 표/차트 이동 + 일자 그래프 범위 확장
+  shiftDrawingRowAnchors(files, cfg.drawingPath, 21, -extra); // 성별/연령 그래프 앵커 아래로
+  for (const ch of cfg.otherCharts) shiftChartRowRefs(files, ch, 21, -extra); // 성별/연령 데이터 ref 아래로
+  setChartRangeEndRow(files, cfg.dailyChart, 21, 21 + extra); // 일자 그래프 범위 15~(21+extra)
+}
+
 // 고정형 시트 전체 채우기 + 비진행 매체 시트 제거는 호출 측(orchestrator)에서 removeSheets로.
 export function fillFixedSheets(files: ZipFiles, model: ReportModel): void {
   fillCover(files, model);
   fillSummary(files, model);
   fillSearchSummary(files, model);
+  if (model.hasDisplay) fillDisplaySummary(files, model);
   fillDetailSheet(files, SEARCH_DETAIL, { byDay: model.byDay, byGender: model.byGender, byAge: model.byAge });
   if (model.hasDisplayDetail) {
     fillDetailSheet(files, DISPLAY_DETAIL, {
