@@ -175,9 +175,13 @@ function ensureBadge(cell: HTMLElement) {
   // 이미 같은 셀 안에 배지가 있다면(이전 mount 잔재) 제거
   cell.querySelectorAll(".dvads-rank-badge").forEach((el) => el.remove());
 
-  // <td>를 absolute 컨테이너로 만들기 — relative로 승격(table-cell엔 가시 변화 없음).
-  // getComputedStyle 읽기는 강제 style recalc를 유발하므로 조건 없이 바로 설정.
-  cell.style.position = "relative";
+  // <td>를 absolute 컨테이너로 만들기 — static일 때만 relative로 승격.
+  // ⚠️ 키워드 셀(.ad-cms-table-cell-fix-start)은 고정 열이라 position: sticky다.
+  // 인라인 relative를 무조건 박으면 sticky가 풀려 고정 열 레이아웃이 깨진다(과거 회귀).
+  // 반드시 computed position을 보고 static인 셀만 승격할 것 — getComputedStyle 제거 금지.
+  if (getComputedStyle(cell).position === "static") {
+    cell.style.position = "relative";
+  }
 
   const badge = document.createElement("span");
   badge.classList.add("dvads", "dvads-rank-badge", "cell-anchor");

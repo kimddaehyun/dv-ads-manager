@@ -11,7 +11,8 @@
 
 7개 파일 그룹 병렬 구현 → typecheck/build 통과 → 5개 영역 적대적 리뷰(전부 ship, blocker 0) → 리뷰가 짚은 미세 회귀 3건 추가 수정 → 재빌드 통과.
 
-- **구현 완료(29건):** R1, R2, R5, R6, R7, R8, R10, R12, R13, R15, R16, R17, R20, R21, R22, R25, R26, R27, R28, R18(scroll throttle만), 1차 #1, #2, #5, #8, #9, #10, #11, R4.
+- **구현 완료(28건):** R1, R2, R5, R6, R7, R8, R10, R12, R13, R15, R16, R17, R21, R22, R25, R26, R27, R28, R18(scroll throttle만), 1차 #1, #2, #5, #8, #9, #10, #11, R4.
+  - **R20 되돌림(2026-06-26):** 적용 후 키워드 고정 열(position: sticky) 레이아웃 깨짐 라이브 확인 → getComputedStyle 가드 복원. 그 getComputedStyle 읽기가 sticky 고정 열을 보호하는 핵심이라 제거하면 안 됨(코드 주석에 경고 명시).
   - **R3 코드스플릿 효과 측정됨:** 콘텐츠 본체 번들 282KB → **약 150KB**(report 52KB·setup 17KB·writeXlsxFileBrowser 59KB가 별도 lazy 청크로 분리). 모든 페이지 진입 파싱량 약 절반.
   - **#2(보수적 병렬화):** searchad estimate를 직렬 → **동시성 2 풀**(기존 429 백오프 유지 + 동시 재시도 분산 지터). 라이브 측정 못 해 보수적 2 채택 — 한계 측정 후 상향 가능. 첫 로딩 약 2배 단축.
   - **R4(안전 병렬화):** 일괄 리포트 광고주 **동시성 2** + 디스플레이 다운로드 POST를 **모듈 전역 게이트**로(계정 병렬에도 7초 간격 유지 → 403 구조적 회피). 검색광고 수집이 겹쳐 돌아 단축.
@@ -112,7 +113,7 @@
 | R17 | low | `setup.ts:97-104,59-63` | 세팅안 모달 keydown(Escape) capture 리스너가 닫을 때 미해제 → 세션 내 누적 | 핸들러를 변수 보관하고 `closeModal`에서 removeEventListener |
 | R18 | low | `report-datepicker.ts:137-174,196-215,254-267` | 달력 ~600셀 전수 순회 paint + scroll에서 offsetTop 반복 읽기(throttle 없음) | 증분 강조 갱신, scroll rAF throttle + offsetTop 사전 캐시 |
 | R19 | low(중간 confidence) | `manifest.config.ts:50`, `index.ts:1094-1110` | `all_frames:true`로 상단 문서 전용 init(멀티계정·asset-bulk·shopping)이 서브프레임에서 헛돔 + 300ms 인터벌 프레임마다 | 상단 전용 init을 `if(window.top===window)` 가드(period-compare·F001은 제외) |
-| R20 | low | `index.ts:178-180` | ensureBadge가 `getComputedStyle` 읽고 곧바로 `style.position` 써서 신규 셀마다 강제 style recalc 교차 | 조건 없이 `cell.style.position='relative'` 설정해 getComputedStyle 읽기 제거 |
+| R20 | ~~low~~ 되돌림 | `index.ts:178-180` | ensureBadge가 `getComputedStyle` 읽고 곧바로 `style.position` 써서 신규 셀마다 강제 style recalc 교차 | ~~조건 없이 설정~~ → **되돌림.** 키워드 셀이 sticky 고정 열이라 무조건 relative가 sticky를 덮어 레이아웃 깨짐. getComputedStyle static 가드 유지(제거 금지) |
 | R21 | low | `background/index.ts:355-357,372-378` | 결과 재정렬에 `fresh.find` 선형 탐색 → 콜드 캐시면 O(n²) | `fresh`를 Map으로 인덱싱해 O(1) 조회 |
 | R22 | low | `background/index.ts:54-71,262-358` | GET_BID_ESTIMATE에 in-flight 코얼레싱 없음 → 동시 동일 요청이 캐시 우회(멀티탭/프레임) | `Map<string,Promise>`로 진행 중 fetch 공유. R2의 background 짝 |
 | R23 | negligible | `report-build.ts:99-103,157,159,335-372` | 파생 가능한 집계를 별도 호출(total은 ymd 합, 유형요약은 캠페인-그룹 합산) | ymd 합산으로 total 도출, 유형요약 재집계(합계 정합 검증 선행) |
