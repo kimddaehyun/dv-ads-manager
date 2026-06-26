@@ -13,3 +13,7 @@ dist-zip
 .superpowers
 .playwright-mcp
 .gstack/
+# 개발 중 생성물 (리포트 샘플 출력 / 화면 캡처)
+dist-*.xlsx
+ads-naver-home.png
+dashboard.png

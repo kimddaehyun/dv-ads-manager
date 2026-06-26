@@ -65,6 +65,8 @@ interface DownloadJob {
     placeUnit?: string;
     reportDateUnit?: string;
     reportDimension?: string;
+    reportAdUnit?: string;
+    colList?: string[];
   };
 }
 
@@ -124,6 +126,42 @@ async function downloadCsv(adAccountNo: number, no: number): Promise<string> {
   return strFromU8(files[csvName]);
 }
 
+// ─── 다운로드 보고서 정리 (계정당 50건 한도 회피) ───
+// 디스플레이 상세는 리포트마다 4건(일자/지면/성별/연령)을 새로 만든다. 보관 한도가 계정당 50건이라
+// (초과 시 POST가 HTTP 422 "Max ReportDownload's size is exceeded") 안 지우면 십여 번 만에 꽉 차서
+// 그 뒤로는 디스플레이 상세가 통째로 빠진다. 그래서 받은 직후 삭제 + 시작 시 과거 잔여분 정리.
+// 삭제 = reportDownloadNos 쿼리(라이브 확인 2026-06-26: x-xsrf-token만 있으면 200, 단 EXPIRED를
+// 배치에 섞으면 403). 우리 시그니처(AD_ACCOUNT + 이 colList)인 COMPLETED만 1건씩 — 사용자 수동
+// 리포트(AD_SET/CAMPAIGN 등 다른 colList)는 안 건드림. x-xsrf-token은 authFetch가 자동 첨부.
+const OUR_COLLIST = COL_LIST.join(",");
+
+async function deleteDownload(adAccountNo: number, customerId: number, no: number): Promise<void> {
+  await authFetch(
+    `/apis/gfa/v1/adAccounts/${adAccountNo}/report/downloads?reportDownloadNos=${no}&reportType=PERFORMANCE`,
+    { method: "DELETE" },
+    customerId,
+  );
+}
+
+function isOurDownload(job: DownloadJob): boolean {
+  const rq = job.reportQuery ?? {};
+  return rq.reportAdUnit === "AD_ACCOUNT" && (rq.colList ?? []).join(",") === OUR_COLLIST;
+}
+
+// 시작 시 과거 잔여 다운로드 정리(이전 버전이 안 지운 백로그 + 중간 실패 잔여 포함). best-effort —
+// 실패해도 리포트는 계속(가득 차 있으면 아래 POST가 422로 graceful 처리). EXPIRED는 403 유발이라 제외.
+async function pruneOldDownloads(adAccountNo: number, customerId: number): Promise<void> {
+  const list = await authFetch<DownloadJob[]>(
+    `/apis/gfa/v1/adAccounts/${adAccountNo}/report/downloads?reportType=PERFORMANCE`,
+    undefined,
+    customerId,
+  ).catch(() => [] as DownloadJob[]);
+  const ours = (Array.isArray(list) ? list : []).filter((j) => j.status === "COMPLETED" && isOurDownload(j));
+  for (const job of ours) {
+    await deleteDownload(adAccountNo, customerId, job.no).catch(() => {});
+  }
+}
+
 const num = (s: string | undefined): number => {
   const v = Number((s ?? "").replace(/,/g, ""));
   return Number.isFinite(v) ? v : 0;
@@ -165,6 +203,8 @@ export async function fetchGfaDetail(adAccountNo: number, customerId: number, ra
     reportFilterList: [],
   };
   const result: GfaDetailRaw = { byDay: [], byPlacement: [], byGender: [], byAge: [] };
+  // 시작 시 과거 잔여 다운로드 정리(50 한도 회복). 새 4건을 만들기 전에 우리 백로그를 비운다.
+  await pruneOldDownloads(adAccountNo, customerId).catch(() => {});
   // rate-limit은 토큰버킷(충전 ~7초/건, 라이브 측정). POST는 전역 게이트(gatedPost)로 간격을 지키고,
   // 폴링·다운로드는 게이트 밖에서 진행돼 다음 POST 간격에 자연 흡수된다(여러 계정 병렬에도 안전).
   for (let i = 0; i < DIMS.length; i++) {
@@ -172,6 +212,8 @@ export async function fetchGfaDetail(adAccountNo: number, customerId: number, ra
     await gatedPost(() => requestReport(adAccountNo, customerId, { ...base, ...q }));
     const no = await pollJobNo(adAccountNo, customerId, q, range);
     result[key] = parseRows(await downloadCsv(adAccountNo, no));
+    // 받아서 파싱한 직후 그 다운로드는 더 필요 없으니 삭제(best-effort) — 한도에 안 쌓이게.
+    void deleteDownload(adAccountNo, customerId, no).catch(() => {});
   }
   return result;
 }
