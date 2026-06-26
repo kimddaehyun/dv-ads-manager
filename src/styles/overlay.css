@@ -943,6 +943,7 @@ td.dvads-period-delta-down {
   animation: dvads-asset-bulk-backdrop-in 180ms ease-out;
 }
 .dvads-auto-overlay-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -951,6 +952,29 @@ td.dvads-period-delta-down {
   background: #ffffff;
   border-radius: 12px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+}
+/* 로딩 중 취소 × (리포트·대행권 점검 공용) */
+.dvads-auto-overlay-cancel {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #9CA3AF;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-auto-overlay-cancel:hover {
+  background: #F3F4F6;
+  color: #171717;
 }
 /* 32px 링 스피너 — DV 주황 1/4 호 + 옅은 회색 3/4 trace, 0.8s 등속 회전. */
 .dvads-auto-overlay-spinner {
@@ -2112,12 +2136,9 @@ td.dvads-period-delta-down {
 }
 /* 이름 셀만 페이지 전환 트리거 — 지표 셀 클릭으로 의도치 않은 전환 방지.
    행 전체 hover bg는 .dvads-bid-table tbody tr:hover td 에서 처리하고,
-   여기선 이름 셀에 cursor + 살짝 더 진한 hover로 클릭 가능 영역임을 시각화. */
+   여기선 이름 셀에 cursor + hover 시 이름 글자색(주황)으로 클릭 가능 영역임을 시각화. */
 .dvads-multi-table td.dvads-multi-td-name-clickable {
   cursor: pointer;
-}
-.dvads-multi-table tbody tr:hover td.dvads-multi-td-name-clickable {
-  background: #f3f4f6;
 }
 .dvads-multi-table td.dvads-multi-td-name-clickable:hover .dvads-multi-name {
   color: #E6783B;
@@ -2753,6 +2774,311 @@ td.dvads-period-delta-down {
 .dvads-rename-save:hover {
   filter: brightness(0.95);
 }
+
+/* 대행권 점검 모달 — rename/confirm 패턴(backdrop + 중앙 카드) 재사용 */
+.dvads-agency-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: dvads-rename-backdrop-fade 200ms ease-out both;
+}
+/* 결과 화면은 높이 고정(중앙 정렬 유지) — 높이가 안 바뀌므로 검색/필터 시 위치도 안 튄다.
+   목록은 내부 스크롤. */
+.dvads-agency-backdrop.is-results .dvads-agency-card {
+  width: 940px;
+  height: 800px;
+}
+.dvads-agency-card {
+  background: #ffffff;
+  border-radius: 14px;
+  width: 400px;
+  max-width: 92vw;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  animation: dvads-rename-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+}
+.dvads-agency-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 6px;
+}
+.dvads-agency-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #171717;
+}
+.dvads-agency-title-back {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  color: #6B7280;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.dvads-agency-title-back:hover {
+  color: #171717;
+}
+.dvads-agency-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #9CA3AF;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-agency-close:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-agency-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 0 20px 18px;
+  font-size: 13px;
+}
+.dvads-agency-id-editor {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.dvads-agency-id-input {
+  flex: 1;
+  height: 32px;
+  padding: 0 12px;
+  background: #F3F4F6;
+  border: 0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  outline: none;
+}
+.dvads-agency-id-input:focus {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.30);
+}
+.dvads-agency-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  padding: 10px 20px 18px;
+  overflow: hidden;
+}
+.dvads-agency-msg {
+  font-size: 13px;
+  color: #6B7280;
+  padding: 16px 0;
+  text-align: center;
+}
+.dvads-agency-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+.dvads-agency-search {
+  flex: 1;
+  height: 32px;
+  padding: 0 12px;
+  background: #F3F4F6;
+  border: 0;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  outline: none;
+}
+.dvads-agency-search:focus {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.30);
+}
+.dvads-agency-excel {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #E5E7EB;
+  background: #ffffff;
+  border-radius: 8px;
+  color: #6B7280;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-agency-excel:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-agency-excel:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.dvads-agency-excel svg {
+  width: 16px;
+  height: 16px;
+}
+.dvads-agency-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+/* 다계정 표와 동일 — 상단 sticky 헤더 + 행 리스트 */
+.dvads-agency-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.dvads-agency-table thead th {
+  position: sticky;
+  top: 0;
+  background: #F9FAFB;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  padding: 8px 10px;
+  border-bottom: 1px solid #EFEFEF;
+  z-index: 1;
+}
+/* 상태 헤더 — 드롭다운 트리거. 헤더 텍스트 톤 유지 + 아래 화살표. */
+.dvads-agency-th-status {
+  padding: 0;
+}
+.dvads-agency-status-trigger {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+}
+.dvads-agency-status-trigger:hover {
+  color: #171717;
+}
+.dvads-agency-status-chevron {
+  font-size: 10px;
+  line-height: 1;
+}
+.dvads-agency-th-acct {
+  width: 21%;
+}
+.dvads-agency-th-agency {
+  width: 19%;
+}
+.dvads-agency-th-dm {
+  width: 21%;
+}
+.dvads-agency-th-cost {
+  width: 14%;
+}
+.dvads-agency-th-biz {
+  width: 14%;
+}
+.dvads-agency-th-status {
+  width: 96px;
+}
+.dvads-agency-td-cost,
+.dvads-agency-td-biz {
+  font-size: 12px;
+  color: #171717;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dvads-agency-row {
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.dvads-agency-row:hover {
+  background: #F3F4F6;
+}
+.dvads-agency-row:hover .dvads-agency-name {
+  color: #E6783B;
+}
+.dvads-agency-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #F5F5F4;
+  vertical-align: middle;
+}
+.dvads-agency-badge {
+  font-size: 12px;
+  font-weight: 600;
+  background: transparent;
+  white-space: nowrap;
+}
+.dvads-agency-badge.dvads-agency-other {
+  color: #DC2626;
+}
+.dvads-agency-badge.dvads-agency-noneb {
+  color: #B45309;
+}
+.dvads-agency-badge.dvads-agency-okb {
+  color: #16A34A;
+}
+.dvads-agency-badge.dvads-agency-err {
+  color: #6B7280;
+}
+.dvads-agency-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #171717;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 120ms ease;
+}
+.dvads-agency-no {
+  font-size: 11px;
+  color: #9CA3AF;
+  font-variant-numeric: tabular-nums;
+  margin-top: 2px;
+}
+.dvads-agency-td-agency {
+  font-size: 12px;
+  color: #171717;
+}
+.dvads-agency-empty {
+  text-align: center;
+  font-size: 13px;
+  color: #6B7280;
+  padding: 28px 0;
+}
+.dvads-agency-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  flex-shrink: 0;
+}
 .dvads-multi-search-empty {
   padding: 32px 16px;
   text-align: center;
@@ -3213,5 +3539,294 @@ td.dvads-period-delta-down {
   gap: 8px;
   padding: 14px 24px;
   border-top: 1px solid #F1F1F1;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   F-Report 날짜 선택기 (report-datepicker.ts) — 네이버 광고 달력 클론, DV 주황.
+   설정/행 메뉴 "리포트 생성" 클릭 시 메뉴 옆으로 펼쳐지는 flyout.
+   ───────────────────────────────────────────────────────────── */
+.dvads-rdp {
+  position: fixed;
+  z-index: 2147483647;
+  display: flex;
+  flex-direction: column;
+  width: 470px;
+  background: #ffffff;
+  border: 1px solid #E5E7EB;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
+  color: #171717;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system,
+    "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  animation: dvads-rdp-in 140ms ease-out;
+}
+@keyframes dvads-rdp-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-rdp { animation: none; }
+}
+.dvads-rdp-sub {
+  padding: 12px 16px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #737373;
+  border-bottom: 1px solid #F3F4F6;
+}
+.dvads-rdp-main {
+  display: flex;
+  min-height: 0;
+}
+/* 좌측 프리셋 리스트 */
+.dvads-rdp-presets {
+  flex: none;
+  width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 8px;
+  border-right: 1px solid #F3F4F6;
+  overflow-y: auto;
+  max-height: 430px;
+}
+.dvads-rdp-preset {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #404040;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 80ms ease, color 80ms ease;
+}
+.dvads-rdp-preset:hover {
+  background: #F5F6F7;
+}
+.dvads-rdp-preset.is-active {
+  background: #E6783B;
+  color: #ffffff;
+  font-weight: 600;
+}
+/* 우측 달력 */
+.dvads-rdp-cal {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 12px 14px 0;
+}
+.dvads-rdp-fields {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-rdp-field {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 0 8px;
+  background: #ffffff;
+  border: 1px solid #D1D5DB;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  text-align: center;
+  cursor: text;
+  outline: none;
+  transition: border-color 80ms ease, box-shadow 80ms ease;
+}
+.dvads-rdp-field.is-active,
+.dvads-rdp-field:focus {
+  border-color: #E6783B;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.18);
+}
+.dvads-rdp-arrow {
+  flex: none;
+  color: #9CA3AF;
+  font-size: 14px;
+}
+.dvads-rdp-navhead {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 12px;
+}
+.dvads-rdp-nav {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #525252;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dvads-rdp-nav:hover {
+  background: #F3F4F6;
+}
+.dvads-rdp-navlabel {
+  min-width: 116px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #171717;
+}
+.dvads-rdp-weekhead {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  margin-top: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #F3F4F6;
+}
+.dvads-rdp-weekhead span {
+  text-align: center;
+  font-size: 12px;
+  color: #9CA3AF;
+}
+.dvads-rdp-scroll {
+  position: relative;
+  height: 296px;
+  overflow-y: auto;
+  padding-top: 6px;
+}
+.dvads-rdp-month {
+  padding-bottom: 4px;
+}
+.dvads-rdp-mlabel {
+  font-size: 13px;
+  font-weight: 600;
+  color: #525252;
+  padding: 6px 2px;
+}
+.dvads-rdp-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  row-gap: 2px;
+}
+.dvads-rdp-blank {
+  height: 34px;
+}
+.dvads-rdp-day {
+  /* z-index:0 으로 스택 컨텍스트 생성 → ::before 원(z-index:-1)이 띠 위·글자 아래에 깔린다. */
+  position: relative;
+  z-index: 0;
+  height: 34px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  cursor: pointer;
+}
+.dvads-rdp-day:hover:not(.is-disabled):not(.is-start):not(.is-end)::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: #F3F4F6;
+  z-index: -1;
+}
+.dvads-rdp-day.is-disabled {
+  color: #D1D5DB;
+  cursor: default;
+}
+/* 범위 내부 — 연한 주황 띠(사각) */
+.dvads-rdp-day.is-in-range {
+  background: rgba(230, 120, 59, 0.12);
+}
+/* 시작/끝 셀 — 절반 띠로 안쪽만 연결 */
+.dvads-rdp-day.is-start {
+  background: linear-gradient(to right, transparent 50%, rgba(230, 120, 59, 0.12) 50%);
+}
+.dvads-rdp-day.is-end {
+  background: linear-gradient(to left, transparent 50%, rgba(230, 120, 59, 0.12) 50%);
+}
+.dvads-rdp-day.is-single {
+  background: transparent;
+}
+/* 시작/끝/단일 — 주황 원 + 흰 글자 */
+.dvads-rdp-day.is-start::before,
+.dvads-rdp-day.is-end::before {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  background: #E6783B;
+  z-index: -1;
+}
+.dvads-rdp-day.is-start,
+.dvads-rdp-day.is-end {
+  color: #ffffff;
+  font-weight: 600;
+}
+/* 하단 — 담당자 + 취소/확인 */
+.dvads-rdp-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-top: 1px solid #F3F4F6;
+}
+.dvads-rdp-author {
+  width: 160px;
+  height: 32px;
+  box-sizing: border-box;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #F3F4F6;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  outline: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-rdp-author::placeholder {
+  color: #9CA3AF;
+}
+.dvads-rdp-author:focus {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
+}
+.dvads-rdp-foot-btns {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+.dvads-rdp-cancel,
+.dvads-rdp-confirm {
+  height: 32px;
+  padding: 0 18px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.dvads-rdp-cancel {
+  border: 1px solid #D1D5DB;
+  background: #ffffff;
+  color: #404040;
+}
+.dvads-rdp-cancel:hover {
+  background: #F9FAFB;
+}
+.dvads-rdp-confirm {
+  border: 0;
+  background: #E6783B;
+  color: #ffffff;
+}
+.dvads-rdp-confirm:hover {
+  background: #D96A2E;
 }
 

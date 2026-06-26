@@ -51,12 +51,27 @@ export interface DropdownHandle<V extends string> {
 // 열려있는 모든 dropdown 패널을 추적해 일괄 정리 가능하게.
 const openPanels = new Set<HTMLElement>();
 
+// 액션 메뉴 옆에 함께 띄우는 외부 flyout(예: 리포트 날짜 선택기)을 등록해두면,
+// 메뉴의 click-outside/scroll 닫힘 로직이 그 flyout 내부 상호작용을 "내부"로 취급해
+// 메뉴를 닫지 않는다. 리포트 날짜 선택기처럼 "드롭다운 옆으로 펼쳐지는" 서브패널용.
+const siblingPanels = new Set<HTMLElement>();
+
+/** flyout element를 액션 메뉴의 형제로 등록. 반환된 함수로 해제. */
+export function registerMenuSibling(el: HTMLElement): () => void {
+  siblingPanels.add(el);
+  return () => {
+    siblingPanels.delete(el);
+  };
+}
+
 export function closeAllOpenDropdowns(): void {
   // Set 반복 중 mutate 발생 — 스냅샷 후 순회.
+  // __dvadsClose는 리스너 해제 + 패널 DOM 제거 + 닫힘 상태 리셋까지 하는 "완전 닫기".
+  // (__dvadsCleanup은 리스너만 떼므로 패널이 화면에 남는다 — 리포트 생성 후 메뉴 잔존 버그)
   Array.from(openPanels).forEach((panel) => {
-    const cleanup = (panel as unknown as { __dvadsCleanup?: () => void })
-      .__dvadsCleanup;
-    cleanup?.();
+    const close = (panel as unknown as { __dvadsClose?: () => void })
+      .__dvadsClose;
+    close?.();
   });
   openPanels.clear();
 }
@@ -154,6 +169,8 @@ export function createDropdown<V extends string>(
 
     document.body.appendChild(panel);
     openPanels.add(panel);
+    // closeAllOpenDropdowns가 부를 "완전 닫기" — DOM 제거 + 상태 리셋 포함.
+    (panel as unknown as { __dvadsClose: () => void }).__dvadsClose = closePanel;
     positionPanel();
     trigger.classList.add("is-open");
 
@@ -227,8 +244,9 @@ export interface ActionMenuItem {
   /** 항목 라벨. separator=true면 무시. */
   label?: string;
   /** 클릭 핸들러. 생략 시 placeholder — 메뉴만 닫고 다른 동작 안 함.
-   *  keepOpen 항목이 Promise를 반환하면 완료 후 메뉴를 한 번 더 재렌더한다. */
-  onClick?: () => void | Promise<void>;
+   *  keepOpen 항목이 Promise를 반환하면 완료 후 메뉴를 한 번 더 재렌더한다.
+   *  인자로 클릭된 항목 element를 받아 옆으로 펼치는 flyout 앵커로 쓸 수 있다. */
+  onClick?: (anchor: HTMLElement) => void | Promise<void>;
   /** 빨강 강조 (삭제 등 destructive 액션). */
   danger?: boolean;
   /** 비활성 — 클릭 불가, 흐릿하게. */
@@ -333,14 +351,14 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
         if (item.keepOpen) {
           // 토글 — 메뉴 유지. 동기 상태 변경은 즉시 반영(즉각 피드백). 비동기 작업이면
           // 완료 후 한 번 더 재렌더해 최종 상태를 보장(패널이 닫혀 있으면 populate가 no-op).
-          const r = item.onClick?.();
+          const r = item.onClick?.(btn);
           populate();
           if (r instanceof Promise) void r.finally(() => populate());
           return;
         }
         // placeholder(onClick 미지정)도 메뉴는 닫는다.
         closePanel();
-        item.onClick?.();
+        item.onClick?.(btn);
       });
       panel.appendChild(btn);
     }
@@ -356,13 +374,19 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
 
     document.body.appendChild(panel);
     openPanels.add(panel);
+    // closeAllOpenDropdowns가 부를 "완전 닫기" — DOM 제거 + 상태 리셋 포함.
+    (panel as unknown as { __dvadsClose: () => void }).__dvadsClose = closePanel;
     positionPanel();
     opts.trigger.classList.add("is-open");
 
+    const inSibling = (t: Node): boolean => {
+      for (const sib of siblingPanels) if (sib.contains(t)) return true;
+      return false;
+    };
     const onDocPointer = (e: MouseEvent | PointerEvent): void => {
       if (!panel) return;
       const t = e.target as Node;
-      if (panel.contains(t) || opts.trigger.contains(t)) return;
+      if (panel.contains(t) || opts.trigger.contains(t) || inSibling(t)) return;
       closePanel();
     };
     const onKey = (e: KeyboardEvent): void => {
@@ -372,7 +396,9 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
         closePanel();
       }
     };
-    const onScrollOrResize = (): void => {
+    const onScrollOrResize = (e?: Event): void => {
+      // flyout 내부 스크롤(달력 월 목록 등)은 메뉴를 닫지 않는다.
+      if (e && e.target instanceof Node && (panel?.contains(e.target) || inSibling(e.target))) return;
       closePanel();
     };
 

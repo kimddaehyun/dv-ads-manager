@@ -19,21 +19,32 @@ import {
   isDirectoryStale,
   loadAllUserMeta,
   updateUserMeta,
+  updateUserMetaMany,
   loadAddedList,
   addAccountToList,
+  addAccountsToList,
   removeAccountFromList,
+  removeAccountsFromList,
   loadSnapshot,
+  loadSnapshotMany,
   saveSnapshot,
   isSnapshotFresh,
   clearAllSnapshots,
   loadPlatformFilter,
   savePlatformFilter,
+  loadAgencyIdentity,
+  saveAgencyIdentity,
   type PlatformFilter,
 } from "@/lib/multi-account-storage";
 import {
   fetchAllDirectory,
   collectAccount,
   yesterdayKST,
+  fetchAgencyOperation,
+  fetchBizMoney,
+  fetchYesterdayCost,
+  type AgencyOperationOutcome,
+  type AgencyOperationRow,
 } from "@/lib/multi-account-data";
 import type {
   MultiAccountDirectoryCache,
@@ -41,13 +52,20 @@ import type {
   MultiAccountUserMeta,
   MultiAccountSnapshot,
 } from "@/types/storage";
-import { attachActionMenu, type ActionMenuItem } from "./ui-dropdown";
+import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "./ui-dropdown";
 import { openInputDialog } from "./input-dialog";
-import { openSetupFlow } from "./setup";
-import { openReportFlow, openReportFlowBatch } from "./report";
+// "./setup"·"./report"은 write-excel-file/fflate(무거운 의존성)을 끌어와 콘텐츠 초기 번들을
+// 부풀린다. 호출 직전 동적 import로 분리해 별도 청크로 빠지게 한다(첫 클릭 시 1회 로드).
 
 const ADACCT_URL_PATTERN = /\/manage\/ad-accounts\//;
 const BTN_MARK = "data-dvads-multi-btn";
+
+// findOperationChip 전체 span 순회 백오프 — 헤더 칩이 지속적으로 안 보이면(서브페이지 등)
+// 매 tick 전체 순회가 낭비라 연속 미스가 임계 이상 쌓이면 일정 간격으로 건너뛴다.
+const CHIP_SCAN_MISS_THRESHOLD = 10; // 연속 미스(약 3초)까지는 매 tick 그대로 순회
+const CHIP_SCAN_BACKOFF_MS = 1500; // 임계 초과 시 전체 순회 최소 간격
+let chipScanMissStreak = 0;
+let chipScanSkipUntil = 0;
 
 let buttonEl: HTMLButtonElement | null = null;
 let lastButtonContainer: HTMLElement | null = null;
@@ -70,6 +88,8 @@ export function initMultiAccount() {
   const onTick = () => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
+      // SPA 전환 시 헤더가 다시 그려지므로 칩 순회 백오프를 풀어 즉시 재탐색.
+      chipScanMissStreak = 0;
       // 자연 캐싱: 다른 계정 페이지 진입 시 그 계정 데이터를 자동 캐싱.
       // 사용자가 어차피 그 계정 보러 왔으니 백그라운드 탭 없이 직접 fetch.
       void autoUpdateActiveAccount();
@@ -80,6 +100,8 @@ export function initMultiAccount() {
   setInterval(onTick, 300);
   window.addEventListener("popstate", () => {
     lastUrl = location.href;
+    // 뒤로/앞으로도 SPA 전환이므로 칩 순회 백오프를 풀어 즉시 재탐색(onTick과 동일).
+    chipScanMissStreak = 0;
     syncMount();
     void autoUpdateActiveAccount();
   });
@@ -255,6 +277,10 @@ function findOperationChip(): HTMLElement | null {
     if (r.width > 0 && r.height > 0 && r.top < 120) return cached;
     cached.removeAttribute("data-dvads-op-chip");
   }
+  // 연속 미스가 임계 이상이면 전체 span 순회를 백오프 간격까지 건너뛴다. 임계 미만에선
+  // 매 tick 그대로 순회해 일반 페이지 로드의 헤더 지연을 놓치지 않는다.
+  const now = Date.now();
+  if (chipScanMissStreak >= CHIP_SCAN_MISS_THRESHOLD && now < chipScanSkipUntil) return null;
   // 상단 영역에 있는 후보 element만 검사. naver SPA 헤더의 "운영 관리" 텍스트는 항상 span에
   // 들어있으므로 candidate를 span으로 좁힘 — 대형 페이지(수천 노드)에서 매 tick 비용 절감.
   const candidates = document.querySelectorAll<HTMLElement>("span");
@@ -269,16 +295,20 @@ function findOperationChip(): HTMLElement | null {
       if (r.top >= 120 || r.top < 0) break;
       // 광고계정명 + "운영 관리"가 함께 들어있는 wrapper는 가로 100~500px 사이
       if (r.width >= 100 && r.width <= 500 && r.height >= 20 && r.height <= 60) {
+        chipScanMissStreak = 0;
         chipParent.setAttribute("data-dvads-op-chip", "1");
         return chipParent;
       }
     }
     // wrapper 못 찾으면 텍스트 부모 자체 반환
     if (el.parentElement) {
+      chipScanMissStreak = 0;
       el.parentElement.setAttribute("data-dvads-op-chip", "1");
       return el.parentElement;
     }
   }
+  chipScanMissStreak++;
+  if (chipScanMissStreak >= CHIP_SCAN_MISS_THRESHOLD) chipScanSkipUntil = now + CHIP_SCAN_BACKOFF_MS;
   return null;
 }
 
@@ -317,6 +347,10 @@ async function openPopover() {
   // 그 다음 click 1번은 outside-close에서 면제한다.
   const inBrandTooltip = (t: Node): boolean =>
     !!brandTooltipEl?.contains(t);
+  // 리포트 날짜 선택기(report-datepicker.ts)는 body에 portal로 띄워 popover 밖에 위치한다.
+  // 그 안의 날짜/프리셋 클릭이 popover를 닫지 않도록 "내부"로 취급. (팝오버+달력+리스트 동시 유지)
+  const inReportPicker = (t: Node): boolean =>
+    !!document.querySelector(".dvads-rdp")?.contains(t);
 
   let mousedownInsidePopover = false;
   const onMouseDown = (e: MouseEvent) => {
@@ -326,7 +360,8 @@ async function openPopover() {
       popoverEl.contains(t) ||
       (buttonEl?.contains(t) ?? false) ||
       inAuxModal(t) ||
-      inBrandTooltip(t);
+      inBrandTooltip(t) ||
+      inReportPicker(t);
   };
   const onClickOutside = (e: MouseEvent) => {
     if (!popoverEl) return;
@@ -341,6 +376,8 @@ async function openPopover() {
     if (inAuxModal(e.target as Node)) return;
     // 브랜드검색 알림 툴팁 내부 클릭(=연장하기 버튼)도 popover 닫지 않음.
     if (inBrandTooltip(e.target as Node)) return;
+    // 리포트 날짜 선택기 내부 클릭도 popover 닫지 않음.
+    if (inReportPicker(e.target as Node)) return;
     closePopover();
   };
   document.addEventListener("keydown", onKey);
@@ -359,7 +396,7 @@ async function openPopover() {
   await renderPopoverBody(wrap);
 }
 
-function closePopover() {
+export function closePopover() {
   if (!popoverEl) return;
   const cleanup = (popoverEl as unknown as { __cleanup?: () => void }).__cleanup;
   cleanup?.();
@@ -502,7 +539,9 @@ async function renderListView(wrap: HTMLElement) {
   ]);
   if (token !== renderListViewToken) return;
   const entries = pickAddedEntries(dir?.entries ?? [], addedList);
-  const snapshots = await Promise.all(entries.map((e) => loadSnapshot(e.adAccountNo)));
+  // 스냅샷을 storage.get 1회로 일괄 로드 (계정별 단건 순차 호출 제거).
+  const snapMap = await loadSnapshotMany(entries.map((e) => e.adAccountNo));
+  const snapshots = entries.map((e) => snapMap.get(e.adAccountNo) ?? null);
   if (token !== renderListViewToken) return;
   const sorted = sortEntries(entries, snapshots, meta, sortState);
 
@@ -805,7 +844,12 @@ async function renderSearchView(wrap: HTMLElement) {
   };
 
   renderList("");
-  input.addEventListener("input", () => renderList(input.value));
+  // 키 입력마다 전체 행을 재빌드하면 큰 명단에서 버벅인다 — 140ms 디바운스로 마지막 입력만 반영.
+  let searchDebounce = 0;
+  input.addEventListener("input", () => {
+    clearTimeout(searchDebounce);
+    searchDebounce = window.setTimeout(() => renderList(input.value), 140);
+  });
   // atomic swap — fragment 빌드 완료 후 한 번에 popover에 mount.
   wrap.replaceChildren(fragment);
   // select-all 헤더 체크박스 wire + 초기 헤더 동기화.
@@ -1041,6 +1085,460 @@ function closeRenameDialog(): void {
   document.querySelector(".dvads-rename-backdrop")?.remove();
 }
 
+// ─── 대행권 점검 ───
+// 헤더 ⋮ 메뉴 "대행권 점검" → 접근 가능한 전 계정의 대행권 이관 상태를 일괄 조회해서
+// 우리 담당 관리 계정(설정값)과 일치하는지 판별. 문제 계정(다른 대행사/없음/확인 필요)만 요약.
+
+type AgencyCheckStatus = "ok" | "other_agency" | "none" | "error";
+
+interface AgencyCheckRow {
+  adAccountNo: number;
+  name: string; // 별칭 우선
+  status: AgencyCheckStatus;
+  agencyName?: string;
+  message?: string;
+  bizMoney?: number | null; // 비즈머니 잔액(환급가능+환급불가). 조회 실패 시 null.
+  yesterdayCost?: number | null; // 어제 광고비(SA+DA 합산, 원). 조회 실패/customerId 없음 시 null.
+  row?: AgencyOperationRow; // 엑셀용 원본 상세(에이전시/대표·담당 관리계정/승인일자/영업타입)
+}
+
+const AGENCY_CHECK_CONCURRENCY = 4;
+
+function classifyAgency(outcome: AgencyOperationOutcome, ourIds: number[]): {
+  status: AgencyCheckStatus;
+  agencyName?: string;
+  message?: string;
+} {
+  if (outcome.kind === "forbidden") return { status: "error", message: "권한이 없어 확인하지 못했어요" };
+  if (outcome.kind === "error") return { status: "error", message: "확인 중 문제가 생겼어요" };
+  const row = outcome.row;
+  if (!row) return { status: "none" };
+  const agencyName = row.agencyCompanyName || row.agencyManagerAccountName || "";
+  const direct = row.directManagerAccountNo;
+  if (direct != null && ourIds.includes(direct)) return { status: "ok", agencyName };
+  return { status: "other_agency", agencyName };
+}
+
+function closeAgencyModal(): void {
+  document.querySelector(".dvads-agency-backdrop")?.remove();
+}
+
+/**
+ * 대행권 점검 진입점. 우리 담당 관리 계정(설정)이 비어있으면 먼저 입력받고,
+ * 있으면 바로 디렉터리 전 계정을 4-worker로 조회해 결과 요약을 띄운다.
+ */
+async function runAgencyCheck(): Promise<void> {
+  const [ourIds, dir, meta] = await Promise.all([
+    loadAgencyIdentity(),
+    loadDirectory(),
+    loadAllUserMeta(),
+  ]);
+  const all = (dir?.entries ?? []).filter((e) => !e.disabled && !e.deleted);
+  // 선택된 계정이 있으면 그 계정만 점검(내 계정/전체 계정 두 뷰 공통). 없으면 전체 명단.
+  const sel = selectedAccountNos;
+  const targets = sel.size > 0 ? all.filter((e) => sel.has(e.adAccountNo)) : all;
+  openAgencyModal(targets, ourIds, meta);
+}
+
+function openAgencyModal(
+  targets: MultiAccountDirectoryEntry[],
+  initialIds: number[],
+  meta: Record<number, MultiAccountUserMeta>,
+): void {
+  closeAgencyModal();
+  let ourIds = initialIds.slice();
+  let cancelled = false;
+  let checking = false; // 점검(로딩) 진행 중 — 배경/ESC로 닫히지 않게
+  let loaderEl: HTMLElement | null = null; // 점검 중 리포트와 동일한 작은 로더 카드
+  let lastResults: AgencyCheckRow[] | null = null; // 직전 점검 결과 — "다시 점검" 화면의 뒤로가기용
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "dvads dvads-agency-backdrop";
+  const card = document.createElement("div");
+  card.className = "dvads-agency-card";
+  card.innerHTML = `
+    <div class="dvads-agency-head">
+      <div class="dvads-agency-title">대행권 점검</div>
+      <button class="dvads-agency-close" type="button" aria-label="닫기">×</button>
+    </div>
+    <div class="dvads-agency-identity"></div>
+    <div class="dvads-agency-body"></div>
+  `;
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const identityEl = card.querySelector<HTMLDivElement>(".dvads-agency-identity")!;
+  const bodyEl = card.querySelector<HTMLDivElement>(".dvads-agency-body")!;
+  const titleEl = card.querySelector<HTMLDivElement>(".dvads-agency-title")!;
+
+  const cleanup = () => {
+    cancelled = true;
+    closeAllOpenDropdowns(); // 상태 필터 드롭다운 패널은 body portal이라 별도 정리
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (checking) return; // 점검 중엔 ESC로도 닫지 않음
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+  };
+  document.addEventListener("keydown", onKey, true);
+  // 바깥(backdrop) 클릭으로 닫기. 단 mousedown이 backdrop에서 시작한 "진짜 바깥 클릭"일 때만.
+  // 카드 안에서 텍스트를 드래그하다 바깥에서 손을 떼면 click 타겟이 backdrop가 되는데,
+  // 그때 닫히면 안 된다(드래그-아웃 닫힘 버그). mousedown 시작 위치로 구분한다.
+  let downOnBackdrop = false;
+  backdrop.addEventListener("mousedown", (e) => {
+    downOnBackdrop = e.target === backdrop;
+  });
+  backdrop.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (!checking && e.target === backdrop && downOnBackdrop) cleanup();
+    downOnBackdrop = false;
+  });
+  card.addEventListener("click", (e) => e.stopPropagation());
+  card.querySelector<HTMLButtonElement>(".dvads-agency-close")?.addEventListener("click", cleanup);
+
+  // ─── 담당 관리 계정 입력 (점검 진입 + "다시 점검" 시 재설정) ───
+  function showIdentityEditor() {
+    backdrop.classList.remove("is-results"); // 입력 화면은 중앙 정렬
+    loaderEl?.remove();
+    loaderEl = null;
+    card.style.display = ""; // 로딩 때 숨겼다면 복원
+    bodyEl.innerHTML = ""; // 결과/로딩 잔재 제거 — 입력창만 남긴다
+    bodyEl.style.display = "none"; // 입력 화면은 본문 비움 → 아래 빈 공간 제거
+    identityEl.style.display = "";
+    identityEl.innerHTML = "";
+    // 직전 결과가 있으면(=다시 점검으로 들어온 경우) 헤더 제목을 "< 뒤로가기"로 교체 → 점검 없이 이전 결과 복귀.
+    if (lastResults) {
+      titleEl.innerHTML = `<button class="dvads-agency-title-back" type="button">&lt; 뒤로가기</button>`;
+      titleEl.querySelector<HTMLButtonElement>(".dvads-agency-title-back")?.addEventListener("click", () => {
+        if (lastResults) renderResults(lastResults);
+      });
+    } else {
+      titleEl.textContent = "대행권 점검";
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "dvads-agency-id-editor";
+    wrap.innerHTML = `
+      <input class="dvads-agency-id-input" type="text" inputmode="numeric"
+        placeholder="예: 28504, 28505" />
+      <button class="dvads-agency-id-save dvads-btn dvads-btn-primary" type="button">점검 시작</button>
+    `;
+    identityEl.appendChild(wrap);
+
+    const input = wrap.querySelector<HTMLInputElement>(".dvads-agency-id-input")!;
+    input.value = ourIds.join(", "); // 기존 값 미리 채움 (지울 수 있음)
+    input.focus();
+    input.select();
+    const save = async () => {
+      const ids = [...new Set((input.value.match(/\d+/g) ?? []).map(Number).filter((n) => n > 0))];
+      ourIds = ids;
+      await saveAgencyIdentity(ids);
+      void startCheck();
+    };
+    wrap.querySelector<HTMLButtonElement>(".dvads-agency-id-save")?.addEventListener("click", () => void save());
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); void save(); }
+    });
+  }
+
+  // ─── 점검 실행 ───
+  async function startCheck() {
+    if (ourIds.length === 0) {
+      showIdentityEditor();
+      return;
+    }
+    if (targets.length === 0) {
+      bodyEl.style.display = "";
+      bodyEl.innerHTML =
+        `<div class="dvads-agency-msg">점검할 계정이 없어요. 광고계정 화면을 먼저 열어 계정 명단을 불러와 주세요.</div>`;
+      return;
+    }
+
+    const total = targets.length;
+    let done = 0;
+    // 점검 중엔 본 카드를 숨기고 리포트와 동일한 작은 로더 카드(.dvads-auto-overlay-card)를 띄운다.
+    backdrop.classList.remove("is-results");
+    card.style.display = "none";
+    if (!loaderEl) {
+      loaderEl = document.createElement("div");
+      loaderEl.className = "dvads-auto-overlay-card";
+      loaderEl.innerHTML =
+        `<button class="dvads-auto-overlay-cancel" type="button" aria-label="취소">×</button>` +
+        `<div class="dvads-auto-overlay-spinner"></div><div class="dvads-auto-overlay-text"></div>`;
+      loaderEl.querySelector(".dvads-auto-overlay-cancel")?.addEventListener("click", cleanup);
+      backdrop.appendChild(loaderEl);
+    }
+    loaderEl.style.display = "";
+    const textEl = loaderEl.querySelector<HTMLElement>(".dvads-auto-overlay-text")!;
+    const updateProgress = () => {
+      if (backdrop.isConnected) textEl.textContent = `대행권 점검 중... (${done}/${total})`;
+    };
+    updateProgress();
+
+    checking = true; // 이제부터 배경/ESC 닫기 차단 (× 명시적 취소는 허용)
+    const yesterday = yesterdayKST(); // 어제 광고비 조회용 (KST 기준 어제 날짜)
+    const results: AgencyCheckRow[] = [];
+    const queue = [...targets];
+    const workers = Array.from(
+      { length: Math.min(AGENCY_CHECK_CONCURRENCY, queue.length) },
+      async () => {
+        while (queue.length > 0 && !cancelled) {
+          const entry = queue.shift();
+          if (!entry) break;
+          // 대행권 + 비즈머니 + 어제 광고비를 같은 계정에서 병렬 조회 — 서로 다른 endpoint지만
+          // 동시에 보내면 대기 시간은 가장 느린 1개 수준. 광고비/비즈머니는 실패해도 null로 흘림.
+          // 광고비는 customerId(masterCustomerId)가 있어야 cross-account 호출 가능 — 없으면 null.
+          const [outcome, bizMoney, yesterdayCost] = await Promise.all([
+            fetchAgencyOperation(entry.adAccountNo).catch(
+              (): AgencyOperationOutcome => ({ kind: "error", status: 0, message: "네트워크 오류" }),
+            ),
+            fetchBizMoney(entry.adAccountNo).catch(() => null),
+            entry.masterCustomerId
+              ? fetchYesterdayCost(entry.adAccountNo, entry.masterCustomerId, yesterday).catch(() => null)
+              : Promise.resolve(null),
+          ]);
+          const c = classifyAgency(outcome, ourIds);
+          results.push({
+            adAccountNo: entry.adAccountNo,
+            name: meta[entry.adAccountNo]?.displayName?.trim() || entry.name,
+            status: c.status,
+            agencyName: c.agencyName,
+            message: c.message,
+            bizMoney,
+            yesterdayCost,
+            row: outcome.kind === "ok" ? (outcome.row ?? undefined) : undefined,
+          });
+          done++;
+          updateProgress();
+        }
+      },
+    );
+    await Promise.all(workers);
+    checking = false; // 점검 끝 — 다시 배경/ESC로 닫기 가능
+    loaderEl?.remove();
+    loaderEl = null;
+    card.style.display = "";
+    if (cancelled) return;
+    renderResults(results);
+  }
+
+  // ─── 결과 요약 ───
+  const statusLabel = (s: AgencyCheckStatus): string =>
+    s === "ok" ? "이관 완료" : s === "other_agency" ? "타대행사" : s === "none" ? "대행권없음" : "확인 필요";
+
+  function renderResults(rows: AgencyCheckRow[]) {
+    lastResults = rows; // "다시 점검" 화면에서 뒤로가기로 복귀할 수 있게 보관
+    titleEl.textContent = "대행권 점검"; // 입력 화면에서 뒤로가기로 바뀐 제목 복원
+    // 정렬 순서: 타대행사 → 없음 → 확인 필요 → 이관 완료(정상은 맨 아래), 동급은 이름순.
+    const order: AgencyCheckStatus[] = ["other_agency", "none", "error", "ok"];
+    // 상태 헤더 드롭다운으로 고른 상태(null = 전체). 첫 점검 시 전체 계정 표시.
+    let statusFilter: AgencyCheckStatus | null = null;
+
+    identityEl.style.display = "none"; // 결과 화면엔 담당 계정 표시줄 없음 (재설정은 "다시 점검")
+    backdrop.classList.add("is-results"); // 결과 화면은 넓게 + 고정 높이
+    bodyEl.style.display = "";
+    bodyEl.innerHTML = "";
+
+    // 검색 + 엑셀 다운로드(아이콘)
+    const toolbar = document.createElement("div");
+    toolbar.className = "dvads-agency-toolbar";
+    const searchInput = document.createElement("input");
+    searchInput.type = "text";
+    searchInput.className = "dvads-agency-search";
+    searchInput.placeholder = "계정 검색(이름/번호/대행사명)";
+    toolbar.appendChild(searchInput);
+    const excelBtn = document.createElement("button");
+    excelBtn.type = "button";
+    excelBtn.className = "dvads-agency-excel";
+    excelBtn.title = "엑셀 다운로드";
+    excelBtn.setAttribute("aria-label", "엑셀 다운로드");
+    excelBtn.innerHTML =
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">` +
+      `<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+    toolbar.appendChild(excelBtn);
+    bodyEl.appendChild(toolbar);
+
+    const listWrap = document.createElement("div");
+    listWrap.className = "dvads-agency-list";
+    bodyEl.appendChild(listWrap);
+
+    const sortRows = (arr: AgencyCheckRow[]) =>
+      arr.slice().sort((a, b) => {
+        const d = order.indexOf(a.status) - order.indexOf(b.status);
+        return d !== 0 ? d : a.name.localeCompare(b.name, "ko");
+      });
+
+    const paintList = (q: string) => {
+      const ql = q.trim().toLowerCase();
+      // 상태 헤더 드롭다운으로 고른 상태만, 아니면 전체.
+      const base = statusFilter
+        ? rows.filter((r) => r.status === statusFilter)
+        : rows;
+      const filtered = sortRows(
+        !ql
+          ? base
+          : base.filter(
+              (r) =>
+                r.name.toLowerCase().includes(ql) ||
+                String(r.adAccountNo).includes(ql) ||
+                (r.agencyName ?? "").toLowerCase().includes(ql) ||
+                (r.row?.directManagerAccountName ?? "").toLowerCase().includes(ql) ||
+                String(r.row?.directManagerAccountNo ?? "").includes(ql),
+            ),
+      );
+      // 다계정 표와 동일한 구조 — 상단 헤더 + 아래 행 리스트.
+      listWrap.innerHTML = "";
+      const table = document.createElement("table");
+      table.className = "dvads-agency-table";
+      table.innerHTML =
+        `<thead><tr>` +
+        `<th class="dvads-agency-th-acct">계정</th>` +
+        `<th class="dvads-agency-th-agency">대행사</th>` +
+        `<th class="dvads-agency-th-dm">담당 관리 계정</th>` +
+        `<th class="dvads-agency-th-cost">전일 광고비</th>` +
+        `<th class="dvads-agency-th-biz">비즈머니</th>` +
+        `<th class="dvads-agency-th-status"></th>` +
+        `</tr></thead>`;
+      // 상태 헤더 — 클릭하면 드롭다운으로 상태 필터 선택(아래 화살표로 표시). 매 paint마다 재생성.
+      const statusTh = table.querySelector<HTMLTableCellElement>(".dvads-agency-th-status");
+      if (statusTh) {
+        const trig = document.createElement("button");
+        trig.type = "button";
+        trig.className = "dvads-agency-status-trigger";
+        trig.innerHTML =
+          `<span>상태</span><span class="dvads-agency-status-chevron" aria-hidden="true">▾</span>`;
+        statusTh.appendChild(trig);
+        const pick = (s: AgencyCheckStatus | null) => {
+          statusFilter = s;
+          paintList(searchInput.value);
+        };
+        attachActionMenu({
+          trigger: trig,
+          ariaLabel: "상태 필터",
+          items: () => [
+            { label: "전체", checked: statusFilter === null, onClick: () => pick(null) },
+            { label: statusLabel("other_agency"), checked: statusFilter === "other_agency", onClick: () => pick("other_agency") },
+            { label: statusLabel("none"), checked: statusFilter === "none", onClick: () => pick("none") },
+            { label: statusLabel("error"), checked: statusFilter === "error", onClick: () => pick("error") },
+            { label: statusLabel("ok"), checked: statusFilter === "ok", onClick: () => pick("ok") },
+          ],
+        });
+      }
+      const tbody = document.createElement("tbody");
+      if (filtered.length === 0) {
+        const tr = document.createElement("tr");
+        const td = document.createElement("td");
+        td.colSpan = 6;
+        td.className = "dvads-agency-empty";
+        td.textContent = ql
+          ? "검색 결과가 없어요."
+          : statusFilter
+            ? "해당 상태의 계정이 없어요."
+            : "점검할 계정이 없어요.";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      } else {
+        for (const r of filtered) {
+          const tr = document.createElement("tr");
+          tr.className = "dvads-agency-row";
+          const statusCls =
+            r.status === "ok" ? "dvads-agency-okb"
+            : r.status === "other_agency" ? "dvads-agency-other"
+            : r.status === "none" ? "dvads-agency-noneb"
+            : "dvads-agency-err";
+          // 대행권 있는 경우만 에이전시명, 없음/확인필요는 "-"
+          const agencyText =
+            (r.status === "other_agency" || r.status === "ok") && r.agencyName
+              ? escapeHtml(r.agencyName)
+              : "-";
+          const dm = r.row;
+          const dmName = dm?.directManagerAccountName ? escapeHtml(dm.directManagerAccountName) : "";
+          const dmNo = dm?.directManagerAccountNo != null ? String(dm.directManagerAccountNo) : "";
+          const dmCell = dmName
+            ? `<div class="dvads-agency-name">${dmName}</div>` + (dmNo ? `<div class="dvads-agency-no">${dmNo}</div>` : "")
+            : "-";
+          const bizText = r.bizMoney != null ? formatWon(r.bizMoney) : "-";
+          const costText = r.yesterdayCost != null ? formatWon(r.yesterdayCost) : "-";
+          tr.innerHTML =
+            `<td class="dvads-agency-td-acct"><div class="dvads-agency-name">${escapeHtml(r.name)}</div><div class="dvads-agency-no">${r.adAccountNo}</div></td>` +
+            `<td class="dvads-agency-td-agency">${agencyText}</td>` +
+            `<td class="dvads-agency-td-dm">${dmCell}</td>` +
+            `<td class="dvads-agency-td-cost">${costText}</td>` +
+            `<td class="dvads-agency-td-biz">${bizText}</td>` +
+            `<td class="dvads-agency-td-status"><span class="dvads-agency-badge ${statusCls}">${statusLabel(r.status)}</span></td>`;
+          // 행 클릭 → 광고 대시보드 메인 새 탭(anchor click; window.open 차단 회피).
+          // 드래그(텍스트 선택)면 이동 안 함 — mousedown/up 위치 차로 판별.
+          let downX = 0;
+          let downY = 0;
+          tr.addEventListener("mousedown", (e) => { downX = e.clientX; downY = e.clientY; });
+          tr.addEventListener("click", (e) => {
+            if (Math.abs(e.clientX - downX) > 4 || Math.abs(e.clientY - downY) > 4) return;
+            const a = document.createElement("a");
+            a.href = `/manage/ad-accounts/${r.adAccountNo}/dashboard`;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            a.click();
+          });
+          tbody.appendChild(tr);
+        }
+      }
+      table.appendChild(tbody);
+      listWrap.appendChild(table);
+    };
+
+    searchInput.addEventListener("input", () => paintList(searchInput.value));
+    paintList("");
+
+    // 엑셀: 전체 결과(정상 포함) 기록. write-excel-file은 무거워 클릭 시 동적 import.
+    excelBtn.addEventListener("click", () => {
+      void (async () => {
+        excelBtn.disabled = true;
+        try {
+          const { downloadAgencyCheckExcel } = await import("@/lib/agency-check-excel");
+          await downloadAgencyCheckExcel(
+            rows.map((r) => {
+              const d = r.row;
+              const acceptedAt = d?.acceptedAt ? d.acceptedAt.slice(0, 10).replace(/-/g, ".") : "";
+              const salesType = d ? (d.taxInvoiceIncluded ? "대행권 이관 및 세금계산서 위임" : "대행권 이관") : "";
+              return {
+                name: r.name,
+                adAccountNo: r.adAccountNo,
+                statusLabel: statusLabel(r.status),
+                agency: d?.agencyCompanyName || d?.agencyManagerAccountName || (r.status === "error" ? (r.message ?? "") : ""),
+                ownerName: d?.agencyManagerAccountName ?? "",
+                ownerNo: d?.agencyManagerAccountNo != null ? String(d.agencyManagerAccountNo) : "",
+                directName: d?.directManagerAccountName ?? "",
+                directNo: d?.directManagerAccountNo != null ? String(d.directManagerAccountNo) : "",
+                acceptedAt,
+                salesType,
+                yesterdayCost: r.yesterdayCost ?? null,
+                bizMoney: r.bizMoney ?? null,
+              };
+            }),
+          );
+        } catch (e) {
+          console.warn("[content/multi-account] 대행권 점검 엑셀 실패", e);
+        } finally {
+          excelBtn.disabled = false;
+        }
+      })();
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "dvads-agency-actions";
+    actions.innerHTML =
+      `<button class="dvads-agency-recheck dvads-btn dvads-btn-secondary" type="button">다시 점검</button>` +
+      `<button class="dvads-agency-done dvads-btn dvads-btn-primary" type="button">닫기</button>`;
+    bodyEl.appendChild(actions);
+    actions.querySelector<HTMLButtonElement>(".dvads-agency-recheck")?.addEventListener("click", () => showIdentityEditor());
+    actions.querySelector<HTMLButtonElement>(".dvads-agency-done")?.addEventListener("click", cleanup);
+  }
+
+  // 점검 진입 시 항상 담당 관리 계정 설정부터 — 입력창 + 점검 버튼만.
+  bodyEl.innerHTML = "";
+  showIdentityEditor();
+}
+
 // ─── 다중 선택 + 일괄 액션 ───
 // 각 행 좌측 체크박스 + 헤더 "설정 (N)" 버튼. selectedAccountNos는 모듈 전역.
 
@@ -1218,6 +1716,10 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       onClick: () => setFullscreen(!popoverFullscreen),
     },
     { label: "새로고침", onClick: () => void refreshAllStale(entries) },
+    {
+      label: hasSelection ? `대행권 점검 (${selectedAccountNos.size})` : "대행권 점검",
+      onClick: () => void runAgencyCheck(),
+    },
     { separator: true },
     // 광고 유형 필터 — 둘 중 하나만/둘 다 선택. 선택에 따라 어제 데이터가 SA/GFA/합산으로 바뀐다.
     {
@@ -1246,12 +1748,25 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
     {
       label: "리포트 생성",
       disabled: !hasSelection,
-      onClick: () =>
+      keepOpen: true,
+      // 클릭 시점에 meta를 새로 읽어 바뀐 별칭(displayName)을 리포트에 반영. anchor 위치는
+      // await 전에 동기 캡처(키프레임 populate가 버튼을 떼어내 이후 rect가 0이 되는 것 방지).
+      onClick: async (anchor) => {
+        const anchorRect = anchor.getBoundingClientRect();
+        const metaMap = await loadAllUserMeta();
+        const { openReportFlowBatch } = await import("./report");
         openReportFlowBatch(
+          anchor,
           entries
             .filter((e) => selectedAccountNos.has(e.adAccountNo))
-            .map((e) => ({ adAccountNo: e.adAccountNo, masterCustomerId: e.masterCustomerId, name: e.name })),
-        ),
+            .map((e) => ({
+              adAccountNo: e.adAccountNo,
+              masterCustomerId: e.masterCustomerId,
+              name: metaMap[e.adAccountNo]?.displayName?.trim() || e.name,
+            })),
+          anchorRect,
+        );
+      },
     },
     { separator: true },
     {
@@ -1262,7 +1777,7 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
         const nos = Array.from(selectedAccountNos);
         if (nos.length === 0) return;
         void (async () => {
-          for (const no of nos) await removeAccountFromList(no);
+          await removeAccountsFromList(nos);
           selectedAccountNos.clear();
           if (popoverEl) await renderListView(popoverEl);
         })();
@@ -1276,13 +1791,18 @@ function searchKebabItems(): ActionMenuItem[] {
   const hasSelection = selectedAccountNos.size > 0;
   return [
     {
+      label: hasSelection ? `대행권 점검 (${selectedAccountNos.size})` : "대행권 점검",
+      onClick: () => void runAgencyCheck(),
+    },
+    { separator: true },
+    {
       label: "계정 추가",
       disabled: !hasSelection,
       onClick: () => {
         const nos = Array.from(selectedAccountNos);
         if (nos.length === 0) return;
         void (async () => {
-          for (const no of nos) await addAccountToList(no);
+          await addAccountsToList(nos);
           selectedAccountNos.clear();
           if (popoverEl) await renderSearchView(popoverEl);
         })();
@@ -1296,7 +1816,7 @@ function searchKebabItems(): ActionMenuItem[] {
         const nos = Array.from(selectedAccountNos);
         if (nos.length === 0) return;
         void (async () => {
-          for (const no of nos) await removeAccountFromList(no);
+          await removeAccountsFromList(nos);
           selectedAccountNos.clear();
           if (popoverEl) await renderSearchView(popoverEl);
         })();
@@ -1402,7 +1922,13 @@ function renderTableRow(
     `${entry.name} ${entry.adAccountNo} ${meta?.displayName ?? ""}`
   ).toLowerCase();
 
-  const displayName = meta?.displayName?.trim() || entry.name;
+  const hasAlias = !!meta?.displayName?.trim();
+  const displayName = hasAlias ? meta!.displayName!.trim() : entry.name;
+  // 이름을 바꾼 계정은 계정번호 옆에 원래 계정명을 같이 표기 — "1890480 (원래계정명)".
+  // 별칭이 없으면 계정번호만.
+  const subLine = hasAlias
+    ? `${entry.adAccountNo} (${escapeHtml(entry.name)})`
+    : String(entry.adAccountNo);
   const isActive =
     location.pathname.startsWith(`/manage/ad-accounts/${entry.adAccountNo}/`);
   if (isActive) tr.classList.add("dvads-multi-tr-active");
@@ -1411,7 +1937,7 @@ function renderTableRow(
     <td class="dvads-multi-td-cb">${checkboxHTML(false, `${displayName} 선택`)}</td>
     <td class="dvads-multi-td-name">
       <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
-      <div class="dvads-multi-no">${entry.adAccountNo}</div>
+      <div class="dvads-multi-no">${subLine}</div>
     </td>
     <td class="dvads-multi-td-num" data-k="bizMoney">-</td>
     <td class="dvads-multi-td-num" data-k="impressions">-</td>
@@ -1483,21 +2009,36 @@ function renderTableRow(
         { label: "바로가기", onClick: goTo },
         {
           label: "세팅안 생성",
-          onClick: () =>
+          onClick: async () => {
+            const { openSetupFlow } = await import("./setup");
             void openSetupFlow({
               adAccountNo: entry.adAccountNo,
               masterCustomerId: entry.masterCustomerId,
               name: meta?.displayName?.trim() || entry.name,
-            }),
+            });
+          },
         },
         {
           label: "리포트 생성",
-          onClick: () =>
-            openReportFlow({
-              adAccountNo: entry.adAccountNo,
-              masterCustomerId: entry.masterCustomerId,
-              name: meta?.displayName?.trim() || entry.name,
-            }),
+          keepOpen: true,
+          onClick: (anchor) => {
+            // keepOpen 메뉴라 onClick 직후 populate()가 anchor 버튼을 떼어낸다. 동적 import가
+            // resolve되는 시점엔 이미 분리돼 rect가 0이 되므로, 위치를 지금(동기) 캡처해 날짜
+            // 선택기에 위치 보존용 프록시 앵커로 넘긴다(openReportFlow는 anchorRect 미지원).
+            const rect = anchor.getBoundingClientRect();
+            const anchorProxy = {
+              getBoundingClientRect: () => rect,
+              isConnected: false,
+              contains: () => false,
+            } as unknown as HTMLElement;
+            void import("./report").then(({ openReportFlow }) => {
+              openReportFlow(anchorProxy, {
+                adAccountNo: entry.adAccountNo,
+                masterCustomerId: entry.masterCustomerId,
+                name: meta?.displayName?.trim() || entry.name,
+              });
+            });
+          },
         },
         {
           label: "이름 수정",
@@ -1690,12 +2231,12 @@ async function openBizMoneyDialogFor(nos: number[]) {
     suffix: "원",
     placeholder: "100,000",
     onConfirm: async (value) => {
-      for (const no of nos) await updateUserMeta(no, { bizMoneyThreshold: value });
+      await updateUserMetaMany(nos, { bizMoneyThreshold: value });
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     },
     onClear: showClear ? async () => {
-      for (const no of nos) await updateUserMeta(no, { bizMoneyThreshold: undefined });
+      await updateUserMetaMany(nos, { bizMoneyThreshold: undefined });
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     } : undefined,
@@ -1717,12 +2258,12 @@ async function openBrandSearchDialogFor(nos: number[]) {
     suffix: "일",
     placeholder: "7",
     onConfirm: async (value) => {
-      for (const no of nos) await updateUserMeta(no, { brandSearchDaysThreshold: value });
+      await updateUserMetaMany(nos, { brandSearchDaysThreshold: value });
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     },
     onClear: showClear ? async () => {
-      for (const no of nos) await updateUserMeta(no, { brandSearchDaysThreshold: undefined });
+      await updateUserMetaMany(nos, { brandSearchDaysThreshold: undefined });
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     } : undefined,
@@ -1735,19 +2276,35 @@ async function openBrandSearchDialogFor(nos: number[]) {
  *
  * 호출 시점: syncMount 직후, popover 렌더 후, snapshot 갱신 후, 다이얼로그 onConfirm/onClear,
  * 그리고 storage onChanged 콜백.
+ *
+ * 스냅샷 저장마다 storage onChanged → refreshBadge 캐스케이드가 일어나므로 250ms 디바운스로
+ * 연속 호출을 1회 재계산으로 합친다.
  */
-async function refreshBadge() {
+let refreshBadgeTimer = 0;
+function refreshBadge(): void {
+  clearTimeout(refreshBadgeTimer);
+  refreshBadgeTimer = window.setTimeout(() => {
+    refreshBadgeTimer = 0;
+    void refreshBadgeImpl();
+  }, 250);
+}
+
+async function refreshBadgeImpl() {
   if (!buttonEl) return;
   const badge = buttonEl.querySelector<HTMLSpanElement>(".dvads-multi-btn-badge");
   if (!badge) return;
   const addedList = await loadAddedList();
   const metaMap = await loadAllUserMeta();
-  let count = 0;
-  for (const no of addedList) {
+  // 임계값이 설정된 계정만 후보 — 그 계정들의 스냅샷만 한 번에 읽어 저장소 호출을 1회로 묶는다.
+  const candidates = addedList.filter((no) => {
     const meta = metaMap[no];
-    if (!meta) continue;
-    if (meta.bizMoneyThreshold == null && meta.brandSearchDaysThreshold == null) continue;
-    const snap = await loadSnapshot(no);
+    return !!meta && (meta.bizMoneyThreshold != null || meta.brandSearchDaysThreshold != null);
+  });
+  const snapMap = await loadSnapshotMany(candidates);
+  let count = 0;
+  for (const no of candidates) {
+    const meta = metaMap[no]!;
+    const snap = snapMap.get(no);
     if (!snap) continue;
     let alerted = false;
     if (meta.bizMoneyThreshold != null && snap.bizMoney != null && snap.bizMoney <= meta.bizMoneyThreshold) {

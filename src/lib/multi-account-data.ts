@@ -139,6 +139,14 @@ export async function authFetch<T>(
   return (await resp.json()) as T;
 }
 
+/**
+ * authFetch가 던진 403(권한 없음) 에러인지. 대행권이 타사/없는 계정은 광고비·비즈머니
+ * 조회 권한이 없어 403이 흔하다 — 정상 상황이라 로그로 시끄럽게 남기지 않는다.
+ */
+function isForbiddenError(e: unknown): boolean {
+  return e instanceof Error && e.message.startsWith("HTTP 403");
+}
+
 function readCookie(name: string): string | null {
   for (const raw of document.cookie.split(";")) {
     const t = raw.trim();
@@ -198,7 +206,44 @@ export async function fetchBizMoney(adAccountNo: number): Promise<number | null>
     if (!Number.isFinite(refundable) || !Number.isFinite(nonRefundable)) return null;
     return refundable + nonRefundable;
   } catch (e) {
-    console.warn("[dv-ads/multi-account] bizmoney 실패", e);
+    if (!isForbiddenError(e)) console.warn("[dv-ads/multi-account] bizmoney 실패", e);
+    return null;
+  }
+}
+
+// ─── 어제 광고비 (SA+DA 합산) ───
+
+/**
+ * 어제 하루 총 광고비(검색광고 + 디스플레이). dashboard `campaigns/search`의
+ * `grossCostMicros`를 전 캠페인 합산 ÷ 1,000,000(원). `x-ad-customer-id`(=customerId)
+ * 헤더로 cross-account. 대행권 점검에서 계정당 1회 호출(비즈머니와 병렬).
+ */
+export async function fetchYesterdayCost(
+  adAccountNo: number,
+  customerId: number,
+  yesterdayISODate: string,
+): Promise<number | null> {
+  try {
+    const body = JSON.stringify({
+      startDate: yesterdayISODate,
+      endDate: yesterdayISODate,
+      filter: "campaign.adPlatform:in:SA,DA",
+      orderBy: "campaign.status:asc",
+      pageNumber: 1,
+      pageSize: 1000,
+    });
+    const dash = await authFetch<DashboardSearchResponse>(
+      `/apis/dashboard/v1/adAccounts/${adAccountNo}/campaigns/search`,
+      { method: "POST", body },
+      customerId,
+    );
+    let costMicros = 0;
+    for (const row of dash.results ?? []) {
+      costMicros += Number(row.metrics?.grossCostMicros ?? 0);
+    }
+    return costMicros / 1_000_000;
+  } catch (e) {
+    if (!isForbiddenError(e)) console.warn("[dv-ads/multi-account] 어제 광고비 실패", e);
     return null;
   }
 }

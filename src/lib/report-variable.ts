@@ -183,8 +183,11 @@ export function renderCampaignSheet(
   const metricCols = withGroup
     ? ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"]
     : ["D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
-  const cols = [...labelCols, ...metricCols];
-  const lastCol = cols[cols.length - 1];
+  // 검색광고(withGroup)만 표 오른쪽 끝에 색·테두리 없는 좁은 빈 간격 열 1개(Q) 추가.
+  // 헤더 바(B9 병합)·컬럼 헤더는 지표 마지막(P)까지만, Q는 빈 셀로만 둬 여백처럼 보이게.
+  const spacerCols = withGroup ? ["Q"] : [];
+  const cols = [...labelCols, ...metricCols, ...spacerCols];
+  const lastCol = metricCols[metricCols.length - 1]; // 지표 마지막(스페이서 제외) — 헤더바 병합 기준
 
   const sFirst = harvestRowStyles(xml, 11);
   const sSubtotal = harvestRowStyles(xml, layout.subtotalSampleRow);
@@ -293,7 +296,8 @@ export function renderCampaignSheet(
   xml = replaceRowsFrom(xml, 11, rows);
   xml = setMergeCells(xml, merges);
   const widths: Record<string, number> = {};
-  for (const c of cols) widths[c] = widthFor(wmax[c]);
+  for (const c of [...labelCols, ...metricCols]) widths[c] = widthFor(wmax[c]);
+  for (const c of spacerCols) widths[c] = 3; // 좁은 빈 간격
   xml = setColumnWidths(xml, widths);
   writeText(files, sheetPath, xml);
 }

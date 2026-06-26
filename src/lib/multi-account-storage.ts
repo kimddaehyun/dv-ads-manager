@@ -50,6 +50,29 @@ export async function removeAccountFromList(adAccountNo: number): Promise<number
   return next;
 }
 
+// 여러 계정을 한 번에 추가 — load 1회 + save 1회. 직렬 루프(계정마다 save) 대비 onChanged 1회만 발화.
+export async function addAccountsToList(adAccountNos: number[]): Promise<number[]> {
+  const list = await loadAddedList();
+  let changed = false;
+  for (const no of adAccountNos) {
+    if (!list.includes(no)) {
+      list.push(no);
+      changed = true;
+    }
+  }
+  if (changed) await saveAddedList(list);
+  return list;
+}
+
+// 여러 계정을 한 번에 제거 — load 1회 + save 1회. 변경 없으면 save 생략.
+export async function removeAccountsFromList(adAccountNos: number[]): Promise<number[]> {
+  const list = await loadAddedList();
+  const toRemove = new Set(adAccountNos);
+  const next = list.filter((n) => !toRemove.has(n));
+  if (next.length !== list.length) await saveAddedList(next);
+  return next;
+}
+
 export async function moveAccountInList(adAccountNo: number, direction: -1 | 1): Promise<number[]> {
   const list = await loadAddedList();
   const idx = list.indexOf(adAccountNo);
@@ -90,6 +113,26 @@ export async function updateUserMeta(
   return all;
 }
 
+// 여러 계정에 동일 patch를 한 번에 적용 — loadAllUserMeta 1회 + save 1회.
+// 계정별 병합 규칙은 updateUserMeta와 동일(빈 값/임계값 해제 시 키 제거).
+export async function updateUserMetaMany(
+  adAccountNos: number[],
+  patch: Partial<Omit<MultiAccountUserMeta, "adAccountNo">>,
+): Promise<UserMetaMap> {
+  const all = await loadAllUserMeta();
+  if (adAccountNos.length === 0) return all;
+  for (const adAccountNo of adAccountNos) {
+    const prev = all[adAccountNo] ?? { adAccountNo };
+    const next: MultiAccountUserMeta = { ...prev, ...patch, adAccountNo };
+    if (next.displayName === "") delete next.displayName;
+    if ("bizMoneyThreshold" in patch && patch.bizMoneyThreshold == null) delete next.bizMoneyThreshold;
+    if ("brandSearchDaysThreshold" in patch && patch.brandSearchDaysThreshold == null) delete next.brandSearchDaysThreshold;
+    all[adAccountNo] = next;
+  }
+  await saveAllUserMeta(all);
+  return all;
+}
+
 export async function clearAllUserMeta(): Promise<void> {
   await chrome.storage.local.remove(USER_META_KEY);
 }
@@ -121,6 +164,22 @@ export async function loadSnapshot(adAccountNo: number): Promise<MultiAccountSna
   const raw = r[key];
   if (!raw || typeof raw !== "object") return null;
   return raw as MultiAccountSnapshot;
+}
+
+// 여러 스냅샷을 storage.get 1회로 일괄 로드 — 계정 N개를 단건 순차 호출하던 것을 1번으로 합침.
+// 누락(없거나 형식 불량)은 Map에서 빠진다 (단건 loadSnapshot의 null과 동일 의미).
+export async function loadSnapshotMany(
+  adAccountNos: number[],
+): Promise<Map<number, MultiAccountSnapshot>> {
+  const result = new Map<number, MultiAccountSnapshot>();
+  if (adAccountNos.length === 0) return result;
+  const keys = adAccountNos.map((no) => SNAPSHOT_PREFIX + String(no));
+  const r = await chrome.storage.local.get(keys);
+  for (const no of adAccountNos) {
+    const raw = r[SNAPSHOT_PREFIX + String(no)];
+    if (raw && typeof raw === "object") result.set(no, raw as MultiAccountSnapshot);
+  }
+  return result;
 }
 
 export async function saveSnapshot(snapshot: MultiAccountSnapshot): Promise<void> {
@@ -166,4 +225,21 @@ export async function loadPlatformFilter(): Promise<PlatformFilter> {
 
 export async function savePlatformFilter(filter: PlatformFilter): Promise<void> {
   await chrome.storage.local.set({ [PLATFORM_FILTER_KEY]: filter });
+}
+
+// ─── 대행권 점검: 우리 담당 관리 계정 ID ───
+// 대행권 이관이 "우리 대행사"에 있는지 판별하는 기준값(담당 관리 계정 번호).
+// 영업 담당자가 여러 명일 수 있어 복수 허용. 비어있으면 점검 전 설정 유도.
+const AGENCY_IDENTITY_KEY = "multi_account_agency_identity";
+
+export async function loadAgencyIdentity(): Promise<number[]> {
+  const r = await chrome.storage.local.get(AGENCY_IDENTITY_KEY);
+  const raw = r[AGENCY_IDENTITY_KEY] as { directManagerNos?: unknown } | undefined;
+  const ids = raw?.directManagerNos;
+  if (!Array.isArray(ids)) return [];
+  return ids.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+}
+
+export async function saveAgencyIdentity(directManagerNos: number[]): Promise<void> {
+  await chrome.storage.local.set({ [AGENCY_IDENTITY_KEY]: { directManagerNos } });
 }
