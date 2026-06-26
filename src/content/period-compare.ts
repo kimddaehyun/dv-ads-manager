@@ -1113,9 +1113,9 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
     { key: "ctr", label: "클릭률", fmt: "percent" },
     { key: "cpc", label: "CPC", fmt: "krw-int", invertColor: true },
     { key: "cost", label: "총비용", fmt: "krw-int", invertColor: true },
-    { key: "revenue", label: "구매 매출", fmt: "krw-int" },
-    { key: "conversions", label: "구매수", fmt: "int" },
-    { key: "roas", label: "구매ROAS", fmt: "percent" },
+    { key: "revenue", label: "매출", fmt: "krw-int" },
+    { key: "conversions", label: "전환수", fmt: "int" },
+    { key: "roas", label: "ROAS", fmt: "percent" },
   ];
 
   for (const { key, label, fmt, invertColor } of rows) {
