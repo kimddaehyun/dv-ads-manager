@@ -296,18 +296,36 @@ function fillDetailSheet(files: ZipFiles, layout: DetailLayout, data: DetailData
 }
 
 // ── 표지 시트 (sheet1) ──
-// B7:I9 = 보고서 제목(고정), 계정/담당자/기간 입력칸. 정확한 셀은 양식 구조에 맞춰 주입.
-const COVER_PATH = "xl/worksheets/sheet1.xml";
+// 표지는 셀이 아니라 도면(drawing4) 레이어로 디자인됨 — 배경 PNG + 텍스트박스/도형.
+// 동적 값은 도면 XML의 토큰을 치환해 주입한다. 업체명은 주황 박스라 글자 길이에 맞춰 폭을 키운다.
+// 표지 디자인 원본/병합은 scripts/build-report-template-cover.mjs 참조.
+const COVER_DRAWING_PATH = "xl/drawings/drawing4.xml";
+
+// 도면 텍스트(<a:t>) 안에 들어갈 값 이스케이프.
+function escDraw(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+// 업체명 주황 박스 폭(EMU)을 글자 길이에 맞춰 재계산(14pt 굵게 맑은 고딕 추정).
+// 박스는 좌변 고정 → 오른쪽으로 확장. 기본폭(원본, "업체명" 기준) 미만으로는 줄이지 않는다.
+const ADV_BOX_DEFAULT_CX = 540000;  // 최소 박스 폭(짧은 이름이 너무 작아지지 않게)
+const ADV_BOX_PER_UNIT = 81000;     // visualLen 1단위당 글자폭(12pt 굵게 기준, 한글=2 / 영문=1)
+const ADV_BOX_PADDING = 220000;     // 좌우 합산 여백(한쪽당 ~110000 EMU ≈ 0.31cm)
+function fillAdvertiserBox(xml: string, name: string): string {
+  const adv = (name || "").trim() || "업체명";
+  const out = xml.replace("__ADV__", escDraw(adv));
+  const cx = Math.max(ADV_BOX_DEFAULT_CX, visualLen(adv) * ADV_BOX_PER_UNIT + ADV_BOX_PADDING);
+  // 박스의 두 ext(xdr:ext + a:xfrm/a:ext)가 모두 cy="256761" 쌍이라 한 번에 치환.
+  return out.replace(/cx="1355032" cy="256761"/g, `cx="${cx}" cy="256761"`);
+}
 
 function fillCover(files: ZipFiles, model: ReportModel): void {
-  let xml = readText(files, COVER_PATH);
-  // 표지 입력칸: D12 계정명 / D13 리포트 기간 / D15 담당자 / D16 작성일.
-  // (D14 "네이버"=매체 고정, B7:I9 보고서 제목 고정)
-  xml = setString(xml, "D12", model.advertiserName);
-  xml = setString(xml, "D13", model.periodText);
-  xml = setString(xml, "D15", model.authorName);
-  xml = setString(xml, "D16", model.createdDate);
-  writeText(files, COVER_PATH, xml);
+  let xml = readText(files, COVER_DRAWING_PATH);
+  xml = xml.replace("__PERIOD__", escDraw(model.periodText));
+  xml = xml.replace("__AUTHOR__", escDraw(model.authorName));
+  xml = xml.replace("__CREATED__", escDraw(model.createdDate));
+  xml = fillAdvertiserBox(xml, model.advertiserName);
+  writeText(files, COVER_DRAWING_PATH, xml);
 }
 
 // ── 월간(N>7일) 일자별 표 확장 ──

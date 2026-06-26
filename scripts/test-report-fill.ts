@@ -52,7 +52,7 @@ const ok = (c: boolean, m: string) => { console.log(`${c ? "PASS" : "FAIL"}  ${m
 const re = openXlsx(out);
 const s2 = readText(re, "xl/worksheets/sheet2.xml");
 const s4 = readText(re, "xl/worksheets/sheet4.xml");
-const s1 = readText(re, "xl/worksheets/sheet1.xml");
+const d4 = readText(re, "xl/drawings/drawing4.xml");
 
 ok(/<c r="C18"[^>]*><v>188200<\/v>/.test(s2), "종합 금주 노출(C18)=188200");
 ok(/<c r="E18"[^>]*><v>0\.034[0-9]*<\/v>/.test(s2), "종합 금주 클릭률(E18) 계산 주입");
@@ -66,10 +66,11 @@ ok(s4.includes("06/15 (월)"), "검색_상세 일자 라벨 주입");
 ok(/<c r="C18"[^>]*><v>0<\/v>/.test(s4), "검색_상세 빈 일자행(C18) 비움");
 ok(/<c r="C49"[^>]*><v>35000<\/v>/.test(s4), "검색_상세 지면 통합검색PC(C49)=35000");
 ok(/<c r="C76"[^>]*><v>95000<\/v>/.test(s4), "검색_상세 성별 남성(C76)=95000");
-ok(/<c r="D12"[^>]*t="inlineStr"[^>]*><is><t[^>]*>테스트 광고주<\/t>/.test(s1), "표지 광고주명(D12) 주입");
-ok(/<c r="D13"[^>]*><is><t[^>]*>2026\.06\.15 ~ 2026\.06\.21<\/t>/.test(s1), "표지 기간(D13) 주입");
-ok(/<c r="D15"[^>]*><is><t[^>]*>홍길동<\/t>/.test(s1), "표지 담당자(D15) 주입");
-ok(/<c r="D16"[^>]*><is><t[^>]*>2026\.06\.23<\/t>/.test(s1), "표지 작성일(D16) 주입");
+ok(d4.includes("테스트 광고주") && !d4.includes("__ADV__"), "표지 업체명 주입(도면)");
+ok(d4.includes("2026.06.15 ~ 2026.06.21") && !d4.includes("__PERIOD__"), "표지 기간 주입(도면)");
+ok(d4.includes("홍길동") && !d4.includes("__AUTHOR__"), "표지 담당자 주입(도면)");
+ok(d4.includes("2026.06.23") && !d4.includes("__CREATED__"), "표지 작성일 주입(도면)");
+ok(!/cx="1355032" cy="256761"/.test(d4), "업체명 박스 폭 확장(긴 이름)");
 ok(re["xl/worksheets/sheet7.xml"] === undefined, "디스플레이 시트 제거됨(hasDisplay=false)");
 
 console.log(fail === 0 ? `\n전체 통과 ✅  (샘플 파일: dist-report-sample.xlsx, ${out.length} bytes)` : `\n${fail}건 실패 ❌`);

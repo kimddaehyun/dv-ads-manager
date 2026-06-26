@@ -23,10 +23,11 @@ const ok = (cond: boolean, msg: string) => {
 
 // 1) 종합(sheet2) 입력칸 숫자 교체
 applyCells(files, "xl/worksheets/sheet2.xml", { C18: 999999, D18: 88888, M18: 7, N18: 3 });
-// 2) 표지(sheet1) 문자열 교체 — B7 영역(보고서 제목 자리, t="s" 공유문자열 셀)
-let s1 = readText(files, "xl/worksheets/sheet1.xml");
-s1 = setString(s1, "B7", "테스트 광고주 리포트");
-writeText(files, "xl/worksheets/sheet1.xml", s1);
+// 2) 문자열 셀 교체 — 종합(sheet2) B2(t="s" 공유문자열 셀). 표지(sheet1)는 도면 기반이라
+//    셀이 없으므로 엔진 setString 검증은 셀이 존재하는 다른 시트에서 한다.
+let s2str = readText(files, "xl/worksheets/sheet2.xml");
+s2str = setString(s2str, "B2", "테스트 광고주 리포트");
+writeText(files, "xl/worksheets/sheet2.xml", s2str);
 // 3) 강제 재계산
 forceRecalc(files);
 // 4) 디스플레이 시트 2개 제거
@@ -43,8 +44,7 @@ ok(/<c r="C18"[^>]*><v>999999<\/v>/.test(sheet2), "종합 C18 = 999999 반영");
 ok(/<c r="M18"[^>]*><v>7<\/v>/.test(sheet2), "종합 M18 = 7 반영");
 ok(/IFERROR\(D18\/C18,0\)/.test(sheet2), "종합 수식(E18 클릭률) 보존됨");
 
-const sheet1 = readText(reopened, "xl/worksheets/sheet1.xml");
-ok(sheet1.includes("테스트 광고주 리포트"), "표지 B7 문자열 반영");
+ok(sheet2.includes("테스트 광고주 리포트"), "종합 B2 문자열 반영");
 
 const wb = readText(reopened, "xl/workbook.xml");
 ok(/fullCalcOnLoad="1"/.test(wb), "fullCalcOnLoad 설정됨");
