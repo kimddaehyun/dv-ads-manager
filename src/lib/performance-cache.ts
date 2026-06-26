@@ -24,13 +24,13 @@ export async function getCachedPerformance(
   queries: PerfQuery[],
   device: AdDevice,
 ): Promise<{ hit: Map<string, KeywordPerformanceCache>; miss: PerfQuery[] }> {
-  const keys = queries.map((q) => keyForPerformanceCache(q.keyword, q.bid, device));
-  const stored = await chrome.storage.local.get(keys);
+  // 쿼리별 정규화 storage 키를 1회만 계산해 조회 루프에서 재사용 (keyFor* 내부 NFC 정규화 중복 제거).
+  const pairs = queries.map((q) => [q, keyForPerformanceCache(q.keyword, q.bid, device)] as const);
+  const stored = await chrome.storage.local.get(pairs.map(([, k]) => k));
   const hit = new Map<string, KeywordPerformanceCache>();
   const miss: PerfQuery[] = [];
   const now = Date.now();
-  for (const q of queries) {
-    const k = keyForPerformanceCache(q.keyword, q.bid, device);
+  for (const [q, k] of pairs) {
     const entry = stored[k] as KeywordPerformanceCache | undefined;
     if (entry && now - new Date(entry.fetched_at).getTime() < TTL_MS) {
       hit.set(cacheKey(q.keyword, q.bid, device), entry);

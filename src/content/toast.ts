@@ -11,6 +11,9 @@
 const ROOT_ID = "dvads-toast-root";
 const MAX_STACK = 3;
 
+// 카드별 자동 닫힘 setTimeout id — 큐 초과 evict로 직접 떼는 카드의 타이머를 정리하기 위함.
+const dismissTimers = new WeakMap<Element, number>();
+
 export interface ShowToastOptions {
   message: string;
   variant: "success" | "error";
@@ -44,9 +47,13 @@ function ensureRoot(): HTMLElement {
 export function showToast(opts: ShowToastOptions): void {
   const root = ensureRoot();
 
-  // 큐 한도 초과 시 가장 오래된 것부터 즉시 제거
+  // 큐 한도 초과 시 가장 오래된 것부터 즉시 제거 (자동 닫힘 타이머도 함께 정리해 orphan 방지)
   while (root.children.length >= MAX_STACK) {
-    root.firstElementChild?.remove();
+    const oldest = root.firstElementChild;
+    if (!oldest) break;
+    const tid = dismissTimers.get(oldest);
+    if (tid !== undefined) window.clearTimeout(tid);
+    oldest.remove();
   }
 
   const ttl = opts.undo ? opts.undo.ttlMs ?? 5000 : opts.ttlMs ?? 3000;
@@ -107,6 +114,7 @@ export function showToast(opts: ShowToastOptions): void {
   });
 
   const t = window.setTimeout(dismiss, ttl);
+  dismissTimers.set(card, t);
 
   function dismiss() {
     window.clearTimeout(t);

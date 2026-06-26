@@ -23,7 +23,7 @@ import {
 import { authFetch, fetchAdgroupRowsByCampaign } from "./multi-account-data";
 import {
   fetchAdvancedReport, colIndex, parseEntity, rowMetrics, addMetrics,
-  ZERO_METRICS, type ReportMetrics,
+  ZERO_METRICS, type ReportMetrics, type AdvReportResult,
 } from "./report-data";
 import {
   rangeForPreset, previousRange, eachDay, dayLabel, ymdToIso, proratedBrand,
@@ -132,6 +132,7 @@ function orderedNamed(map: Map<string, ReportMetrics>, order: string[]): NamedMe
 // 실제 집행 변화를 반영한다(미변동 구간이면 증감 0).
 export async function buildReportModel(
   target: ReportTarget, range: DateRange, meta: ReportMeta, brandCur = 0, brandPrev = 0,
+  displayCurrent?: GfaData | Promise<GfaData>,
 ): Promise<ReportModel> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
@@ -160,7 +161,11 @@ export async function buildReportModel(
     fetchPlacement(cid, range),
     fetchAggregated(cid, range, "criterionGenderNm", genderLabel),
     fetchAggregated(cid, range, "criterionAgeTpNm", ageLabel),
-    gfaSafe(range),
+    // 현재기간 디스플레이 합계: 상위(buildReportBytes)에서 이미 받은 GFA 결과의 .total을 재사용해
+    // fetchGfaData 중복 호출을 없앤다. 단독 호출 등 미제공 시에는 gfaSafe로 폴백(재시도 포함).
+    displayCurrent != null
+      ? Promise.resolve(displayCurrent).then((d) => d.total)
+      : gfaSafe(range),
     gfaSafe(prev),
   ]);
   // 브랜드 일할 계약금액 가산 (금주/전주 검색 총비용에 각각 반영)
@@ -295,38 +300,36 @@ async function fetchBrandContracts(customerId: number): Promise<BrandRawContract
   // /time-contracts 는 x-ad-customer-id 계정 범위로 브랜드검색 계약 전체(현재·예약·종료·취소)를
   // 평면 배열로 준다 — after-current-summaries(현재+다음만)와 달리 과거 종료 계약까지 포함하므로
   // 지난달 등 과거 기간 리포트의 일할 비용이 정확히 잡힌다(겹침 없는 계약은 proration이 0으로 제외).
-  // nccAdgroupIds 파라미터는 실제 필터링하지 않고(계정 전체 반환) 라우트 충족용이라, chunk마다 같은
-  // 집합이 와도 nccTimeContractId로 dedup. 삭제된 옛 광고그룹 소속 계약도 함께 와 과거 집행분을 보존.
+  // nccAdgroupIds 파라미터는 실제 필터링하지 않고(계정 전체 반환) 라우트 충족용이라, chunk를 직렬로
+  // 돌리면 같은 전체 응답을 매번 받아 2번째부터 전부 dedup으로 버려진다 → 첫 chunk(최대 100개)만 보내
+  // 1회만 호출한다. 삭제된 옛 광고그룹 소속 계약도 함께 와 과거 집행분을 보존. dedup은 안전상 유지.
   const out: BrandRawContract[] = [];
   const seen = new Set<string>();
-  const CHUNK = 100;
-  for (let i = 0; i < adgroupIds.length; i += CHUNK) {
-    const chunk = adgroupIds.slice(i, i + CHUNK);
-    const rows = await authFetch<BrandTimeContract[]>(
-      "/apis/sa/api/ncc/time-contracts?nccAdgroupIds=" + encodeURIComponent(chunk.join(",")),
-      undefined, customerId,
-    ).catch(() => [] as BrandTimeContract[]);
-    for (const c of rows ?? []) {
-      if (!c?.contractAmt || !c.nccAdgroupId) continue;
-      const key = c.nccTimeContractId ?? `${c.nccAdgroupId}:${c.contractStartDt}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({
-        adgroupId: c.nccAdgroupId,
-        contractAmt: c.contractAmt,
-        contractStartDt: c.contractStartDt,
-        contractEndDt: c.contractEndDt,
-        exposureStartDt: c.exposureStartDt,
-        exposureEndDt: c.exposureEndDt,
-        // 정상 계약은 cancelStatus="NOT_CANCELED" + cancelTm=null. 실제 취소된 계약만 cancelTm을
-        // 일할 끝으로 반영(노출전 취소는 cancelTm이 시작보다 앞이라 overlap 0으로 자연 제외).
-        cancelTm:
-          c.cancelStatus && c.cancelStatus !== "NOT_CANCELED" && c.cancelTm
-            ? c.cancelTm
-            : undefined,
-        contractStatus: c.contractStatus,
-      });
-    }
+  const chunk = adgroupIds.slice(0, 100);
+  const rows = await authFetch<BrandTimeContract[]>(
+    "/apis/sa/api/ncc/time-contracts?nccAdgroupIds=" + encodeURIComponent(chunk.join(",")),
+    undefined, customerId,
+  ).catch(() => [] as BrandTimeContract[]);
+  for (const c of rows ?? []) {
+    if (!c?.contractAmt || !c.nccAdgroupId) continue;
+    const key = c.nccTimeContractId ?? `${c.nccAdgroupId}:${c.contractStartDt}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      adgroupId: c.nccAdgroupId,
+      contractAmt: c.contractAmt,
+      contractStartDt: c.contractStartDt,
+      contractEndDt: c.contractEndDt,
+      exposureStartDt: c.exposureStartDt,
+      exposureEndDt: c.exposureEndDt,
+      // 정상 계약은 cancelStatus="NOT_CANCELED" + cancelTm=null. 실제 취소된 계약만 cancelTm을
+      // 일할 끝으로 반영(노출전 취소는 cancelTm이 시작보다 앞이라 overlap 0으로 자연 제외).
+      cancelTm:
+        c.cancelStatus && c.cancelStatus !== "NOT_CANCELED" && c.cancelTm
+          ? c.cancelTm
+          : undefined,
+      contractStatus: c.contractStatus,
+    });
   }
   return out;
 }
@@ -391,12 +394,11 @@ function sortByCampaign(rows: CampGroupRow[]): CampGroupRow[] {
 }
 
 // 키워드 시트: 파워링크(등록 키워드) / 쇼핑검색(실제 검색어 비용 TOP)
-async function fetchKeywordGroups(
-  customerId: number, range: DateRange, apiType: string, keyAttr: "keyword" | "expKeyword", topN?: number,
-): Promise<KeywordGroup[]> {
-  const res = await fetchAdvancedReport({
-    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", keyAttr], range, customerId,
-  });
+// 이미 받아둔 advanced-report 응답(유형x캠페인x그룹x검색어)을 유형(apiType)으로 필터해 그룹핑한다.
+// 파워링크·쇼핑검색은 attributes가 동일하므로 호출부에서 보고서를 1회만 받아 두 유형에 각각 적용.
+function buildKeywordGroups(
+  res: AdvReportResult, apiType: string, keyAttr: "keyword" | "expKeyword", topN?: number,
+): KeywordGroup[] {
   const idx = colIndex(res.head);
   const items: { campaign: string; group: string; kw: string; metrics: ReportMetrics }[] = [];
   for (const r of res.rows) {
@@ -437,26 +439,59 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
 
   // 브랜드검색 계약 raw 수집(없거나 실패 시 빈 목록) → 금주/전주 기간으로 각각 일할 계산.
   // 검색 비용 가산(금주/전주)·종합 섹션3·검색 섹션2 그룹 비용에 공통 사용.
-  const brandRaw = await fetchBrandContracts(cid).catch((e) => {
-    console.warn("[dv-ads/report] 브랜드 계약 조회 실패 → 빈 값", e);
-    return [] as BrandRawContract[];
-  });
-  const brandCur = proratedBrand(brandRaw, range);
-  const brandPrev = proratedBrand(brandRaw, previousRange(range));
+  // 3-hop(캠페인→그룹→계약) 체인이라 앞에서 await로 막지 않고 promise로 시작해 비-brand 수집(디스플레이·
+  // 키워드)과 동시 진행 — brand 값이 필요한 소비자에서만 각자 await(데이터 흐름은 동일, 시작만 앞당김).
+  const brandP = fetchBrandContracts(cid)
+    .catch((e) => {
+      console.warn("[dv-ads/report] 브랜드 계약 조회 실패 → 빈 값", e);
+      return [] as BrandRawContract[];
+    })
+    .then((brandRaw) => ({
+      brandCur: proratedBrand(brandRaw, range),
+      brandPrev: proratedBrand(brandRaw, previousRange(range)),
+    }));
 
+  // 현재기간 디스플레이(GFA)는 1회만 호출해 종합 .total(buildReportModel)·유형별·캠페인별에 공유.
+  // 공유 결과라 일시 오류로 디스플레이가 통째로 빠지지 않게 1회 재시도(전주 gfaSafe와 동일 정책) 후 빈 값.
   const emptyGfa: GfaData = { total: ZERO_METRICS, byType: [], byCampaign: [] };
-  const [model, searchTypes, displayData, campGroups, plKeywords, shKeywords] = await Promise.all([
-    buildReportModel(target, range, meta, brandCur.total, brandPrev.total),
-    fetchSummarySearchTypes(cid, range, brandCur.total),
-    fetchGfaData(target.adAccountNo, cid, range).catch((e) => {
-      console.warn("[dv-ads/report] 디스플레이 유형별/캠페인별 조회 실패 → 빈 값", e);
-      return emptyGfa;
-    }),
-    fetchCampaignGroups(cid, range, brandCur.byAdgroup),
-    // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님). 비용 상위 N개.
-    fetchKeywordGroups(cid, range, "파워링크", "expKeyword", 50),
-    fetchKeywordGroups(cid, range, "쇼핑검색", "expKeyword", 50),
+  const displayDataP = (async (): Promise<GfaData> => {
+    try {
+      return await fetchGfaData(target.adAccountNo, cid, range);
+    } catch (e1) {
+      console.warn("[dv-ads/report] 디스플레이 유형별/캠페인별 1차 조회 실패 → 재시도", e1);
+      try {
+        return await fetchGfaData(target.adAccountNo, cid, range);
+      } catch (e2) {
+        console.warn("[dv-ads/report] 디스플레이 유형별/캠페인별 최종 실패 → 빈 값", e2);
+        return emptyGfa;
+      }
+    }
+  })();
+
+  // 키워드 다차원 보고서는 파워링크·쇼핑검색이 attributes 동일 → 1회만 받아 유형별로 클라이언트 분배.
+  const keywordReportP = fetchAdvancedReport({
+    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "expKeyword"], range, customerId: cid,
+  });
+
+  const [model, searchTypes, displayData, campGroups, keywordRes] = await Promise.all([
+    (async () => {
+      const { brandCur, brandPrev } = await brandP;
+      return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP);
+    })(),
+    (async () => {
+      const { brandCur } = await brandP;
+      return fetchSummarySearchTypes(cid, range, brandCur.total);
+    })(),
+    displayDataP,
+    (async () => {
+      const { brandCur } = await brandP;
+      return fetchCampaignGroups(cid, range, brandCur.byAdgroup);
+    })(),
+    keywordReportP,
   ]);
+  // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님). 비용 상위 N개.
+  const plKeywords = buildKeywordGroups(keywordRes, "파워링크", "expKeyword", 50);
+  const shKeywords = buildKeywordGroups(keywordRes, "쇼핑검색", "expKeyword", 50);
   const displayTypes = displayData.byType;
 
   // 고정형

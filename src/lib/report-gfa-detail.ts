@@ -23,6 +23,22 @@ const POST_GAP_MS = 7000; // 연속 POST 403 회피용 간격
 const POLL_INTERVAL_MS = 1000;
 const POLL_MAX = 15;
 
+// 다운로드 POST 전역 게이트 — 여러 계정(일괄 리포트)을 병렬 수집해도 디스플레이 다운로드 POST는
+// 전역에서 POST_GAP_MS 간격을 지켜야 403(토큰버킷)이 안 난다. 직전 POST 시각을 모듈 전역으로 공유.
+// 게이트는 POST 발사까지만 직렬화하고, 그 뒤 폴링·다운로드는 게이트 밖에서 다른 계정과 겹쳐 돈다.
+let gatePostAt = 0;
+let gateChain: Promise<unknown> = Promise.resolve();
+function gatedPost<T>(fn: () => Promise<T>): Promise<T> {
+  const run = gateChain.then(async () => {
+    const elapsed = gatePostAt ? Date.now() - gatePostAt : POST_GAP_MS;
+    if (elapsed < POST_GAP_MS) await sleep(POST_GAP_MS - elapsed);
+    gatePostAt = Date.now();
+    return fn();
+  });
+  gateChain = run.catch(() => {});
+  return run;
+}
+
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 interface DimQuery {
@@ -149,15 +165,11 @@ export async function fetchGfaDetail(adAccountNo: number, customerId: number, ra
     reportFilterList: [],
   };
   const result: GfaDetailRaw = { byDay: [], byPlacement: [], byGender: [], byAge: [] };
-  // rate-limit은 토큰버킷(충전 ~7초/건, 라이브 측정). POST 간격을 POST_GAP_MS로 유지하되
-  // 폴링·다운로드에 걸린 시간을 그 간격에 흡수해 총 수집시간을 줄인다(직전 POST 기준 경과 차감).
-  let lastPostAt = 0;
+  // rate-limit은 토큰버킷(충전 ~7초/건, 라이브 측정). POST는 전역 게이트(gatedPost)로 간격을 지키고,
+  // 폴링·다운로드는 게이트 밖에서 진행돼 다음 POST 간격에 자연 흡수된다(여러 계정 병렬에도 안전).
   for (let i = 0; i < DIMS.length; i++) {
-    const elapsed = lastPostAt ? Date.now() - lastPostAt : POST_GAP_MS;
-    if (elapsed < POST_GAP_MS) await sleep(POST_GAP_MS - elapsed);
-    lastPostAt = Date.now();
     const { key, q } = DIMS[i];
-    await requestReport(adAccountNo, customerId, { ...base, ...q });
+    await gatedPost(() => requestReport(adAccountNo, customerId, { ...base, ...q }));
     const no = await pollJobNo(adAccountNo, customerId, q, range);
     result[key] = parseRows(await downloadCsv(adAccountNo, no));
   }

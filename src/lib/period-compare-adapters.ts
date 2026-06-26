@@ -383,9 +383,10 @@ function collectAggregates(response: unknown): Record<string, number> | null {
         if (statsKeyCount(num) >= 2) return num;
       }
     }
-    // 그 외에는 array 전체 합산
+    // 그 외에는 array 합산 — sumStatsRows와 동일하게 상한 200으로 무제한 순회 방지.
     const summed: Record<string, number> = {};
-    for (const row of arr) {
+    for (let i = 0; i < Math.min(arr.length, 200); i++) {
+      const row = arr[i];
       if (row && typeof row === "object") {
         const num = numericKeys(row as Record<string, unknown>);
         for (const [k, v] of Object.entries(num)) {

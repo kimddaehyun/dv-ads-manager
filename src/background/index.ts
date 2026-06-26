@@ -197,7 +197,7 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
   let bin = "";
   const chunkSize = 0x8000; // 큰 ArrayBuffer를 한 번에 String.fromCharCode.apply하면 stack overflow
   for (let i = 0; i < bytes.length; i += chunkSize) {
-    bin += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize) as unknown as number[]);
   }
   return btoa(bin);
 }
@@ -214,6 +214,7 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
     const finish = () => {
       if (done) return;
       done = true;
+      clearTimeout(timer);
       chrome.tabs.onUpdated.removeListener(listener);
       resolve();
     };
@@ -221,7 +222,7 @@ function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
       if (id === tabId && info.status === "complete") finish();
     };
     chrome.tabs.onUpdated.addListener(listener);
-    setTimeout(finish, timeoutMs);
+    const timer = setTimeout(finish, timeoutMs);
   });
 }
 
@@ -333,6 +334,10 @@ async function handleGetBidEstimate(
   }
 }
 
+// 진행 중인 네트워크 요청 공유(in-flight 코얼레싱) — 멀티탭/프레임이 같은 키워드를
+// 동시에 요청할 때 캐시 miss로 중복 fetch하는 걸 막는다. 키 = `<device>:<keyword>`.
+const bidInflight = new Map<string, Promise<KeywordVolumeCache | undefined>>();
+
 async function fetchBidsWithCache(
   keywords: string[],
   cred: Parameters<typeof fetchPositionBids>[1],
@@ -342,20 +347,44 @@ async function fetchBidsWithCache(
 
   let fresh: KeywordVolumeCache[] = [];
   if (miss.length > 0) {
-    const items = await fetchPositionBids(miss, cred, device);
-    const now = new Date().toISOString();
-    fresh = items.map((item) => ({
-      keyword: item.keyword,
-      device,
-      rank_to_bid: item.rank_to_bid,
-      fetched_at: now,
-    }));
-    await putBids(fresh);
+    // 아직 진행 중이지 않은 키워드만 묶어서 1회 fetch, 나머지는 기존 Promise 재사용.
+    // miss에 같은 키워드가 중복될 수 있어(currentBid만 다른 dedupe 잔재) Set으로 정리 — 같은 key를
+    // 두 번 set해 첫 Promise가 고아(unhandled rejection)가 되는 것 방지.
+    const toFetch = [...new Set(miss.filter((k) => !bidInflight.has(`${device}:${k}`)))];
+    if (toFetch.length > 0) {
+      const batch = (async () => {
+        const items = await fetchPositionBids(toFetch, cred, device);
+        const now = new Date().toISOString();
+        const mapped = items.map((item) => ({
+          keyword: item.keyword,
+          device,
+          rank_to_bid: item.rank_to_bid,
+          fetched_at: now,
+        }));
+        await putBids(mapped);
+        return new Map(mapped.map((m) => [m.keyword, m] as const));
+      })();
+      for (const k of toFetch) {
+        const key = `${device}:${k}`;
+        bidInflight.set(
+          key,
+          batch.then((m) => m.get(k)).finally(() => bidInflight.delete(key)),
+        );
+      }
+    }
+    const settled = await Promise.all(
+      miss.map((k) => bidInflight.get(`${device}:${k}`)),
+    );
+    fresh = settled.filter((x): x is KeywordVolumeCache => !!x);
   }
+  const freshByKeyword = new Map(fresh.map((f) => [f.keyword, f] as const));
   return keywords
-    .map((k) => hit.get(k) ?? fresh.find((f) => f.keyword === k))
+    .map((k) => hit.get(k) ?? freshByKeyword.get(k))
     .filter((x): x is KeywordVolumeCache => !!x);
 }
+
+// perf in-flight 코얼레싱 — 키에 bid 포함(`<device>:<keyword>:<bid>`, perfCacheKey와 동일).
+const perfInflight = new Map<string, Promise<KeywordPerformanceCache | undefined>>();
 
 async function fetchPerformanceWithCache(
   queries: Array<{ keyword: string; bid: number }>,
@@ -366,15 +395,44 @@ async function fetchPerformanceWithCache(
 
   let fresh: KeywordPerformanceCache[] = [];
   if (miss.length > 0) {
-    fresh = await fetchPerformance(miss, cred, device);
-    if (fresh.length > 0) await putPerformance(fresh);
+    // 아직 진행 중이지 않은 (키워드,입찰가)만 묶어서 1회 fetch, 나머지는 기존 Promise 재사용.
+    // 같은 (키워드,입찰가) 중복은 같은 key를 두 번 set해 첫 Promise를 고아로 만들므로 key 기준 dedupe.
+    const seenPerfKeys = new Set<string>();
+    const toFetch = miss.filter((q) => {
+      const key = perfCacheKey(q.keyword, q.bid, device);
+      if (perfInflight.has(key) || seenPerfKeys.has(key)) return false;
+      seenPerfKeys.add(key);
+      return true;
+    });
+    if (toFetch.length > 0) {
+      const batch = (async () => {
+        const items = await fetchPerformance(toFetch, cred, device);
+        if (items.length > 0) await putPerformance(items);
+        return new Map(
+          items.map((m) => [perfCacheKey(m.keyword, m.bid, device), m] as const),
+        );
+      })();
+      for (const q of toFetch) {
+        const key = perfCacheKey(q.keyword, q.bid, device);
+        perfInflight.set(
+          key,
+          batch.then((m) => m.get(key)).finally(() => perfInflight.delete(key)),
+        );
+      }
+    }
+    const settled = await Promise.all(
+      miss.map((q) => perfInflight.get(perfCacheKey(q.keyword, q.bid, device))),
+    );
+    fresh = settled.filter((x): x is KeywordPerformanceCache => !!x);
   }
+  const freshByKey = new Map(
+    fresh.map((f) => [perfCacheKey(f.keyword, f.bid, device), f] as const),
+  );
   return queries
-    .map(
-      (q) =>
-        hit.get(perfCacheKey(q.keyword, q.bid, device)) ??
-        fresh.find((f) => f.keyword === q.keyword && f.bid === q.bid),
-    )
+    .map((q) => {
+      const key = perfCacheKey(q.keyword, q.bid, device);
+      return hit.get(key) ?? freshByKey.get(key);
+    })
     .filter((x): x is KeywordPerformanceCache => !!x);
 }
 

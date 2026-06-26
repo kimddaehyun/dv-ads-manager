@@ -19,13 +19,13 @@ export async function getCachedBids(
   keywords: string[],
   device: AdDevice,
 ): Promise<{ hit: Map<string, KeywordVolumeCache>; miss: string[] }> {
-  const keys = keywords.map((k) => keyForVolumeCache(k, device));
-  const stored = await chrome.storage.local.get(keys);
+  // 키워드별 정규화 키를 1회만 계산해 조회 루프에서 재사용 (keyFor* 내부 NFC 정규화 중복 제거).
+  const pairs = keywords.map((k) => [k, keyForVolumeCache(k, device)] as const);
+  const stored = await chrome.storage.local.get(pairs.map(([, k]) => k));
   const hit = new Map<string, KeywordVolumeCache>();
   const miss: string[] = [];
   const now = Date.now();
-  for (const keyword of keywords) {
-    const k = keyForVolumeCache(keyword, device);
+  for (const [keyword, k] of pairs) {
     const entry = stored[k] as KeywordVolumeCache | undefined;
     if (entry && now - new Date(entry.fetched_at).getTime() < TTL_MS) {
       hit.set(keyword, entry);

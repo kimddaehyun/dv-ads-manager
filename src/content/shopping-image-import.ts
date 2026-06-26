@@ -45,6 +45,9 @@ const STRIP_SELECTOR = ".dvads-shopping-img";
 const ADS_URL_PATTERN = /\/ad-accounts\/(\d+)\/sa\/ads\/([^/?#]+)/;
 // 폴백 — 광고그룹 URL(`/sa/adgroups/{id}`)에서 열리는 경우 소재 목록 + 이미지 매칭.
 const ADGROUPS_URL_PATTERN = /\/ad-accounts\/(\d+)\/sa\/adgroups\/([^/?#]+)/;
+// 쇼핑 소재 수정 모달은 소재 detail(`/sa/ads/...`) 또는 광고그룹 상세(`/sa/adgroups/...`)
+// 에서만 열림 — 그 외 페이지에선 scan을 조기 종료해 헛도는 DOM 조회를 막는다.
+const PAGE_PATTERN = /\/sa\/(ads|adgroups)\//;
 
 interface RawShoppingAd {
   type?: string;
@@ -78,6 +81,7 @@ export function initShoppingImageImport(): void {
 }
 
 function scan(): void {
+  if (!PAGE_PATTERN.test(location.pathname)) return;
   const modals = document.querySelectorAll<HTMLElement>(MODAL_SELECTOR);
   for (const modal of Array.from(modals)) {
     // strip이 이미 들어 있으면 skip. (strip을 동기로 먼저 append하므로 다음 scan의 중복 가드

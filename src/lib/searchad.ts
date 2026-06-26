@@ -214,6 +214,26 @@ function normalize(s: string): string {
   return s.replace(/\s+/g, "").toLowerCase();
 }
 
+// secretKey는 거의 고정이라 importKey 결과(CryptoKey)를 모듈 레벨에 캐시.
+// timestamp가 들어간 message 서명(crypto.subtle.sign)만 매 호출 새로 수행.
+const hmacKeyCache = new Map<string, Promise<CryptoKey>>();
+
+function getHmacKey(secret: string): Promise<CryptoKey> {
+  let keyPromise = hmacKeyCache.get(secret);
+  if (!keyPromise) {
+    const enc = new TextEncoder();
+    keyPromise = crypto.subtle.importKey(
+      "raw",
+      enc.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    hmacKeyCache.set(secret, keyPromise);
+  }
+  return keyPromise;
+}
+
 async function sign(
   timestamp: string,
   method: string,
@@ -222,13 +242,7 @@ async function sign(
 ): Promise<string> {
   const message = `${timestamp}.${method}.${uri}`;
   const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    "raw",
-    enc.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
+  const key = await getHmacKey(secret);
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(message));
   return btoa(String.fromCharCode(...new Uint8Array(sig)));
 }
@@ -266,6 +280,25 @@ interface RawPositionBidItem {
 
 let spikeLogged = false;
 
+// 검색광고 estimate API 배치 동시 실행 상한. 직렬+sleep(300) 대신 이 동시성 풀로 페이싱한다.
+// 429는 각 배치의 백오프(sleep 1500 재시도)가 흡수. 라이브 측정 전이라 보수적으로 2.
+const SEARCHAD_BATCH_CONCURRENCY = 2;
+
+// 배치 인덱스 0..count-1을 동시성 limit로 실행 후 결과 평탄화(순서는 호출 측이 키워드로 재정렬).
+async function runBatchesPooled<T>(
+  count: number,
+  limit: number,
+  runOne: (i: number) => Promise<T[]>,
+): Promise<T[]> {
+  const out: T[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < count) out.push(...(await runOne(next++)));
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, count) }, worker));
+  return out;
+}
+
 export async function fetchPositionBids(
   keywords: string[],
   cred: SearchadCredentials,
@@ -276,38 +309,41 @@ export async function fetchPositionBids(
   );
   if (cleaned.length === 0) return [];
 
-  const results: PositionBidsItem[] = [];
+  const batches: string[][] = [];
   for (let i = 0; i < cleaned.length; i += POSITION_BID_BATCH_KEYWORDS) {
-    const batch = cleaned.slice(i, i + POSITION_BID_BATCH_KEYWORDS);
-    let part: PositionBidsItem[];
+    batches.push(cleaned.slice(i, i + POSITION_BID_BATCH_KEYWORDS));
+  }
+
+  const runOne = async (batch: string[]): Promise<PositionBidsItem[]> => {
     try {
-      part = await callPositionBid(batch, cred, device);
+      return await callPositionBid(batch, cred, device);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("429")) {
-        await sleep(1500);
+        // 동시성 풀에서 두 배치가 동시에 429를 맞을 때 재시도가 같은 순간에 겹쳐
+        // 또 429 나는 걸 막으려 지터를 더한다(동시 재시도 burst 분산).
+        await sleep(1500 + Math.random() * 800);
         try {
-          part = await callPositionBid(batch, cred, device);
+          return await callPositionBid(batch, cred, device);
         } catch (e2) {
           const m2 = e2 instanceof Error ? e2.message : String(e2);
           if (m2.includes("400")) {
             console.warn("[searchad] position-bid batch 400 after 429 retry, skipping", batch);
-            part = [];
-          } else {
-            throw e2;
+            return [];
           }
+          throw e2;
         }
       } else if (msg.includes("400")) {
         console.warn("[searchad] position-bid batch 400, skipping", batch);
-        part = [];
-      } else {
-        throw e;
+        return [];
       }
+      throw e;
     }
-    results.push(...part);
-    if (i + POSITION_BID_BATCH_KEYWORDS < cleaned.length) await sleep(300);
-  }
-  return results;
+  };
+
+  return runBatchesPooled(batches.length, SEARCHAD_BATCH_CONCURRENCY, (i) =>
+    runOne(batches[i]),
+  );
 }
 
 async function callPositionBid(
@@ -439,38 +475,42 @@ export async function fetchPerformance(
     .filter((q) => q.keyword && Number.isFinite(q.bid) && q.bid > 0);
   if (cleaned.length === 0) return [];
 
-  const results: KeywordPerformanceCache[] = [];
+  const batches: Array<Array<{ keyword: string; bid: number }>> = [];
   for (let i = 0; i < cleaned.length; i += PERFORMANCE_BATCH_SIZE) {
-    const batch = cleaned.slice(i, i + PERFORMANCE_BATCH_SIZE);
-    let part: KeywordPerformanceCache[];
+    batches.push(cleaned.slice(i, i + PERFORMANCE_BATCH_SIZE));
+  }
+
+  const runOne = async (
+    batch: Array<{ keyword: string; bid: number }>,
+  ): Promise<KeywordPerformanceCache[]> => {
     try {
-      part = await callPerformance(batch, cred, device);
+      return await callPerformance(batch, cred, device);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("429")) {
-        await sleep(1500);
+        // 동시 재시도 burst 분산용 지터(fetchPositionBids와 동일 이유).
+        await sleep(1500 + Math.random() * 800);
         try {
-          part = await callPerformance(batch, cred, device);
+          return await callPerformance(batch, cred, device);
         } catch (e2) {
           const m2 = e2 instanceof Error ? e2.message : String(e2);
           if (m2.includes("400")) {
             console.warn("[searchad] performance batch 400 after 429 retry, skipping", batch.length, "items");
-            part = [];
-          } else {
-            throw e2;
+            return [];
           }
+          throw e2;
         }
       } else if (msg.includes("400")) {
         console.warn("[searchad] performance batch 400, skipping", batch.length, "items");
-        part = [];
-      } else {
-        throw e;
+        return [];
       }
+      throw e;
     }
-    results.push(...part);
-    if (i + PERFORMANCE_BATCH_SIZE < cleaned.length) await sleep(300);
-  }
-  return results;
+  };
+
+  return runBatchesPooled(batches.length, SEARCHAD_BATCH_CONCURRENCY, (i) =>
+    runOne(batches[i]),
+  );
 }
 
 async function callPerformance(

@@ -40,43 +40,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
  *   1순위: PRELOADED_STATE 화이트리스트 path (스마트스토어/브랜드스토어 표준).
  *   2순위: DOM scrape + og:image (PRELOADED_STATE 못 잡는 host용 폴백).
  *
- * hydration 완료 대기: 첫 시점에 PRELOADED_STATE inline script가 아직 안 들어왔거나
- * DOM hydration 중이면 짧은 retry. SCRAPE 요청 시점이 document_idle이라 보통 첫 호출에서
+ * PRELOADED_STATE는 SSR 정적이라 재시도해도 안 바뀜 — 거대 JSON 파싱은 루프 밖에서
+ * 페이지당 1회만. 메인 갤러리 path를 잡으면 즉시 반환. 못 잡는 host는 DOM hydration이
+ * 끝날 때까지 DOM scrape만 짧은 retry. SCRAPE 요청 시점이 document_idle이라 보통 첫 호출에서
  * 잡히지만 안전망.
  */
 async function scrapeWithRetry(): Promise<string[]> {
-  const MAX_RETRIES = 8;
-  const RETRY_DELAY_MS = 300;
-  for (let i = 0; i < MAX_RETRIES; i++) {
-    const urls = collect();
-    if (urls.length > 0) return urls;
-    await sleep(RETRY_DELAY_MS);
-  }
-  return collect();
-}
-
-/**
- * 갤러리 carousel 메인 이미지만 수집.
- *
- * 휴리스틱:
- *   - eager-load된 `src`만 본다 (`data-src`/srcset 무시). 본문 상세 이미지는 보통 lazy-load라
- *     자동 제외.
- *   - 호스트는 `shop-phinf.pstatic.net` 같은 상품 갤러리 CDN만.
- *   - 같은 path(query 제거)의 사이즈 변형은 "가장 큰" 1개만 유지.
- *
- * 갤러리는 카루셀 메인 + 하단 thumbnail strip이 같은 base path에 사이즈만 다른 변형으로
- * 노출돼서 dedup하면 자연스럽게 1상품 = 1후보로 줄어든다.
- */
-function collect(): string[] {
   // 1순위: PRELOADED_STATE 화이트리스트 — 스마트스토어/브랜드스토어 표준 SSR state에서
   // 메인 갤러리 path만 정확히 추출. 로고·프로모션 배너·추천 상품 같은 noise를 휴리스틱 없이
-  // 깔끔하게 제외 (2026-05-21 정찰로 3개 페이지에서 동일 path 확인).
+  // 깔끔하게 제외 (2026-05-21 정찰로 3개 페이지에서 동일 path 확인). SSR 정적이라 1회만.
   const inlineState = extractInlineState();
   if (inlineState) {
     const gallery = extractGalleryFromState(inlineState);
     if (gallery.length > 0) return gallery;
   }
   // 2순위: PRELOADED_STATE 못 잡거나 갤러리 path가 비어 있는 host용 폴백. DOM scrape 휴리스틱.
+  // DOM hydration 대기는 이 폴백에만 필요하므로 collectFallback만 재시도.
+  const MAX_RETRIES = 8;
+  const RETRY_DELAY_MS = 300;
+  for (let i = 0; i < MAX_RETRIES; i++) {
+    const urls = collectFallback();
+    if (urls.length > 0) return urls;
+    await sleep(RETRY_DELAY_MS);
+  }
   return collectFallback();
 }
 

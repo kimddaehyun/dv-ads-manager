@@ -37,6 +37,7 @@ export interface SetupTarget {
 
 let modalEl: HTMLElement | null = null;
 let running = false;
+let keyHandler: ((e: KeyboardEvent) => void) | null = null;
 
 function escapeHtml(s: string): string {
   return s
@@ -58,6 +59,10 @@ function formatBudget(v: number | null): string {
 
 function closeModal(): void {
   closeAllOpenDropdowns();
+  if (keyHandler) {
+    document.removeEventListener("keydown", keyHandler, true);
+    keyHandler = null;
+  }
   modalEl?.remove();
   modalEl = null;
 }
@@ -98,9 +103,9 @@ export async function openSetupFlow(target: SetupTarget): Promise<void> {
     if (e.key === "Escape" && modalEl) {
       e.preventDefault();
       closeModal();
-      document.removeEventListener("keydown", onKey, true);
     }
   };
+  keyHandler = onKey;
   document.addEventListener("keydown", onKey, true);
 
   // 캠페인 목록 로드.
@@ -349,7 +354,8 @@ async function enrichRanks(campaigns: SetupCampaign[]): Promise<void> {
       break;
     }
     if (resp.ok && Array.isArray(resp.data)) {
-      for (const vc of resp.data) rankByKeyword.set(vc.keyword, vc.rank_to_bid);
+      for (const vc of resp.data)
+        rankByKeyword.set(normalizeKeyword(vc.keyword), vc.rank_to_bid);
     }
   }
 

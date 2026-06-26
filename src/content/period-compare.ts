@@ -419,6 +419,9 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
     state: "loading",
   });
 
+  // reposition이 매 프레임 같은 좌표를 다시 쓰지 않도록 직전 프레임 값 추적 (#5).
+  let lastLeft = NaN;
+  let lastTop = NaN;
   // 배지 아래 anchor 따라가기 (F001 패턴 동일)
   const reposition = () => {
     if (!anchor.isConnected) {
@@ -442,7 +445,12 @@ async function openPopover(anchor: HTMLElement): Promise<void> {
       if (above >= 8) top = above;
       else top = Math.max(8, window.innerHeight - pr.height - 8);
     }
-    popover.style.transform = `translate(${left}px, ${top}px)`;
+    // 좌표가 직전 프레임과 같으면 재기록 skip (불필요한 style write 제거).
+    if (left !== lastLeft || top !== lastTop) {
+      lastLeft = left;
+      lastTop = top;
+      popover.style.transform = `translate(${left}px, ${top}px)`;
+    }
   };
   popover.style.top = "0";
   popover.style.left = "0";
@@ -1105,9 +1113,9 @@ function renderPopover(root: HTMLElement, st: PopoverState): void {
     { key: "ctr", label: "클릭률", fmt: "percent" },
     { key: "cpc", label: "CPC", fmt: "krw-int", invertColor: true },
     { key: "cost", label: "총비용", fmt: "krw-int", invertColor: true },
-    { key: "revenue", label: "매출", fmt: "krw-int" },
-    { key: "conversions", label: "전환수", fmt: "int" },
-    { key: "roas", label: "ROAS", fmt: "percent" },
+    { key: "revenue", label: "구매 매출", fmt: "krw-int" },
+    { key: "conversions", label: "구매수", fmt: "int" },
+    { key: "roas", label: "구매ROAS", fmt: "percent" },
   ];
 
   for (const { key, label, fmt, invertColor } of rows) {

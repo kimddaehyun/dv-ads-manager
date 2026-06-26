@@ -11,7 +11,7 @@ import type {
   MultiAccountDirectoryEntry,
   MultiAccountSnapshot,
 } from "@/types/storage";
-import { loadPlatformFilter } from "./multi-account-storage";
+import { loadPlatformFilter, type PlatformFilter } from "./multi-account-storage";
 
 interface DirectoryPageResponse {
   content: Array<{
@@ -203,6 +203,52 @@ export async function fetchBizMoney(adAccountNo: number): Promise<number | null>
   }
 }
 
+// ─── 대행권 이관 (agencyOperations) ───
+
+/** `/apis/mgr-account/v1/adAccounts/{no}/agencyOperations` 응답 원소 (2026-06-26 정찰). */
+export interface AgencyOperationRow {
+  agencyManagerAccountNo?: number;   // 대표 관리 계정 ID
+  agencyManagerAccountName?: string;
+  agencyCompanyName?: string;        // 에이전시명(표시용)
+  directManagerAccountNo?: number;   // 담당 관리 계정 ID (정상 판별 키)
+  directManagerAccountName?: string;
+  acceptedAt?: string;               // 승인 일자
+  taxInvoiceIncluded?: boolean;
+}
+
+export type AgencyOperationOutcome =
+  | { kind: "ok"; row: AgencyOperationRow | null } // row null = 빈 배열(대행권 없음)
+  | { kind: "forbidden" }                          // 403 — 권한 밖(확인 필요)
+  | { kind: "error"; status: number; message: string };
+
+/**
+ * 대행권 이관 정보. bizmoney처럼 URL에 adAccountNo가 박힌 URL-aware endpoint라
+ * x-ad-customer-id 헤더 없이 cross-account 가능 (2026-06-26 정찰, mgr-account 서비스).
+ * 응답은 배열: 대행권 있으면 1개 원소, 없으면 빈 배열. authFetch는 non-ok에서 throw라
+ * 403(권한 밖)과 그 외 에러를 구분하려고 여기선 raw fetch로 status를 직접 본다.
+ */
+export async function fetchAgencyOperation(adAccountNo: number): Promise<AgencyOperationOutcome> {
+  const headers = new Headers({ accept: "application/json, text/plain, */*" });
+  const xsrf = readCookie("XSRF-TOKEN");
+  if (xsrf) headers.set("x-xsrf-token", decodeURIComponent(xsrf));
+  try {
+    const resp = await fetch(
+      `/apis/mgr-account/v1/adAccounts/${adAccountNo}/agencyOperations`,
+      { headers, credentials: "include" },
+    );
+    if (resp.status === 403) return { kind: "forbidden" };
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "");
+      return { kind: "error", status: resp.status, message: text.slice(0, 200) };
+    }
+    const arr = (await resp.json()) as AgencyOperationRow[];
+    const row = Array.isArray(arr) && arr.length > 0 ? arr[0] : null;
+    return { kind: "ok", row };
+  } catch (e) {
+    return { kind: "error", status: 0, message: String(e) };
+  }
+}
+
 // ─── 캠페인 ID 리스트 (campaignType별 호출 필요) ───
 
 // 정찰 결과: `/apis/sa/api/ncc/campaigns`는 `campaignType` 파라미터 필수.
@@ -287,6 +333,8 @@ export async function fetchYesterdayStats(
     costMicros = 0,
     convValueMicros = 0,
     conversions = 0;
+  // 청크는 병렬 호출 후 합산 — 동일 계정 내 청크라 호출 수는 그대로, 순차 대기만 제거.
+  const chunkPromises: Promise<StatsResponse>[] = [];
   for (let i = 0; i < campaignIds.length; i += CHUNK) {
     const chunk = campaignIds.slice(i, i + CHUNK);
     const body = JSON.stringify({
@@ -302,11 +350,15 @@ export async function fetchYesterdayStats(
       timeRange: { since: yesterdayISODate, until: yesterdayISODate },
       ids: chunk.join(","),
     });
-    const json = await authFetch<StatsResponse>(
-      "/apis/sa/api/stats",
-      { method: "POST", body },
-      customerId,
+    chunkPromises.push(
+      authFetch<StatsResponse>(
+        "/apis/sa/api/stats",
+        { method: "POST", body },
+        customerId,
+      ),
     );
+  }
+  for (const json of await Promise.all(chunkPromises)) {
     for (const row of json.data ?? []) {
       impressions += Number(row.impCnt ?? 0);
       clicks += Number(row.clkCnt ?? 0);
@@ -492,9 +544,11 @@ export async function collectAccount(
   adAccountNo: number,
   customerId: number,
   yesterdayISODate: string,
+  platformsArg?: PlatformFilter,
 ): Promise<AccountSnapshotPayload> {
   // 옵션의 광고 유형 필터 — 검색광고(SA)/디스플레이(GFA) 선택 수집. 둘 다 켜지면 합산.
-  const platforms = await loadPlatformFilter();
+  // 배치 호출(refreshAll 등)에서 인자로 주입하면 계정마다 storage 중복 조회를 skip.
+  const platforms = platformsArg ?? (await loadPlatformFilter());
 
   // 비즈머니는 플랫폼 무관 — 항상 수집.
   const bizMoneyP = fetchBizMoney(adAccountNo);

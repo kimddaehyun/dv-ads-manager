@@ -58,6 +58,8 @@ interface BadgeMount {
   currentBid: number | null;
   /** 같은 행의 입찰가 td — F001 행 클릭으로 입찰가 변경 시 reference */
   bidCell: HTMLElement | null;
+  /** 직전 렌더 시그니처 — 동일하면 renderBadge가 DOM을 건드리지 않고 early return */
+  lastRenderSig?: string;
 }
 
 // "[기본] 700원", "1,000원", "700 원" 등 다양한 표기를 잡는다.
@@ -173,11 +175,9 @@ function ensureBadge(cell: HTMLElement) {
   // 이미 같은 셀 안에 배지가 있다면(이전 mount 잔재) 제거
   cell.querySelectorAll(".dvads-rank-badge").forEach((el) => el.remove());
 
-  // <td>를 absolute 컨테이너로 만들기 — static이면 relative로 승격.
-  // table-cell에 position:relative는 가시 변화 없는 안전 변경.
-  if (getComputedStyle(cell).position === "static") {
-    cell.style.position = "relative";
-  }
+  // <td>를 absolute 컨테이너로 만들기 — relative로 승격(table-cell엔 가시 변화 없음).
+  // getComputedStyle 읽기는 강제 style recalc를 유발하므로 조건 없이 바로 설정.
+  cell.style.position = "relative";
 
   const badge = document.createElement("span");
   badge.classList.add("dvads", "dvads-rank-badge", "cell-anchor");
@@ -189,6 +189,40 @@ function ensureBadge(cell: HTMLElement) {
 }
 
 function renderBadge(m: BadgeMount) {
+  // 목표 상태(분기·label·muted 여부)를 먼저 계산만 하고(DOM 미접촉) 시그니처를 만든다.
+  // 직전 렌더와 시그니처가 같으면 DOM을 전혀 건드리지 않고 즉시 반환 — body
+  // MutationObserver가 우리 자신의 텍스트 노드 교체로 재발화해 매 프레임 scan을
+  // 무한 반복하던 루프를 끊는다.
+  let sig: string;
+  // 배지 자체는 DEFAULT_DEVICE 기준 — 사용자가 popover를 열면 그 안에서 디바이스 토글.
+  let data: KeywordVolumeCache | undefined;
+  let label = "";
+  let muted = false;
+  if (credentialState === "missing") {
+    sig = "missing";
+  } else {
+    data = dataCache.get(dataKey(m.keyword, DEFAULT_DEVICE));
+    if (!data) {
+      sig = lastError ? `error:${lastError}` : "loading";
+    } else {
+      // 입찰가 알면 추정 순위 계산 → "N위" / "순위권 밖", 모르면 fallback "시세"
+      const rank: EstimatedRank | null =
+        m.currentBid != null ? estimateRank(m.currentBid, data.rank_to_bid) : null;
+      if (rank === null) {
+        label = "시세";
+      } else if (rank === "out") {
+        label = "10위+";
+        muted = true;
+      } else {
+        label = `${rank}위`;
+      }
+      sig = `data:${label}`;
+    }
+  }
+
+  if (m.lastRenderSig === sig) return;
+  m.lastRenderSig = sig;
+
   m.badge.replaceChildren();
   // 상태 모디파이어만 갈아끼우고 cell-anchor(absolute 위치 클래스)는 보존
   m.badge.className = "dvads dvads-rank-badge cell-anchor";
@@ -206,8 +240,6 @@ function renderBadge(m: BadgeMount) {
     return;
   }
 
-  // 배지 자체는 DEFAULT_DEVICE 기준 — 사용자가 popover를 열면 그 안에서 디바이스 토글.
-  const data = dataCache.get(dataKey(m.keyword, DEFAULT_DEVICE));
   if (!data) {
     if (lastError) {
       // 에러 상태는 ⚠ 아이콘만 표시 — 풀 문구는 hover 시 custom tooltip으로.
@@ -229,20 +261,7 @@ function renderBadge(m: BadgeMount) {
     return;
   }
 
-  // 입찰가 알면 추정 순위 계산 → "N위" / "순위권 밖"
-  // 모르면 fallback "시세"
-  const rank: EstimatedRank | null =
-    m.currentBid != null ? estimateRank(m.currentBid, data.rank_to_bid) : null;
-
-  let label: string;
-  if (rank === null) {
-    label = "시세";
-  } else if (rank === "out") {
-    label = "10위+";
-    m.badge.classList.add("muted");
-  } else {
-    label = `${rank}위`;
-  }
+  if (muted) m.badge.classList.add("muted");
   m.badge.textContent = label;
   m.badge.onclick = (e) => {
     e.stopPropagation();
@@ -305,6 +324,9 @@ function togglePopover(anchor: HTMLElement, mount: BadgeMount) {
 
   openPopover = popover;
 
+  // reposition이 매 프레임 같은 좌표를 다시 쓰지 않도록 직전 프레임 값 추적 (#5).
+  let lastLeft = NaN;
+  let lastTop = NaN;
   // 배지 위치 기준으로 popover 재배치. 매 프레임 rAF 루프로 호출되어 픽셀 단위로 따라붙는다.
   const reposition = () => {
     if (!anchor.isConnected) {
@@ -352,8 +374,13 @@ function togglePopover(anchor: HTMLElement, mount: BadgeMount) {
         top = Math.max(8, window.innerHeight - flipH - 8);
       }
     }
-    // transform으로 통째로 이동 — top/left 변경보다 합성 단계에서 처리돼 더 매끄럽다
-    popover.style.transform = `translate(${left}px, ${top}px)`;
+    // transform으로 통째로 이동 — top/left 변경보다 합성 단계에서 처리돼 더 매끄럽다.
+    // 좌표가 직전 프레임과 같으면 재기록 skip (불필요한 style write 제거).
+    if (left !== lastLeft || top !== lastTop) {
+      lastLeft = left;
+      lastTop = top;
+      popover.style.transform = `translate(${left}px, ${top}px)`;
+    }
   };
   // 초기 위치는 transform 기반이므로 top/left는 0
   popover.style.top = "0";
@@ -909,6 +936,7 @@ watchPageConfirmModal();
 // ─── batched data fetch ───
 
 let pollTimer: number | null = null;
+let polling = false;
 function schedulePoll() {
   if (pollTimer !== null) return;
   pollTimer = window.setTimeout(() => {
@@ -918,6 +946,21 @@ function schedulePoll() {
 }
 
 async function poll() {
+  // 진행 중인 poll이 응답 대기(직렬 배치 + sleep) 중이면 같은 키워드를 중복 요청하지
+  // 않도록 재진입을 막는다. 진행 poll이 끝나면 schedulePoll로 한 번 더 돌아 새 키워드 픽업.
+  if (polling) {
+    schedulePoll();
+    return;
+  }
+  polling = true;
+  try {
+    await pollInner();
+  } finally {
+    polling = false;
+  }
+}
+
+async function pollInner() {
   // 키워드별로 가장 최근 mount의 currentBid를 채택 (동일 키워드가 여러 셀에 mount될 수 있음)
   const byKeyword = new Map<string, number | null>();
   for (const m of mounts.values()) {
