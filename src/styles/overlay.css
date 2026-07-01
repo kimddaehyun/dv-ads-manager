@@ -2410,6 +2410,9 @@ td.dvads-period-delta-down {
   cursor: pointer;
   position: relative;
   flex-shrink: 0;
+  /* inline-flex 기본 baseline 정렬이면 셀 line-height(1.4) 기준선 위쪽에 앉아 위로 뜬다.
+     middle로 라인박스 세로 중앙에 정렬 — 헤더/데이터 행 모두 동일하게 가운데. */
+  vertical-align: middle;
 }
 .dvads-multi-cb input {
   position: absolute;
@@ -2581,6 +2584,9 @@ td.dvads-period-delta-down {
   overflow-y: auto;
   flex: 1;
   min-height: 0;
+  /* 스크롤바 자리를 항상 예약 — 내용이 넘쳐 스크롤바가 생기든 안 생기든 콘텐츠 폭이 고정되어
+     표가 좌우로 밀리지(layout shift) 않는다. */
+  scrollbar-gutter: stable;
   /* 스크롤 체이닝 방지 — popover 내부 스크롤이 끝에 도달해도 호스트 페이지로 스크롤 전파 안 함.
      `contain`: 경계 도달 시 부모로 전파 차단(자체 bounce는 유지). 모달성 popover의 표준 처리. */
   overscroll-behavior: contain;
@@ -2658,6 +2664,184 @@ td.dvads-period-delta-down {
 .dvads-multi-search-table th.dvads-multi-th-act,
 .dvads-multi-search-table td.dvads-multi-td-act {
   text-align: left;
+}
+
+/* ─── 그룹(팀원별) 탭 바 + 섹션 헤더 ─── */
+/* 그룹 필터 = 캡슐(세그먼트) 탭. 회색 트랙 안에 탭을 넣고 선택 탭만 흰 카드(디바이스 토글과 동일
+   패턴, 주황 미사용). 그룹이 넘치면 탭 바로 양옆 화살표로 스크롤(넘칠 때만 노출, 스크롤바 숨김). */
+.dvads-multi-grouptabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 0;
+  margin-bottom: 8px;
+}
+.dvads-multi-groupchips {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 1 auto;
+  min-width: 0;
+  padding: 3px;
+  background: #F3F4F6;
+  border-radius: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none; /* 화살표로 이동하므로 스크롤바 숨김 */
+}
+.dvads-multi-groupchips::-webkit-scrollbar {
+  display: none;
+}
+.dvads-multi-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  white-space: nowrap;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.dvads-multi-chip:hover {
+  color: #171717;
+}
+/* 선택 탭 — 흰 카드 + 진한 글씨색 + 미세 그림자. weight는 비선택과 동일(500)로 유지 —
+   굵게(600) 하면 글자 폭이 늘어 선택 시 옆 탭이 밀리는 jitter가 생김. 흰 카드로 충분히 구분. */
+.dvads-multi-chip.is-active {
+  background: #ffffff;
+  color: #171717;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+/* 좌우 스크롤 화살표 — 탭 캡슐 오른쪽에 작게. 넘칠 때만 노출(JS), 양끝에선 dim. */
+.dvads-multi-grouptabs-arrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #9CA3AF;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
+}
+.dvads-multi-grouptabs-arrow:hover {
+  background: #F3F4F6;
+  color: #4B5563;
+}
+.dvads-multi-grouptabs-arrow:disabled {
+  opacity: 0.35;
+  cursor: default;
+  pointer-events: none;
+}
+/* + 그룹 — 캡슐 밖 회색 텍스트 버튼(필터 탭 아님, 추가 액션). 맨 오른쪽 고정. */
+.dvads-multi-chip-add {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-left: auto;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #9CA3AF;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dvads-multi-chip-add:hover {
+  background: #F3F4F6;
+  color: #6B7280;
+}
+
+/* 섹션 헤더 행 — 옅은 배경 밴드. 그룹명(weight 600) + 계정수 + 광고비/매출 합계 + 그룹 메뉴. */
+.dvads-multi-table tbody tr.dvads-multi-group-tr td {
+  background: #FAFAFA;
+  /* 아래 테두리 1개만 — border-collapse:separate라 top+bottom을 둘 다 주면 인접 경계
+     (열머리글 아래·다음 헤더 위)와 겹쳐 접었을 때 2px 이중선으로 보임. 위 경계는 앞 행/thead의
+     border-bottom이 담당. */
+  border-bottom: 1px solid #ECEEF0;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+/* 그룹 헤더가 표의 마지막 행일 때(예: 빈 그룹 0개를 단독 필터)엔 아래 테두리 제거 —
+   계정이 있는 그룹의 마지막 계정 행(테두리 없음)과 표 맨 아래 모양을 동일하게 한 줄로 맞춤. */
+.dvads-multi-table tbody tr.dvads-multi-group-tr:last-child td {
+  border-bottom: 0;
+}
+/* 헤더는 데이터 행과 동일하게 열마다 td 하나씩 — cb칸에 접기 토글, 계정칸(td-name)에 그룹명.
+   계정 열 정렬/폭은 dvads-multi-td-name이 그대로 처리(별도 override 없이 데이터와 정렬). */
+.dvads-multi-table td.dvads-multi-group-cb {
+  text-align: center;
+}
+.dvads-multi-group-head-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+.dvads-multi-group-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #9CA3AF;
+  cursor: pointer;
+}
+.dvads-multi-group-chevron {
+  transition: transform 140ms ease;
+  transform: rotate(90deg); /* 펼침 = 아래 방향 */
+}
+.dvads-multi-group-tr.is-collapsed .dvads-multi-group-chevron {
+  transform: rotate(0deg); /* 접힘 = 오른쪽 방향 */
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-multi-group-chevron {
+    transition: none;
+  }
+}
+.dvads-multi-group-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #171717;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.dvads-multi-group-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: #9CA3AF;
+  flex-shrink: 0;
+}
+/* 합계 셀 — 데이터 셀과 같은 우측 정렬(dvads-multi-td-num 상속) + 약간 진한 텍스트.
+   specificity: td.dvads-multi-group-subtotal (0,2,1) > .dvads-bid-table td (0,1,1). */
+.dvads-multi-table td.dvads-multi-group-subtotal {
+  font-weight: 600;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 이름 수정 모달 — backdrop dim + 중앙 카드. inline edit(colspan) 대신 별도 모달로 전환해
@@ -2773,6 +2957,88 @@ td.dvads-period-delta-down {
 }
 .dvads-rename-save:hover {
   filter: brightness(0.95);
+}
+
+/* 그룹 지정 다이얼로그 — rename 카드 기반. 그룹 체크박스 목록 + 새 그룹 인라인 추가. */
+.dvads-groupassign-desc {
+  font-size: 12px;
+  color: #6B7280;
+  margin: 4px 0 12px;
+}
+.dvads-groupassign-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 260px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.dvads-groupassign-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.dvads-groupassign-row:hover {
+  background: #F9FAFB;
+}
+.dvads-groupassign-row input {
+  width: 16px;
+  height: 16px;
+  accent-color: #E6783B;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.dvads-groupassign-row-name {
+  font-size: 13px;
+  color: #171717;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dvads-groupassign-empty {
+  font-size: 12px;
+  color: #9CA3AF;
+  padding: 10px 4px;
+}
+.dvads-groupassign-new {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.dvads-groupassign-new-input {
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  outline: none;
+}
+.dvads-groupassign-new-input:focus {
+  border-color: #E6783B;
+}
+.dvads-groupassign-new-btn {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  background: #ffffff;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-groupassign-new-btn:hover {
+  background: #F3F4F6;
+  color: #171717;
 }
 
 /* 대행권 점검 모달 — rename/confirm 패턴(backdrop + 중앙 카드) 재사용 */

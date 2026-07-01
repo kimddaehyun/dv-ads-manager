@@ -93,6 +93,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - **DOM 빌드 → attach → paint 3단계 분리** — `popoverEl.querySelector`로 자식 행 찾아 그리는 helper(`paintRow` 등)는 element가 popover에 attach된 *후* 호출해야 함. detached fragment 안에선 querySelector가 silent no-op. 패턴: 모든 row mount → table을 wrap에 attach → 그 다음 paint loop.
 - **async render 함수 깜빡임 방지** — 모든 await 데이터 로드 *먼저* 끝낸 뒤 `DocumentFragment`에 빌드 → `wrap.replaceChildren(fragment)`로 atomic swap. `wrap.innerHTML=""` 후 await하면 그 사이 빈 화면 노출. 정렬·뷰 전환처럼 rapid 재트리거 가능한 곳은 추가로 token guard 필요 — `const token = ++renderToken; await ...; if (token !== renderToken) return;` 패턴으로 늦은 호출이 새 호출을 덮지 않게 (`multi-account.ts:renderListView` 참고).
 - **Popover click-outside 닫힘 핸들러는 mousedown 시작 위치 추적 필수** — popover 안에서 텍스트 드래그 → 밖에서 mouseup하면 click이 외부로 발화해서 잘못 닫힘. `mousedown` capture로 시작 위치 기록 → popover 내부였으면 다음 click 1번 면제 (`multi-account.ts`, `period-compare.ts` 동일 패턴). 자주 fire-and-forget으로 트리거되는 background 작업(popover open 시 자동 refresh 등)은 in-flight 플래그로 중복 실행 차단.
+- **오버레이 다이얼로그(backdrop dim + 중앙 카드) "배경 클릭으로 닫기"는 반드시 `wireBackdropDismiss`(`src/content/dialog-dismiss.ts`) 사용** — 위와 같은 원인. 카드 입력창에서 텍스트 드래그 → backdrop에서 mouseup하면 `click` target이 backdrop이 돼(공통 조상) 단순 `e.target === backdrop` 판정만으론 다이얼로그가 잘못 닫힘. 헬퍼는 mousedown이 backdrop에서 시작한 경우에만 닫고 stopPropagation까지 처리. `openInputDialog`/`openConfirmDialog`/rename·그룹 다이얼로그 모두 이걸 씀. `setup.ts`(mousedown-dismiss)·`asset-bulk-popup.ts`(pointerdown 가드)·대행권 모달은 자체 가드가 이미 있음. **새 다이얼로그는 backdrop dismiss를 직접 구현하지 말 것.**
 
 ## gstack
 

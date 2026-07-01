@@ -9,12 +9,14 @@
 
 import type {
   MultiAccountUserMeta,
+  MultiAccountGroup,
   MultiAccountSnapshot,
   MultiAccountDirectoryCache,
 } from "@/types/storage";
 
 const USER_META_KEY = "multi_account_user_meta";
 const ADDED_LIST_KEY = "multi_account_added_list";
+const GROUPS_KEY = "multi_account_groups";
 const DIRECTORY_KEY = "multi_account_directory";
 const SNAPSHOT_PREFIX = "multi_account_snapshot:";
 const SNAPSHOT_TTL_MS = 60 * 60 * 1000; // 1시간. popover 열 때 stale 항목 자동 background refresh. 대행사 30~50계정 가정에서 너무 짧으면 매 진입마다 큰 burst — 1시간이 신선도 ↔ API 부담의 sweet spot
@@ -135,6 +137,71 @@ export async function updateUserMetaMany(
 
 export async function clearAllUserMeta(): Promise<void> {
   await chrome.storage.local.remove(USER_META_KEY);
+}
+
+// ─── 계정 그룹 (팀원별 등) ───
+// "내 계정" 위에 얹는 이름 붙은 계정 묶음. 한 계정이 여러 그룹에 중복 소속 가능 →
+// 그룹이 자기 멤버(accountNos)를 들고 있는 모델. 계정 메타와 분리 저장.
+
+export async function loadGroups(): Promise<MultiAccountGroup[]> {
+  const r = await chrome.storage.local.get(GROUPS_KEY);
+  const raw = r[GROUPS_KEY];
+  if (!Array.isArray(raw)) return [];
+  // 형식 방어 + order 오름차순 정렬(저장 시 보장하지만 이관/손상 대비).
+  const list = raw.filter(
+    (g): g is MultiAccountGroup =>
+      !!g && typeof g === "object" && typeof g.id === "string" && Array.isArray(g.accountNos),
+  );
+  return list.sort((a, b) => a.order - b.order);
+}
+
+export async function saveGroups(list: MultiAccountGroup[]): Promise<void> {
+  await chrome.storage.local.set({ [GROUPS_KEY]: list });
+}
+
+export async function createGroup(name: string): Promise<MultiAccountGroup[]> {
+  const trimmed = name.trim().slice(0, 24);
+  if (!trimmed) return loadGroups();
+  const list = await loadGroups();
+  const order = list.length > 0 ? Math.max(...list.map((g) => g.order)) + 1 : 0;
+  list.push({ id: crypto.randomUUID(), name: trimmed, order, accountNos: [] });
+  await saveGroups(list);
+  return list;
+}
+
+export async function renameGroup(id: string, name: string): Promise<MultiAccountGroup[]> {
+  const trimmed = name.trim().slice(0, 24);
+  if (!trimmed) return loadGroups();
+  const list = await loadGroups();
+  const g = list.find((x) => x.id === id);
+  if (g) {
+    g.name = trimmed;
+    await saveGroups(list);
+  }
+  return list;
+}
+
+export async function deleteGroup(id: string): Promise<MultiAccountGroup[]> {
+  const list = await loadGroups();
+  const next = list.filter((g) => g.id !== id);
+  if (next.length !== list.length) await saveGroups(next);
+  return next;
+}
+
+// "내 계정"에서 삭제된 계정을 모든 그룹에서도 제거 — 유령 소속 방지.
+export async function removeAccountsFromAllGroups(
+  accountNos: number[],
+): Promise<MultiAccountGroup[]> {
+  const remove = new Set(accountNos);
+  const list = await loadGroups();
+  let changed = false;
+  for (const g of list) {
+    const before = g.accountNos.length;
+    g.accountNos = g.accountNos.filter((n) => !remove.has(n));
+    if (g.accountNos.length !== before) changed = true;
+  }
+  if (changed) await saveGroups(list);
+  return list;
 }
 
 export async function loadDirectory(): Promise<MultiAccountDirectoryCache | null> {

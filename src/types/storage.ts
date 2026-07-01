@@ -174,6 +174,25 @@ export interface MultiAccountUserMeta {
 }
 
 /**
+ * F-MultiAccount — 팀원별(등) 계정 그룹.
+ * chrome.storage.local 단일 키: `multi_account_groups` (MultiAccountGroup[])
+ *
+ * "내 계정"(`multi_account_added_list`) 위에 얹는 이름 붙은 계정 묶음. 한 계정이 여러 그룹에
+ * 동시 소속 가능하므로 그룹이 자기 멤버 목록(accountNos)을 들고 있는 모델. 계정 메타
+ * (MultiAccountUserMeta)와는 분리 저장한다.
+ */
+export interface MultiAccountGroup {
+  /** 그룹 식별자 (crypto.randomUUID()) */
+  id: string;
+  /** 그룹 이름 (팀원명 등, 최대 24자) */
+  name: string;
+  /** 표시 순서 (오름차순) */
+  order: number;
+  /** 이 그룹에 속한 광고계정 번호 (한 계정이 여러 그룹에 중복 가능) */
+  accountNos: number[];
+}
+
+/**
  * F-MultiAccount — 각 광고계정의 어제 데이터/비즈머니/계약 캐시 스냅샷.
  * chrome.storage.local 키: `multi_account_snapshot:<adAccountNo>` — 10분 TTL stale-while-revalidate.
  *

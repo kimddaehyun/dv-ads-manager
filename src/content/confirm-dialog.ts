@@ -7,6 +7,8 @@
  * 호스트 페이지의 모달과 충돌하지 않도록 dvads- prefix + z-index 최대.
  */
 
+import { wireBackdropDismiss } from "./dialog-dismiss";
+
 export interface ConfirmDialogOptions {
   keyword: string;
   currentBid: number | null;
@@ -111,11 +113,6 @@ export function openConfirmDialog(opts: ConfirmDialogOptions): void {
   const swallow = (e: MouseEvent) => {
     e.stopPropagation();
   };
-  const onBackdropClick = (e: MouseEvent) => {
-    e.stopPropagation();
-    if (busy) return;
-    if (e.target === backdrop) cancel();
-  };
   const onKey = (e: KeyboardEvent) => {
     if (busy) return;
     if (e.key === "Escape") {
@@ -124,7 +121,8 @@ export function openConfirmDialog(opts: ConfirmDialogOptions): void {
     }
   };
 
-  backdrop.addEventListener("click", onBackdropClick);
+  // 배경 클릭 취소 — 드래그 오작동 방지 + 처리 중(busy)엔 무시.
+  wireBackdropDismiss(backdrop, cancel, () => busy);
   // 카드 내부 클릭(버튼 포함)도 document로 새지 않도록 위임 차단
   card.addEventListener("click", swallow);
   document.addEventListener("keydown", onKey);
@@ -165,7 +163,6 @@ export function openConfirmDialog(opts: ConfirmDialogOptions): void {
 
   function teardown() {
     if (!backdrop.isConnected) return;
-    backdrop.removeEventListener("click", onBackdropClick);
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
     if (openDialogCleanup === teardown) openDialogCleanup = null;

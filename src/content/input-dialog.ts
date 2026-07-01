@@ -7,6 +7,8 @@
  * 차이점: input 한 줄 + suffix 라벨("원"/"일") + 기존값 있을 때 "해제" 버튼.
  */
 
+import { wireBackdropDismiss } from "./dialog-dismiss";
+
 let openDialogCleanup: (() => void) | null = null;
 
 export interface InputDialogOptions {
@@ -119,11 +121,6 @@ export function openInputDialog(opts: InputDialogOptions): void {
 
   // 카드 내부 click이 document로 전파되지 않도록 차단 — 부모 popover의 외부 클릭 닫힘 방지.
   const swallow = (e: MouseEvent) => e.stopPropagation();
-  const onBackdropClick = (e: MouseEvent) => {
-    e.stopPropagation();
-    if (busy) return;
-    if (e.target === backdrop) teardown();
-  };
   const onKey = (e: KeyboardEvent) => {
     if (busy) return;
     if (e.key === "Escape") {
@@ -135,7 +132,8 @@ export function openInputDialog(opts: InputDialogOptions): void {
     }
   };
 
-  backdrop.addEventListener("click", onBackdropClick);
+  // 배경 클릭 닫기 — 드래그 오작동 방지 + 처리 중(busy)엔 무시.
+  wireBackdropDismiss(backdrop, teardown, () => busy);
   card.addEventListener("click", swallow);
   document.addEventListener("keydown", onKey);
 
@@ -197,7 +195,6 @@ export function openInputDialog(opts: InputDialogOptions): void {
 
   function teardown() {
     if (!backdrop.isConnected) return;
-    backdrop.removeEventListener("click", onBackdropClick);
     document.removeEventListener("keydown", onKey);
     backdrop.remove();
     if (openDialogCleanup === teardown) openDialogCleanup = null;

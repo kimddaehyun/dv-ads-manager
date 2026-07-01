@@ -34,6 +34,12 @@ import {
   savePlatformFilter,
   loadAgencyIdentity,
   saveAgencyIdentity,
+  loadGroups,
+  saveGroups,
+  createGroup,
+  renameGroup,
+  deleteGroup,
+  removeAccountsFromAllGroups,
   type PlatformFilter,
 } from "@/lib/multi-account-storage";
 import {
@@ -50,10 +56,12 @@ import type {
   MultiAccountDirectoryCache,
   MultiAccountDirectoryEntry,
   MultiAccountUserMeta,
+  MultiAccountGroup,
   MultiAccountSnapshot,
 } from "@/types/storage";
 import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "./ui-dropdown";
 import { openInputDialog } from "./input-dialog";
+import { wireBackdropDismiss } from "./dialog-dismiss";
 // "./setup"·"./report"은 write-excel-file/fflate(무거운 의존성)을 끌어와 콘텐츠 초기 번들을
 // 부풀린다. 호출 직전 동적 import로 분리해 별도 청크로 빠지게 한다(첫 클릭 시 1회 로드).
 
@@ -404,6 +412,8 @@ export function closePopover() {
   popoverEl = null;
   popoverView = "list";
   listSearchQuery = "";
+  activeGroupFilter = "all";
+  collapsedSectionKeys.clear();
   popoverFullscreen = false;
   document.querySelector(".dvads-multi-backdrop")?.remove();
   selectedAccountNos.clear();
@@ -419,6 +429,13 @@ let popoverView: PopoverView = "list";
 // 내 계정(list view) 검색 쿼리 — 추가된 계정만 필터링. 행 DOM은 그대로 두고
 // display:none 토글로 visibility 제어 → 입력 중 focus 유지. popover 닫힐 때 초기화.
 let listSearchQuery = "";
+
+// 그룹 칩 필터 상태 — "all"(구획 전체) | groupId(그 그룹만) | "unassigned"(미지정만).
+// "내 계정" view 전용. popover 닫힐 때 "all"로 리셋.
+let activeGroupFilter = "all";
+
+// 접힌 섹션 키(그룹 id 또는 "unassigned"). 재렌더에도 접힘 유지, popover 닫힐 때 초기화.
+const collapsedSectionKeys = new Set<string>();
 
 // 다중 선택 상태 — 체크박스로 선택한 계정 번호 집합. 두 view 공유 안 함 (view 전환 시 초기화).
 // 헤더 우측 "설정 (N)" 버튼이 N=size를 표시하고, 클릭 시 일괄 액션 메뉴 노출.
@@ -532,12 +549,21 @@ async function renderListView(wrap: HTMLElement) {
   // 이전엔 wrap.innerHTML="" 후 await loadSnapshot 했더니 그 사이 popover가 빈 상태로 깜빡임.
   // 모든 await을 *먼저* 끝낸 뒤 메모리에 새 DOM을 빌드 → 마지막에 단 한 번 replaceChildren으로
   // atomic swap. 기존 콘텐츠는 새 콘텐츠 준비 완료 시점까지 그대로 유지된다.
-  const [dir, meta, addedList] = await Promise.all([
+  const [dir, meta, addedList, groups] = await Promise.all([
     loadDirectory(),
     loadAllUserMeta(),
     loadAddedList(),
+    loadGroups(),
   ]);
   if (token !== renderListViewToken) return;
+  // 그룹이 삭제됐는데 그 그룹을 필터 중이면 "전체"로 복귀.
+  if (
+    activeGroupFilter !== "all" &&
+    activeGroupFilter !== "unassigned" &&
+    !groups.some((g) => g.id === activeGroupFilter)
+  ) {
+    activeGroupFilter = "all";
+  }
   const entries = pickAddedEntries(dir?.entries ?? [], addedList);
   // 스냅샷을 storage.get 1회로 일괄 로드 (계정별 단건 순차 호출 제거).
   const snapMap = await loadSnapshotMany(entries.map((e) => e.adAccountNo));
@@ -586,6 +612,9 @@ async function renderListView(wrap: HTMLElement) {
     return;
   }
 
+  // 그룹 칩 바 — 헤더 아래. 전체/각 그룹/미지정 필터 + 새 그룹 생성.
+  fragment.appendChild(buildGroupChips(groups, wrap));
+
   const tableWrap = document.createElement("div");
   tableWrap.className = "dvads-multi-table-wrap";
   const table = document.createElement("table");
@@ -626,9 +655,21 @@ async function renderListView(wrap: HTMLElement) {
   });
 
   const tbody = table.querySelector("tbody")!;
-  for (const { entry } of sorted) {
-    const tr = renderTableRow(entry, meta[entry.adAccountNo]);
-    tbody.appendChild(tr);
+  // 그룹별 섹션으로 나눠 렌더. 그룹이 없으면 헤더 없이 평평한 목록(기존 동작, 회귀 없음).
+  const sections = buildSections(sorted, groups);
+  const sectioned = !(activeGroupFilter === "all" && groups.length === 0);
+  for (const section of sections) {
+    const key = section.group ? section.group.id : "unassigned";
+    const collapsed = collapsedSectionKeys.has(key);
+    if (sectioned) {
+      tbody.appendChild(buildSectionHeaderRow(section, wrap));
+    }
+    for (const { entry } of section.rows) {
+      const tr = renderTableRow(entry, meta[entry.adAccountNo]);
+      tr.dataset.sectionKey = key;
+      if (collapsed) tr.style.display = "none";
+      tbody.appendChild(tr);
+    }
   }
   tableWrap.appendChild(table);
   fragment.appendChild(tableWrap);
@@ -668,9 +709,25 @@ function applyListSearchFilter(wrap: HTMLElement, query: string): void {
   const q = query.trim().toLowerCase();
   const rows = wrap.querySelectorAll<HTMLTableRowElement>("tr.dvads-multi-tr");
   rows.forEach((row) => {
+    // 접힌 섹션의 행은 검색과 무관하게 숨김 유지.
+    const key = row.dataset.sectionKey;
+    const collapsed = key ? collapsedSectionKeys.has(key) : false;
     const hay = row.dataset.searchHaystack || "";
     const match = !q || hay.includes(q);
-    row.style.display = match ? "" : "none";
+    row.style.display = match && !collapsed ? "" : "none";
+  });
+  // 그룹 섹션 헤더 — 검색 중일 땐 보이는 계정 행이 하나도 없는 섹션 헤더를 숨긴다(빈 구획 방지).
+  // 검색어가 없으면 헤더는 항상 표시(빈 그룹도 관리 가능하도록).
+  wrap.querySelectorAll<HTMLTableRowElement>("tr.dvads-multi-group-tr").forEach((header) => {
+    const key = header.dataset.sectionKey;
+    if (!q || !key) {
+      header.style.display = "";
+      return;
+    }
+    const anyVisible = Array.from(
+      wrap.querySelectorAll<HTMLElement>(`tr.dvads-multi-tr[data-section-key="${key}"]`),
+    ).some((r) => r.style.display !== "none");
+    header.style.display = anyVisible ? "" : "none";
   });
 }
 
@@ -752,6 +809,452 @@ function compareByKey(
   const av = a.snap?.yesterday ? Number(a.snap.yesterday[key as keyof typeof a.snap.yesterday] ?? 0) : -Infinity;
   const bv = b.snap?.yesterday ? Number(b.snap.yesterday[key as keyof typeof b.snap.yesterday] ?? 0) : -Infinity;
   return av - bv;
+}
+
+// ─── 그룹(팀원별) 렌더링 ───
+
+type SortedRow = { entry: MultiAccountDirectoryEntry; snap: MultiAccountSnapshot | null };
+interface Section {
+  group: MultiAccountGroup | null; // null = 미지정
+  rows: SortedRow[];
+}
+
+// 정렬된 계정을 activeGroupFilter에 따라 섹션으로 나눈다. 정렬은 sorted 순서를 그대로 유지하므로
+// 각 섹션도 정렬 상태. 한 계정이 여러 그룹에 속하면 여러 섹션에 중복 등장(의도된 동작).
+function buildSections(sorted: SortedRow[], groups: MultiAccountGroup[]): Section[] {
+  if (activeGroupFilter === "unassigned") {
+    const assigned = new Set(groups.flatMap((g) => g.accountNos));
+    return [{ group: null, rows: sorted.filter((s) => !assigned.has(s.entry.adAccountNo)) }];
+  }
+  if (activeGroupFilter !== "all") {
+    const g = groups.find((x) => x.id === activeGroupFilter) ?? null;
+    const rows = g ? sorted.filter((s) => g.accountNos.includes(s.entry.adAccountNo)) : [];
+    return [{ group: g, rows }];
+  }
+  // "전체" — 그룹 없으면 평평한 단일 섹션(헤더 없이 렌더).
+  if (groups.length === 0) return [{ group: null, rows: sorted }];
+  const sections: Section[] = groups.map((g) => ({
+    group: g,
+    rows: sorted.filter((s) => g.accountNos.includes(s.entry.adAccountNo)),
+  }));
+  const assigned = new Set(groups.flatMap((g) => g.accountNos));
+  const unassigned = sorted.filter((s) => !assigned.has(s.entry.adAccountNo));
+  if (unassigned.length > 0) sections.push({ group: null, rows: unassigned });
+  return sections;
+}
+
+// 섹션의 광고비/매출 합계 — 어제 데이터 스냅샷이 있는 계정만 합산. 하나도 없으면 null("-" 표시).
+function computeSectionSubtotal(rows: SortedRow[]): { cost: number; revenue: number } | null {
+  let cost = 0;
+  let revenue = 0;
+  let has = false;
+  for (const { snap } of rows) {
+    if (snap?.yesterday) {
+      cost += snap.yesterday.cost;
+      revenue += snap.yesterday.revenue;
+      has = true;
+    }
+  }
+  return has ? { cost, revenue } : null;
+}
+
+// 그룹 탭 바 — [‹] [캡슐: 전체 | 그룹... | 미지정] [›] [+ 그룹].
+// 캡슐 = 세그먼트 컨트롤(회색 트랙 + 선택 탭 흰 카드). 그룹이 넘치면 좌우 화살표로 스크롤
+// (화살표는 넘칠 때만 노출, 탭 바로 양옆). 스크롤바는 숨기고 화살표로만 이동.
+function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "dvads-multi-grouptabs";
+
+  const capsule = document.createElement("div");
+  capsule.className = "dvads-multi-groupchips";
+
+  const makeArrow = (dir: -1 | 1): HTMLButtonElement => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "dvads-multi-grouptabs-arrow";
+    btn.setAttribute("aria-label", dir < 0 ? "이전" : "다음");
+    const path = dir < 0 ? "M10 4 L6 8 L10 12" : "M6 4 L10 8 L6 12";
+    btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${path}"/></svg>`;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      capsule.scrollBy({ left: dir * 140, behavior: "smooth" });
+    });
+    return btn;
+  };
+  const leftArrow = makeArrow(-1);
+  const rightArrow = makeArrow(1);
+
+  const addChip = (key: string, label: string) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "dvads-multi-chip" + (activeGroupFilter === key ? " is-active" : "");
+    btn.textContent = label;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (activeGroupFilter === key) return;
+      activeGroupFilter = key;
+      void renderListView(wrap);
+    });
+    capsule.appendChild(btn);
+  };
+
+  addChip("all", "전체");
+  for (const g of groups) addChip(g.id, g.name);
+  addChip("unassigned", "미지정");
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "dvads-multi-chip-add";
+  add.textContent = "+ 그룹";
+  add.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openNameDialog({
+      title: "새 그룹 만들기",
+      initialValue: "",
+      confirmLabel: "만들기",
+      onSave: async (name) => {
+        const list = await createGroup(name);
+        // 방금 만든 그룹으로 필터 이동 — 바로 계정을 배정하기 편하게.
+        const created = list[list.length - 1];
+        if (created) activeGroupFilter = created.id;
+        if (popoverEl) await renderListView(popoverEl);
+      },
+    });
+  });
+
+  // 탭(캡슐)을 맨 왼쪽에. 화살표는 탭 뒤로 작게 배치, + 그룹은 맨 오른쪽(CSS margin-left:auto).
+  row.append(capsule, leftArrow, rightArrow, add);
+
+  // 화살표 노출/활성 상태 갱신 — 넘칠 때만 보이되, 자리(공간)는 항상 유지(visibility)해서
+  // 화살표 유무에 따라 탭 위치가 밀리지 않게 한다. 양끝에선 해당 방향 화살표 dim.
+  const updateArrows = () => {
+    const maxScroll = capsule.scrollWidth - capsule.clientWidth;
+    const scrollable = maxScroll > 1;
+    leftArrow.style.visibility = scrollable ? "" : "hidden";
+    rightArrow.style.visibility = scrollable ? "" : "hidden";
+    leftArrow.disabled = capsule.scrollLeft <= 0;
+    rightArrow.disabled = capsule.scrollLeft >= maxScroll - 1;
+  };
+  capsule.addEventListener("scroll", updateArrows);
+  // DOM 부착 후 측정 — 선택 탭이 화면 밖이면 보이도록 스크롤 + 화살표 상태 초기화.
+  requestAnimationFrame(() => {
+    const active = capsule.querySelector<HTMLElement>(".dvads-multi-chip.is-active");
+    if (active) {
+      const aLeft = active.offsetLeft;
+      const aRight = aLeft + active.offsetWidth;
+      if (aLeft < capsule.scrollLeft) capsule.scrollLeft = aLeft - 4;
+      else if (aRight > capsule.scrollLeft + capsule.clientWidth) {
+        capsule.scrollLeft = aRight - capsule.clientWidth + 4;
+      }
+    }
+    updateArrows();
+  });
+
+  return row;
+}
+
+// 섹션 헤더 행 — 접기 토글 + 그룹명/계정수 + 광고비/매출 합계(컬럼 정렬) + 그룹 ⋮ 메뉴(미지정 제외).
+function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRowElement {
+  const g = section.group;
+  const key = g ? g.id : "unassigned";
+  const collapsed = collapsedSectionKeys.has(key);
+  const sub = computeSectionSubtotal(section.rows);
+  const costStr = sub ? formatWon(sub.cost) : "-";
+  const revStr = sub ? formatWon(sub.revenue) : "-";
+
+  const tr = document.createElement("tr");
+  tr.className = "dvads-multi-group-tr" + (collapsed ? " is-collapsed" : "");
+  tr.dataset.groupHeader = "1";
+  tr.dataset.sectionKey = key;
+  // 데이터 행과 동일하게 열마다 td 하나씩 + 같은 data-k → 작게 보기 모드의 열 숨김(td[data-k])이
+  // 헤더에도 똑같이 적용되어 합계 칸이 총비용/매출 열에 정확히 정렬된다(colspan 방식은 숨김과 어긋남).
+  tr.innerHTML = `
+    <td class="dvads-multi-td-cb dvads-multi-group-cb">
+      <button class="dvads-multi-group-toggle" type="button" aria-label="접기/펼치기">
+        <svg class="dvads-multi-group-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4 L10 8 L6 12"/></svg>
+      </button>
+    </td>
+    <td class="dvads-multi-td-name dvads-multi-group-head">
+      <div class="dvads-multi-group-head-inner">
+        <span class="dvads-multi-group-name">${g ? escapeHtml(g.name) : "미지정"}</span>
+        <span class="dvads-multi-group-count">${section.rows.length}개</span>
+      </div>
+    </td>
+    <td class="dvads-multi-td-num" data-k="bizMoney"></td>
+    <td class="dvads-multi-td-num" data-k="impressions"></td>
+    <td class="dvads-multi-td-num" data-k="clicks"></td>
+    <td class="dvads-multi-td-num" data-k="ctr"></td>
+    <td class="dvads-multi-td-num" data-k="cpc"></td>
+    <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="cost">${costStr}</td>
+    <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="revenue">${revStr}</td>
+    <td class="dvads-multi-td-num" data-k="conversions"></td>
+    <td class="dvads-multi-td-num" data-k="roas"></td>
+    <td class="dvads-multi-td-act">${
+      g ? '<button class="dvads-multi-action-trigger dvads-multi-group-action" type="button" aria-label="그룹 메뉴">⋯</button>' : ""
+    }</td>
+  `;
+
+  const toggleCollapse = () => {
+    const nowCollapsed = tr.classList.toggle("is-collapsed");
+    if (nowCollapsed) collapsedSectionKeys.add(key);
+    else collapsedSectionKeys.delete(key);
+    popoverEl
+      ?.querySelectorAll<HTMLElement>(`tr.dvads-multi-tr[data-section-key="${key}"]`)
+      .forEach((r) => {
+        r.style.display = nowCollapsed ? "none" : "";
+      });
+    // 펼칠 때 검색어가 있으면 필터 재적용(숨겨야 할 행 다시 숨김).
+    if (!nowCollapsed && listSearchQuery) applyListSearchFilter(wrap, listSearchQuery);
+  };
+  tr.querySelector<HTMLButtonElement>(".dvads-multi-group-toggle")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleCollapse();
+  });
+  tr.querySelector<HTMLElement>(".dvads-multi-group-head")?.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest(".dvads-multi-group-toggle")) return;
+    toggleCollapse();
+  });
+
+  if (g) {
+    const trigger = tr.querySelector<HTMLButtonElement>(".dvads-multi-group-action");
+    if (trigger) {
+      attachActionMenu({
+        trigger,
+        ariaLabel: `${g.name} 그룹 메뉴`,
+        items: () => groupHeaderMenuItems(g, section.rows),
+      });
+    }
+  }
+  return tr;
+}
+
+function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMenuItem[] {
+  const entries = rows.map((r) => r.entry);
+  const nos = entries.map((e) => e.adAccountNo);
+  return [
+    {
+      label: `대행권 점검 (${nos.length})`,
+      onClick: () => void runAgencyCheck(nos),
+    },
+    {
+      label: "리포트 생성",
+      keepOpen: true,
+      disabled: nos.length === 0,
+      onClick: (anchor) => void openReportForEntries(anchor, entries),
+    },
+    { separator: true },
+    {
+      label: "그룹 이름 변경",
+      onClick: () =>
+        openNameDialog({
+          title: "그룹 이름 변경",
+          initialValue: g.name,
+          onSave: async (name) => {
+            await renameGroup(g.id, name);
+            if (popoverEl) await renderListView(popoverEl);
+          },
+        }),
+    },
+    {
+      label: "그룹 삭제",
+      danger: true,
+      onClick: () => {
+        // 그룹만 삭제 — 계정 자체는 "내 계정"에 남고 소속만 해제.
+        void (async () => {
+          await deleteGroup(g.id);
+          if (activeGroupFilter === g.id) activeGroupFilter = "all";
+          collapsedSectionKeys.delete(g.id);
+          if (popoverEl) await renderListView(popoverEl);
+        })();
+      },
+    },
+  ];
+}
+
+// 다중 리포트 진입 — 헤더 "설정" 메뉴와 그룹 헤더 메뉴가 공유. anchor 위치는 동적 import 전에
+// 동기 캡처(keepOpen 메뉴가 populate로 버튼을 떼어내도 rect 보존).
+async function openReportForEntries(
+  anchor: HTMLElement,
+  entries: MultiAccountDirectoryEntry[],
+): Promise<void> {
+  const anchorRect = anchor.getBoundingClientRect();
+  const metaMap = await loadAllUserMeta();
+  const { openReportFlowBatch } = await import("./report");
+  openReportFlowBatch(
+    anchor,
+    entries.map((e) => ({
+      adAccountNo: e.adAccountNo,
+      masterCustomerId: e.masterCustomerId,
+      name: metaMap[e.adAccountNo]?.displayName?.trim() || e.name,
+    })),
+    anchorRect,
+  );
+}
+
+// 범용 텍스트 입력 다이얼로그 — 그룹 생성/이름 변경용. rename 다이얼로그 CSS(dvads-rename-*) 재사용.
+function openNameDialog(opts: {
+  title: string;
+  initialValue: string;
+  confirmLabel?: string;
+  onSave: (name: string) => void | Promise<void>;
+}): void {
+  closeRenameDialog();
+  const backdrop = document.createElement("div");
+  backdrop.className = "dvads dvads-rename-backdrop";
+  const card = document.createElement("div");
+  card.className = "dvads-rename-card";
+  card.innerHTML = `
+    <div class="dvads-rename-title">${escapeHtml(opts.title)}</div>
+    <div class="dvads-rename-input-wrap">
+      <input class="dvads-rename-input" type="text" maxlength="24" placeholder="이름 입력" />
+      <button class="dvads-rename-clear" type="button" aria-label="입력 지우기">×</button>
+    </div>
+    <div class="dvads-rename-actions">
+      <button class="dvads-rename-cancel" type="button">취소</button>
+      <button class="dvads-rename-save" type="button">${escapeHtml(opts.confirmLabel ?? "저장")}</button>
+    </div>
+  `;
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const input = card.querySelector<HTMLInputElement>(".dvads-rename-input")!;
+  input.value = opts.initialValue;
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 0);
+
+  const cleanup = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const save = async () => {
+    const v = input.value.trim().slice(0, 24);
+    if (!v) return;
+    cleanup();
+    await opts.onSave(v);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void save(); }
+  };
+  wireBackdropDismiss(backdrop, cleanup);
+  card.addEventListener("click", (e) => e.stopPropagation());
+  card.querySelector<HTMLButtonElement>(".dvads-rename-cancel")?.addEventListener("click", cleanup);
+  card.querySelector<HTMLButtonElement>(".dvads-rename-save")?.addEventListener("click", () => void save());
+  card.querySelector<HTMLButtonElement>(".dvads-rename-clear")?.addEventListener("click", () => {
+    input.value = "";
+    input.focus();
+  });
+  document.addEventListener("keydown", onKey, true);
+}
+
+// 그룹 지정 다이얼로그 — 계정(들)을 어떤 그룹에 넣을지 체크박스로 편집. 여러 계정 일괄 지정 시
+// 일부만 포함된 그룹은 indeterminate로 표시하고, 사용자가 건드리지 않으면 그대로 둔다.
+async function openGroupAssignDialog(nos: number[]): Promise<void> {
+  if (nos.length === 0) return;
+  closeRenameDialog();
+  const groups = await loadGroups();
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "dvads dvads-rename-backdrop dvads-groupassign-backdrop";
+  const card = document.createElement("div");
+  card.className = "dvads-rename-card dvads-groupassign-card";
+  card.innerHTML = `
+    <div class="dvads-rename-title">그룹 지정</div>
+    <div class="dvads-groupassign-desc">${nos.length === 1 ? "이 계정" : `선택한 ${nos.length}개 계정`}이 속할 그룹을 선택하세요.</div>
+    <div class="dvads-groupassign-list"></div>
+    <div class="dvads-groupassign-new">
+      <input class="dvads-groupassign-new-input" type="text" maxlength="24" placeholder="새 그룹 이름" />
+      <button class="dvads-groupassign-new-btn" type="button">추가</button>
+    </div>
+    <div class="dvads-rename-actions">
+      <button class="dvads-rename-cancel" type="button">취소</button>
+      <button class="dvads-rename-save" type="button">저장</button>
+    </div>
+  `;
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const listEl = card.querySelector<HTMLDivElement>(".dvads-groupassign-list")!;
+  const rowCheckboxes: { id: string; el: HTMLInputElement }[] = [];
+
+  const memberCount = (g: MultiAccountGroup) => nos.filter((n) => g.accountNos.includes(n)).length;
+
+  const addGroupRow = (g: MultiAccountGroup, forceChecked = false) => {
+    const cnt = forceChecked ? nos.length : memberCount(g);
+    const row = document.createElement("label");
+    row.className = "dvads-groupassign-row";
+    row.innerHTML = `
+      <input type="checkbox" />
+      <span class="dvads-groupassign-row-name"></span>
+    `;
+    const el = row.querySelector<HTMLInputElement>("input")!;
+    el.checked = cnt === nos.length && cnt > 0;
+    el.indeterminate = cnt > 0 && cnt < nos.length;
+    row.querySelector<HTMLSpanElement>(".dvads-groupassign-row-name")!.textContent = g.name;
+    listEl.appendChild(row);
+    rowCheckboxes.push({ id: g.id, el });
+  };
+
+  if (groups.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "dvads-groupassign-empty";
+    empty.textContent = "아직 그룹이 없어요. 아래에서 새 그룹을 만들어 지정하세요.";
+    listEl.appendChild(empty);
+  } else {
+    for (const g of groups) addGroupRow(g);
+  }
+
+  const cleanup = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+
+  const newInput = card.querySelector<HTMLInputElement>(".dvads-groupassign-new-input")!;
+  const addNewGroup = async () => {
+    const name = newInput.value.trim().slice(0, 24);
+    if (!name) return;
+    const list = await createGroup(name);
+    const created = list[list.length - 1];
+    newInput.value = "";
+    const emptyEl = listEl.querySelector(".dvads-groupassign-empty");
+    emptyEl?.remove();
+    if (created) addGroupRow(created, true); // 새 그룹은 체크 상태로 — 저장 시 이 계정들 배정.
+  };
+  card.querySelector<HTMLButtonElement>(".dvads-groupassign-new-btn")?.addEventListener("click", () => void addNewGroup());
+  newInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void addNewGroup(); }
+  });
+
+  const save = async () => {
+    // 저장 시점에 최신 그룹 목록을 다시 읽어 병합(다이얼로그 여는 사이 다른 변경 대비).
+    const fresh = await loadGroups();
+    const byId = new Map(fresh.map((g) => [g.id, g]));
+    const removeSet = new Set(nos);
+    for (const { id, el } of rowCheckboxes) {
+      const target = byId.get(id);
+      if (!target) continue;
+      if (el.indeterminate) continue; // 건드리지 않은 혼합 상태 → 그대로.
+      if (el.checked) {
+        for (const n of nos) if (!target.accountNos.includes(n)) target.accountNos.push(n);
+      } else {
+        target.accountNos = target.accountNos.filter((n) => !removeSet.has(n));
+      }
+    }
+    await saveGroups(fresh);
+    cleanup();
+    if (popoverEl) await renderListView(popoverEl);
+  };
+
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+  };
+  wireBackdropDismiss(backdrop, cleanup);
+  card.addEventListener("click", (e) => e.stopPropagation());
+  card.querySelector<HTMLButtonElement>(".dvads-rename-cancel")?.addEventListener("click", cleanup);
+  card.querySelector<HTMLButtonElement>(".dvads-rename-save")?.addEventListener("click", () => void save());
+  document.addEventListener("keydown", onKey, true);
 }
 
 /**
@@ -981,6 +1484,7 @@ function searchRowActionItems(
       onClick: () => {
         void (async () => {
           const next = await removeAccountFromList(entry.adAccountNo);
+          await removeAccountsFromAllGroups([entry.adAccountNo]);
           addedSet.clear();
           next.forEach((n) => addedSet.add(n));
           await replaceSearchRow(tr, entry, addedSet);
@@ -1065,11 +1569,8 @@ function openRenameDialog(
   };
 
   // 모달 내부 click이 document로 전파되면 popover의 outside-click 핸들러가 popover를 닫음.
-  // 모든 핸들러에서 stopPropagation으로 차단. backdrop 자신은 target=backdrop인 경우만 닫기.
-  backdrop.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (e.target === backdrop) cleanup();
-  });
+  // 모든 핸들러에서 stopPropagation으로 차단. backdrop 클릭 dismiss는 드래그 오작동 방지 헬퍼로.
+  wireBackdropDismiss(backdrop, cleanup);
   // 카드 내부 모든 click도 stopPropagation — 입력칸 클릭/포커스 등이 popover dismiss 안 일으키게.
   card.addEventListener("click", (e) => e.stopPropagation());
   card.querySelector<HTMLButtonElement>(".dvads-rename-cancel")?.addEventListener("click", cleanup);
@@ -1127,16 +1628,23 @@ function closeAgencyModal(): void {
  * 대행권 점검 진입점. 우리 담당 관리 계정(설정)이 비어있으면 먼저 입력받고,
  * 있으면 바로 디렉터리 전 계정을 4-worker로 조회해 결과 요약을 띄운다.
  */
-async function runAgencyCheck(): Promise<void> {
+async function runAgencyCheck(targetNos?: number[]): Promise<void> {
   const [ourIds, dir, meta] = await Promise.all([
     loadAgencyIdentity(),
     loadDirectory(),
     loadAllUserMeta(),
   ]);
   const all = (dir?.entries ?? []).filter((e) => !e.disabled && !e.deleted);
-  // 선택된 계정이 있으면 그 계정만 점검(내 계정/전체 계정 두 뷰 공통). 없으면 전체 명단.
-  const sel = selectedAccountNos;
-  const targets = sel.size > 0 ? all.filter((e) => sel.has(e.adAccountNo)) : all;
+  // 우선순위: 명시 인자(그룹 단위) > 선택된 계정(체크박스) > 전체 명단.
+  let targets: MultiAccountDirectoryEntry[];
+  if (targetNos && targetNos.length > 0) {
+    const set = new Set(targetNos);
+    targets = all.filter((e) => set.has(e.adAccountNo));
+  } else if (selectedAccountNos.size > 0) {
+    targets = all.filter((e) => selectedAccountNos.has(e.adAccountNo));
+  } else {
+    targets = all;
+  }
   openAgencyModal(targets, ourIds, meta);
 }
 
@@ -1560,7 +2068,17 @@ function wireRowCheckbox(rowEl: HTMLElement, accountNo: number): void {
   cb.addEventListener("change", () => {
     if (cb.checked) selectedAccountNos.add(accountNo);
     else selectedAccountNos.delete(accountNo);
-    if (popoverEl) updateBulkActionUI(popoverEl);
+    // 그룹 다중 소속 — 같은 계정이 다른 섹션에도 있으면 그 체크박스도 같이 반영.
+    if (popoverEl) {
+      popoverEl
+        .querySelectorAll<HTMLInputElement>(
+          `tr.dvads-multi-tr[data-ad-account-no="${accountNo}"] .dvads-multi-cb input`,
+        )
+        .forEach((el) => {
+          if (el !== cb) el.checked = cb.checked;
+        });
+      updateBulkActionUI(popoverEl);
+    }
   });
 }
 
@@ -1604,11 +2122,15 @@ function wireSelectAll(wrap: HTMLElement): void {
     const visible = getVisibleAccountNos(wrap);
     if (selectAll.checked) visible.forEach((no) => selectedAccountNos.add(no));
     else visible.forEach((no) => selectedAccountNos.delete(no));
-    // 보이는 각 행의 체크박스 동기화
+    // 보이는 각 행의 체크박스 동기화 — 그룹 다중 소속으로 같은 계정이 여러 행일 수 있어 모두.
     visible.forEach((no) => {
-      const row = wrap.querySelector<HTMLElement>(`[data-ad-account-no="${no}"]`);
-      const cb = row?.querySelector<HTMLInputElement>(".dvads-multi-cb input");
-      if (cb) cb.checked = selectAll.checked;
+      wrap
+        .querySelectorAll<HTMLInputElement>(
+          `tr.dvads-multi-tr[data-ad-account-no="${no}"] .dvads-multi-cb input`,
+        )
+        .forEach((cb) => {
+          cb.checked = selectAll.checked;
+        });
     });
     updateBulkActionUI(wrap);
   });
@@ -1720,6 +2242,11 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       label: hasSelection ? `대행권 점검 (${selectedAccountNos.size})` : "대행권 점검",
       onClick: () => void runAgencyCheck(),
     },
+    {
+      label: "그룹 지정",
+      disabled: !hasSelection,
+      onClick: () => void openGroupAssignDialog(Array.from(selectedAccountNos)),
+    },
     { separator: true },
     // 광고 유형 필터 — 둘 중 하나만/둘 다 선택. 선택에 따라 어제 데이터가 SA/GFA/합산으로 바뀐다.
     {
@@ -1749,24 +2276,13 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       label: "리포트 생성",
       disabled: !hasSelection,
       keepOpen: true,
-      // 클릭 시점에 meta를 새로 읽어 바뀐 별칭(displayName)을 리포트에 반영. anchor 위치는
-      // await 전에 동기 캡처(키프레임 populate가 버튼을 떼어내 이후 rect가 0이 되는 것 방지).
-      onClick: async (anchor) => {
-        const anchorRect = anchor.getBoundingClientRect();
-        const metaMap = await loadAllUserMeta();
-        const { openReportFlowBatch } = await import("./report");
-        openReportFlowBatch(
+      // 클릭 시점에 meta를 새로 읽어 바뀐 별칭(displayName)을 리포트에 반영. 그룹 헤더 메뉴와
+      // openReportForEntries를 공유(anchor 위치 동기 캡처 포함).
+      onClick: (anchor) =>
+        void openReportForEntries(
           anchor,
-          entries
-            .filter((e) => selectedAccountNos.has(e.adAccountNo))
-            .map((e) => ({
-              adAccountNo: e.adAccountNo,
-              masterCustomerId: e.masterCustomerId,
-              name: metaMap[e.adAccountNo]?.displayName?.trim() || e.name,
-            })),
-          anchorRect,
-        );
-      },
+          entries.filter((e) => selectedAccountNos.has(e.adAccountNo)),
+        ),
     },
     { separator: true },
     {
@@ -1778,6 +2294,7 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
         if (nos.length === 0) return;
         void (async () => {
           await removeAccountsFromList(nos);
+          await removeAccountsFromAllGroups(nos);
           selectedAccountNos.clear();
           if (popoverEl) await renderListView(popoverEl);
         })();
@@ -1817,6 +2334,7 @@ function searchKebabItems(): ActionMenuItem[] {
         if (nos.length === 0) return;
         void (async () => {
           await removeAccountsFromList(nos);
+          await removeAccountsFromAllGroups(nos);
           selectedAccountNos.clear();
           if (popoverEl) await renderSearchView(popoverEl);
         })();
@@ -2008,6 +2526,10 @@ function renderTableRow(
       items: [
         { label: "바로가기", onClick: goTo },
         {
+          label: "그룹 지정",
+          onClick: () => void openGroupAssignDialog([entry.adAccountNo]),
+        },
+        {
           label: "세팅안 생성",
           onClick: async () => {
             const { openSetupFlow } = await import("./setup");
@@ -2061,6 +2583,7 @@ function renderTableRow(
             // 안전 측 (재추가는 검색 뷰에서 가능).
             void (async () => {
               await removeAccountFromList(entry.adAccountNo);
+              await removeAccountsFromAllGroups([entry.adAccountNo]);
               if (popoverEl) await renderListView(popoverEl);
             })();
           },
@@ -2111,6 +2634,12 @@ async function refreshAllStale(entries: MultiAccountDirectoryEntry[]) {
     }
   });
   await Promise.all(workers);
+  // 그룹 섹션 합계(광고비/매출)는 렌더 시점 스냅샷 기준이라, 전체 새로고침 후 최신 값으로 다시
+  // 그려야 합계가 방금 받은 데이터를 반영한다. 접힘/선택/검색 상태는 모듈 전역이라 유지된다.
+  if (popoverEl && popoverView === "list") {
+    await renderListView(popoverEl);
+    return;
+  }
   if (btn && popoverEl?.contains(btn)) {
     btn.disabled = false;
     btn.textContent = "↻ 전체";
@@ -2162,16 +2691,12 @@ async function refreshRow(
 
 function paintRowEmpty(adAccountNo: number) {
   if (!popoverEl) return;
-  const row = findRow(adAccountNo);
-  if (!row) return;
-  row.classList.add("dvads-multi-tr-empty");
+  for (const row of findRows(adAccountNo)) row.classList.add("dvads-multi-tr-empty");
 }
 
 function paintRowLoading(adAccountNo: number) {
   if (!popoverEl) return;
-  const row = findRow(adAccountNo);
-  if (!row) return;
-  paintRowSkeleton(row);
+  for (const row of findRows(adAccountNo)) paintRowSkeleton(row);
 }
 
 // 데이터 셀(data-k)별 스켈레톤 바 폭. 컬럼 성격에 맞춰 살짝씩 다르게 줘 자연스러운 로딩 모양.
@@ -2352,10 +2877,13 @@ function registerStorageListener() {
   });
 }
 
+// 그룹 다중 소속 대응 — 한 계정의 모든 행을 동일하게 칠한다.
 function paintRow(adAccountNo: number, snap: MultiAccountSnapshot, meta?: MultiAccountUserMeta) {
   if (!popoverEl) return;
-  const row = findRow(adAccountNo);
-  if (!row) return;
+  for (const row of findRows(adAccountNo)) paintRowEl(row, snap, meta);
+}
+
+function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?: MultiAccountUserMeta) {
   row.classList.remove("dvads-multi-tr-loading", "dvads-multi-tr-empty");
   if (isSnapshotFresh(snap)) row.classList.remove("dvads-multi-tr-stale");
   else row.classList.add("dvads-multi-tr-stale");
@@ -2523,28 +3051,32 @@ function cancelHideBrandTooltip() {
 
 function paintRowError(adAccountNo: number, message: string) {
   if (!popoverEl) return;
-  const row = findRow(adAccountNo);
-  if (!row) return;
-  row.classList.remove("dvads-multi-tr-loading");
-  // 실패 행에 스켈레톤이 남아 영원히 shimmer 하지 않게 수치 자리를 "-"로 되돌린다.
-  row.querySelectorAll<HTMLTableCellElement>("td[data-k]").forEach((td) => {
-    if (td.querySelector(".dvads-multi-skel")) td.textContent = "-";
-  });
-  const nameTd = row.querySelector<HTMLTableCellElement>(".dvads-multi-td-name");
-  if (!nameTd) return;
-  let errEl = nameTd.querySelector<HTMLSpanElement>(".dvads-multi-row-error");
-  if (!errEl) {
-    errEl = document.createElement("span");
-    errEl.className = "dvads-multi-row-error";
-    nameTd.appendChild(errEl);
+  for (const row of findRows(adAccountNo)) {
+    row.classList.remove("dvads-multi-tr-loading");
+    // 실패 행에 스켈레톤이 남아 영원히 shimmer 하지 않게 수치 자리를 "-"로 되돌린다.
+    row.querySelectorAll<HTMLTableCellElement>("td[data-k]").forEach((td) => {
+      if (td.querySelector(".dvads-multi-skel")) td.textContent = "-";
+    });
+    const nameTd = row.querySelector<HTMLTableCellElement>(".dvads-multi-td-name");
+    if (!nameTd) continue;
+    let errEl = nameTd.querySelector<HTMLSpanElement>(".dvads-multi-row-error");
+    if (!errEl) {
+      errEl = document.createElement("span");
+      errEl.className = "dvads-multi-row-error";
+      nameTd.appendChild(errEl);
+    }
+    errEl.textContent = message;
   }
-  errEl.textContent = message;
 }
 
-function findRow(adAccountNo: number): HTMLTableRowElement | null {
-  if (!popoverEl) return null;
-  return popoverEl.querySelector<HTMLTableRowElement>(
-    `tr.dvads-multi-tr[data-ad-account-no="${adAccountNo}"]`,
+// 그룹 다중 소속으로 같은 계정이 여러 섹션에 중복 렌더될 수 있어, 한 계정의 모든 행을 반환.
+// paint/체크박스 동기화는 이 목록 전체에 적용해야 한다.
+function findRows(adAccountNo: number): HTMLTableRowElement[] {
+  if (!popoverEl) return [];
+  return Array.from(
+    popoverEl.querySelectorAll<HTMLTableRowElement>(
+      `tr.dvads-multi-tr[data-ad-account-no="${adAccountNo}"]`,
+    ),
   );
 }
 
