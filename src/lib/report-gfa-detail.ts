@@ -5,7 +5,8 @@
 //   1) POST report/downloads {reportType:"PERFORMANCE", reportQuery} -> {success:true}
 //   2) 폴링 GET report/downloads?reportType=PERFORMANCE -> 배열. reportQuery 매칭 + status COMPLETED 의 no
 //   3) GET report/downloads/{no}/download -> ZIP(result.csv). fflate unzip
-// ⚠️ 연속 POST는 403 rate-limit (1.5초 간격도 실패, 8초는 성공) -> 4종을 간격 두고 순차 호출.
+// ⚠️ POST 간격: 2026-06-24 측정에선 연속 POST 403(1.5초 실패/8초 성공)이었으나 2026-07-02 재측정에선
+//   0.2초 연사·계정 교차 동시 전부 200으로 미재현 → 기본 1초 간격 + 403 재등장 시 안전 간격(7초) 복귀.
 // path에 adAccountNo가 박혀 URL-aware(bmgate 패턴) — 헤더 없이 cross-account. 안전하게 customerId도 동봉.
 //
 // CSV 10컬럼(헤더 무시, 인덱스 접근):
@@ -19,19 +20,26 @@ import type { DateRange } from "./report-period";
 import type { NamedMetrics } from "./report-fill";
 
 const COL_LIST = ["sales", "impCount", "clickCount", "cpc", "purchaseConvCount", "purchaseConvSales", "purchaseRoas"];
-const POST_GAP_MS = 7000; // 연속 POST 403 회피용 간격
+// 라이브 측정(2026-07-02, 계정 2342598/404590): 0.2초 간격 8연사·31일 범위 6연사·계정 교차 동시
+// 전부 200, 19 POST/2.5분 403 0건. 1초는 그 위에 얹은 여유 마진. 단 과거(6/24) 403이 실재했고
+// 일괄 120+ POST 규모의 시간당 총량 제한은 미검증이라, 403이 다시 나타나면 그 세션은 검증된
+// 안전 간격(7초)으로 복귀한다 — 게이트를 아예 없애지 않는 이유.
+const POST_GAP_FAST_MS = 1000;
+const POST_GAP_SAFE_MS = 7000;
+const RETRY_BACKOFF_MS = 8000; // 403 후 재시도 전 대기
 const POLL_INTERVAL_MS = 1000;
 const POLL_MAX = 15;
+let postGapMs = POST_GAP_FAST_MS; // 403 재등장 시 SAFE로 전환 (모듈 수명 = 세션 동안 유지)
 
 // 다운로드 POST 전역 게이트 — 여러 계정(일괄 리포트)을 병렬 수집해도 디스플레이 다운로드 POST는
-// 전역에서 POST_GAP_MS 간격을 지켜야 403(토큰버킷)이 안 난다. 직전 POST 시각을 모듈 전역으로 공유.
+// 전역에서 postGapMs 간격을 지킨다. 직전 POST 시각을 모듈 전역으로 공유.
 // 게이트는 POST 발사까지만 직렬화하고, 그 뒤 폴링·다운로드는 게이트 밖에서 다른 계정과 겹쳐 돈다.
 let gatePostAt = 0;
 let gateChain: Promise<unknown> = Promise.resolve();
 function gatedPost<T>(fn: () => Promise<T>): Promise<T> {
   const run = gateChain.then(async () => {
-    const elapsed = gatePostAt ? Date.now() - gatePostAt : POST_GAP_MS;
-    if (elapsed < POST_GAP_MS) await sleep(POST_GAP_MS - elapsed);
+    const elapsed = gatePostAt ? Date.now() - gatePostAt : postGapMs;
+    if (elapsed < postGapMs) await sleep(postGapMs - elapsed);
     gatePostAt = Date.now();
     return fn();
   });
@@ -205,11 +213,20 @@ export async function fetchGfaDetail(adAccountNo: number, customerId: number, ra
   const result: GfaDetailRaw = { byDay: [], byPlacement: [], byGender: [], byAge: [] };
   // 시작 시 과거 잔여 다운로드 정리(50 한도 회복). 새 4건을 만들기 전에 우리 백로그를 비운다.
   await pruneOldDownloads(adAccountNo, customerId).catch(() => {});
-  // rate-limit은 토큰버킷(충전 ~7초/건, 라이브 측정). POST는 전역 게이트(gatedPost)로 간격을 지키고,
-  // 폴링·다운로드는 게이트 밖에서 진행돼 다음 POST 간격에 자연 흡수된다(여러 계정 병렬에도 안전).
+  // POST는 전역 게이트(gatedPost)로 간격(기본 1초)을 지키고, 폴링·다운로드는 게이트 밖에서
+  // 진행돼 다른 계정과 겹쳐 돈다. 403이 나타나면 안전 간격(7초)으로 전환 + 8초 뒤 1회 재시도 —
+  // 재시도도 실패하면 throw(호출 측 graceful: 디스플레이_상세 시트 제거).
   for (let i = 0; i < DIMS.length; i++) {
     const { key, q } = DIMS[i];
-    await gatedPost(() => requestReport(adAccountNo, customerId, { ...base, ...q }));
+    try {
+      await gatedPost(() => requestReport(adAccountNo, customerId, { ...base, ...q }));
+    } catch (e) {
+      if (!String(e).includes("HTTP 403")) throw e;
+      postGapMs = POST_GAP_SAFE_MS;
+      console.warn("[dv-ads/report] 디스플레이 다운로드 403 — 안전 간격(7초)으로 전환 후 재시도", e);
+      await sleep(RETRY_BACKOFF_MS);
+      await gatedPost(() => requestReport(adAccountNo, customerId, { ...base, ...q }));
+    }
     const no = await pollJobNo(adAccountNo, customerId, q, range);
     result[key] = parseRows(await downloadCsv(adAccountNo, no));
     // 받아서 파싱한 직후 그 다운로드는 더 필요 없으니 삭제(best-effort) — 한도에 안 쌓이게.

@@ -154,6 +154,23 @@ export async function buildReportModel(
       }
     }
   };
+  // 현재기간 디스플레이 합계: 상위(buildReportBytes)에서 이미 받은 GFA 결과의 .total을 재사용해
+  // fetchGfaData 중복 호출을 없앤다. 단독 호출 등 미제공 시에는 gfaSafe로 폴백(재시도 포함).
+  const gfaCurP =
+    displayCurrent != null
+      ? Promise.resolve(displayCurrent).then((d) => d.total)
+      : gfaSafe(range);
+
+  // 디스플레이_상세(비동기 다운로드 파이프라인, 가장 느린 구간)는 합계만 확인되면(1~2초) 바로
+  // 출발시켜 아래 SA 수집(키워드 보고서 페이지네이션 포함)과 겹쳐 돌린다 — 직렬로 두면 계정당
+  // 그만큼 늦어진다. 결과 소비·실패 graceful 처리는 아래 hasDisplay 블록에서.
+  const detailP = gfaCurP.then((g) =>
+    g.impressions > 0 || g.cost > 0 ? fetchGfaDetail(target.adAccountNo, cid, range) : null,
+  );
+  // Promise.all이 먼저 reject되면 아래 await detailP에 도달하지 못한다 — unhandled rejection 방지용
+  // no-op catch (await 측 에러 전파에는 영향 없음).
+  detailP.catch(() => {});
+
   const [saCurRaw, saPrevRaw, byDayMap, byPlaceRows, byGenderMap, byAgeMap, gfaCur, gfaPrev] = await Promise.all([
     fetchTotal(cid, range),
     fetchTotal(cid, prev),
@@ -161,11 +178,7 @@ export async function buildReportModel(
     fetchPlacement(cid, range),
     fetchAggregated(cid, range, "criterionGenderNm", genderLabel),
     fetchAggregated(cid, range, "criterionAgeTpNm", ageLabel),
-    // 현재기간 디스플레이 합계: 상위(buildReportBytes)에서 이미 받은 GFA 결과의 .total을 재사용해
-    // fetchGfaData 중복 호출을 없앤다. 단독 호출 등 미제공 시에는 gfaSafe로 폴백(재시도 포함).
-    displayCurrent != null
-      ? Promise.resolve(displayCurrent).then((d) => d.total)
-      : gfaSafe(range),
+    gfaCurP,
     gfaSafe(prev),
   ]);
   // 브랜드 일할 계약금액 가산 (금주/전주 검색 총비용에 각각 반영)
@@ -180,7 +193,7 @@ export async function buildReportModel(
 
   const hasDisplay = gfaCur.impressions > 0 || gfaCur.cost > 0;
 
-  // 디스플레이_상세(일자/지면/성별/연령) — 비동기 다운로드 보고서(느림, 순차). 디스플레이 있을 때만.
+  // 디스플레이_상세(일자/지면/성별/연령) — 위에서 SA 수집과 겹쳐 출발시킨 detailP 소비.
   // 실패하면(rate-limit/권한) graceful: hasDisplayDetail=false로 시트 제거.
   let displayByDay: NamedMetrics[] = [];
   let displayByPlacement: NamedMetrics[] = [];
@@ -189,18 +202,20 @@ export async function buildReportModel(
   let hasDisplayDetail = false;
   if (hasDisplay) {
     try {
-      const detail = await fetchGfaDetail(target.adAccountNo, cid, range);
-      const dayMap = new Map(detail.byDay.map((r) => [ymdToIso(r.label), r.metrics]));
-      displayByDay = eachDay(range).map((d) => {
-        const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        return { label: dayLabel(d), metrics: dayMap.get(k) ?? ZERO_METRICS };
-      });
-      displayByPlacement = detail.byPlacement
-        .filter((p) => p.metrics.impressions > 0)
-        .sort((a, b) => b.metrics.cost - a.metrics.cost);
-      displayByGender = orderedNamed(normalizeNamed(detail.byGender, genderLabel), GENDER_ORDER);
-      displayByAge = orderedNamed(normalizeNamed(detail.byAge, displayAgeLabel), DISPLAY_AGE_ORDER);
-      hasDisplayDetail = true;
+      const detail = await detailP;
+      if (detail) {
+        const dayMap = new Map(detail.byDay.map((r) => [ymdToIso(r.label), r.metrics]));
+        displayByDay = eachDay(range).map((d) => {
+          const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+          return { label: dayLabel(d), metrics: dayMap.get(k) ?? ZERO_METRICS };
+        });
+        displayByPlacement = detail.byPlacement
+          .filter((p) => p.metrics.impressions > 0)
+          .sort((a, b) => b.metrics.cost - a.metrics.cost);
+        displayByGender = orderedNamed(normalizeNamed(detail.byGender, genderLabel), GENDER_ORDER);
+        displayByAge = orderedNamed(normalizeNamed(detail.byAge, displayAgeLabel), DISPLAY_AGE_ORDER);
+        hasDisplayDetail = true;
+      }
     } catch (e) {
       console.warn("[dv-ads/report] 디스플레이 상세 수집 실패", e);
     }

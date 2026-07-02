@@ -125,7 +125,7 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
   closePopover(); // 진행 오버레이가 뜨면 다계정 대시보드 팝오버는 닫는다
   try {
     // 광고주 동시성 2 병렬 — 계정별 검색광고 수집이 겹쳐 돌고, 디스플레이 다운로드 POST는
-    // report-gfa-detail의 전역 게이트가 403을 막는다(계정 간 7초 간격 유지).
+    // report-gfa-detail의 전역 게이트(기본 1초, 403 시 7초 복귀)가 간격을 관리한다.
     const REPORT_CONCURRENCY = 2;
     let next = 0;
     showProgress(`리포트를 만드는 중... (완료 0/${targets.length})`, () => { reportCancelled = true; hideProgress(); });
