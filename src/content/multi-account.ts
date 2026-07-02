@@ -448,7 +448,8 @@ let listSearchQuery = "";
 // "내 계정" view 전용. popover 닫힐 때 "all"로 리셋.
 let activeGroupFilter = "all";
 
-// 접힌 섹션 키(그룹 id 또는 "unassigned"). 재렌더에도 접힘 유지, popover 닫힐 때 초기화.
+// 접힌 섹션 키(그룹 id 또는 "unassigned"). "전체" view에서만 섹션 헤더가 있어 접기 유효.
+// 재렌더에도 접힘 유지, popover 닫힐 때 초기화.
 const collapsedSectionKeys = new Set<string>();
 
 // 다중 선택 상태 — 체크박스로 선택한 계정 번호 집합. 두 view 공유 안 함 (view 전환 시 초기화).
@@ -669,12 +670,13 @@ async function renderListView(wrap: HTMLElement) {
   });
 
   const tbody = table.querySelector("tbody")!;
-  // 그룹별 섹션으로 나눠 렌더. 그룹이 없으면 헤더 없이 평평한 목록(기존 동작, 회귀 없음).
+  // 그룹별 섹션으로 나눠 렌더. 섹션 헤더(그룹명/합계/접기 밴드)는 "전체" view + 그룹이 있을 때만.
+  // 특정 그룹 탭(또는 미지정)을 고르면 그 리스트만 나오므로 헤더 밴드가 불필요 → 생략.
   const sections = buildSections(sorted, groups);
-  const sectioned = !(activeGroupFilter === "all" && groups.length === 0);
+  const sectioned = activeGroupFilter === "all" && groups.length > 0;
   for (const section of sections) {
     const key = section.group ? section.group.id : "unassigned";
-    const collapsed = collapsedSectionKeys.has(key);
+    const collapsed = sectioned && collapsedSectionKeys.has(key);
     if (sectioned) {
       tbody.appendChild(buildSectionHeaderRow(section, wrap));
     }
@@ -723,9 +725,12 @@ function applyListSearchFilter(wrap: HTMLElement, query: string): void {
   const q = query.trim().toLowerCase();
   const rows = wrap.querySelectorAll<HTMLTableRowElement>("tr.dvads-multi-tr");
   rows.forEach((row) => {
-    // 접힌 섹션의 행은 검색과 무관하게 숨김 유지.
+    // 섹션 헤더가 있고 접혀 있으면 검색과 무관하게 숨김 유지. 특정 그룹 필터(헤더 없음)에선 항상 표시.
     const key = row.dataset.sectionKey;
-    const collapsed = key ? collapsedSectionKeys.has(key) : false;
+    const header = key
+      ? wrap.querySelector<HTMLElement>(`tr.dvads-multi-group-tr[data-section-key="${key}"]`)
+      : null;
+    const collapsed = header?.classList.contains("is-collapsed") ?? false;
     const hay = row.dataset.searchHaystack || "";
     const match = !q || hay.includes(q);
     row.style.display = match && !collapsed ? "" : "none";
@@ -862,19 +867,36 @@ function buildSections(sorted: SortedRow[], groups: MultiAccountGroup[]): Sectio
   return sections;
 }
 
-// 섹션의 광고비/매출 합계 — 어제 데이터 스냅샷이 있는 계정만 합산. 하나도 없으면 null("-" 표시).
-function computeSectionSubtotal(rows: SortedRow[]): { cost: number; revenue: number } | null {
+// 섹션의 비즈머니/광고비/매출/ROAS 합계 — 스냅샷이 있는 계정만 합산.
+// 비즈머니는 어제 데이터와 별개(스냅샷 있으면 언제나) → hasBiz/hasYesterday를 따로 추적.
+// ROAS는 합산 매출÷합산 광고비(가중 평균). 광고비 0이면 NaN → formatPercent가 "-" 처리.
+// 어제·비즈머니 둘 다 없으면 null("-" 표시).
+function computeSectionSubtotal(rows: SortedRow[]): {
+  bizMoney: number | null;
+  cost: number;
+  revenue: number;
+  roas: number;
+  hasYesterday: boolean;
+} | null {
   let cost = 0;
   let revenue = 0;
-  let has = false;
+  let bizMoney = 0;
+  let hasYesterday = false;
+  let hasBiz = false;
   for (const { snap } of rows) {
     if (snap?.yesterday) {
       cost += snap.yesterday.cost;
       revenue += snap.yesterday.revenue;
-      has = true;
+      hasYesterday = true;
+    }
+    if (snap?.bizMoney != null) {
+      bizMoney += snap.bizMoney;
+      hasBiz = true;
     }
   }
-  return has ? { cost, revenue } : null;
+  if (!hasYesterday && !hasBiz) return null;
+  const roas = cost > 0 ? (revenue / cost) * 100 : NaN;
+  return { bizMoney: hasBiz ? bizMoney : null, cost, revenue, roas, hasYesterday };
 }
 
 // 그룹 탭 바 — [‹] [캡슐: 전체 | 그룹... | 미지정] [›] [+ 그룹].
@@ -972,21 +994,24 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
   return row;
 }
 
-// 섹션 헤더 행 — 접기 토글 + 그룹명/계정수 + 광고비/매출 합계(컬럼 정렬) + 그룹 ⋮ 메뉴(미지정 제외).
+// 섹션 헤더 행 — 접기 토글 + 그룹명/계정수 + 비즈머니/광고비/매출/ROAS 합계(컬럼 정렬) + 그룹 ⋮ 메뉴(미지정 제외).
+// "전체" view에서만 렌더 — 특정 그룹 필터 시엔 밴드 없이 그 그룹 리스트만 표시.
 function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRowElement {
   const g = section.group;
   const key = g ? g.id : "unassigned";
   const collapsed = collapsedSectionKeys.has(key);
   const sub = computeSectionSubtotal(section.rows);
-  const costStr = sub ? formatWon(sub.cost) : "-";
-  const revStr = sub ? formatWon(sub.revenue) : "-";
+  const bizStr = sub && sub.bizMoney != null ? formatWon(sub.bizMoney) : "-";
+  const costStr = sub && sub.hasYesterday ? formatWon(sub.cost) : "-";
+  const revStr = sub && sub.hasYesterday ? formatWon(sub.revenue) : "-";
+  const roasStr = sub && sub.hasYesterday ? formatPercent(sub.roas) : "-";
 
   const tr = document.createElement("tr");
   tr.className = "dvads-multi-group-tr" + (collapsed ? " is-collapsed" : "");
   tr.dataset.groupHeader = "1";
   tr.dataset.sectionKey = key;
   // 데이터 행과 동일하게 열마다 td 하나씩 + 같은 data-k → 작게 보기 모드의 열 숨김(td[data-k])이
-  // 헤더에도 똑같이 적용되어 합계 칸이 총비용/매출 열에 정확히 정렬된다(colspan 방식은 숨김과 어긋남).
+  // 헤더에도 똑같이 적용되어 합계 칸이 각 열에 정확히 정렬된다(colspan 방식은 숨김과 어긋남).
   tr.innerHTML = `
     <td class="dvads-multi-td-cb dvads-multi-group-cb">
       <button class="dvads-multi-group-toggle" type="button" aria-label="접기/펼치기">
@@ -999,7 +1024,7 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
         <span class="dvads-multi-group-count">${section.rows.length}개</span>
       </div>
     </td>
-    <td class="dvads-multi-td-num" data-k="bizMoney"></td>
+    <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="bizMoney">${bizStr}</td>
     <td class="dvads-multi-td-num" data-k="impressions"></td>
     <td class="dvads-multi-td-num" data-k="clicks"></td>
     <td class="dvads-multi-td-num" data-k="ctr"></td>
@@ -1007,7 +1032,7 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
     <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="cost">${costStr}</td>
     <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="revenue">${revStr}</td>
     <td class="dvads-multi-td-num" data-k="conversions"></td>
-    <td class="dvads-multi-td-num" data-k="roas"></td>
+    <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="roas">${roasStr}</td>
     <td class="dvads-multi-td-act">${
       g ? '<button class="dvads-multi-action-trigger dvads-multi-group-action" type="button" aria-label="그룹 메뉴">⋯</button>' : ""
     }</td>
@@ -2264,13 +2289,37 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
     },
     { label: "새로고침", onClick: () => void refreshAllStale(entries) },
     {
-      label: hasSelection ? `대행권 점검 (${selectedAccountNos.size})` : "대행권 점검",
-      onClick: () => void runAgencyCheck(),
-    },
-    {
       label: "그룹 지정",
       disabled: !hasSelection,
       onClick: () => void openGroupAssignDialog(Array.from(selectedAccountNos)),
+    },
+    { separator: true },
+    {
+      label: "리포트 생성",
+      disabled: !hasSelection,
+      keepOpen: true,
+      // 클릭 시점에 meta를 새로 읽어 바뀐 별칭(displayName)을 리포트에 반영. 그룹 헤더 메뉴와
+      // openReportForEntries를 공유(anchor 위치 동기 캡처 포함).
+      onClick: (anchor) =>
+        void openReportForEntries(
+          anchor,
+          entries.filter((e) => selectedAccountNos.has(e.adAccountNo)),
+        ),
+    },
+    {
+      label: hasSelection ? `대행권 점검 (${selectedAccountNos.size})` : "대행권 점검",
+      onClick: () => void runAgencyCheck(),
+    },
+    { separator: true },
+    {
+      label: "비즈머니 알림",
+      disabled: !hasSelection,
+      onClick: () => openBizMoneyDialogFor(Array.from(selectedAccountNos)),
+    },
+    {
+      label: "브랜드검색 알림",
+      disabled: !hasSelection,
+      onClick: () => openBrandSearchDialogFor(Array.from(selectedAccountNos)),
     },
     { separator: true },
     // 광고 유형 필터 — 둘 중 하나만/둘 다 선택. 선택에 따라 어제 데이터가 SA/GFA/합산으로 바뀐다.
@@ -2285,29 +2334,6 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       checked: platformFilter.da,
       keepOpen: true,
       onClick: () => togglePlatform("da", entries),
-    },
-    { separator: true },
-    {
-      label: "비즈머니 알림",
-      disabled: !hasSelection,
-      onClick: () => openBizMoneyDialogFor(Array.from(selectedAccountNos)),
-    },
-    {
-      label: "브랜드검색 알림",
-      disabled: !hasSelection,
-      onClick: () => openBrandSearchDialogFor(Array.from(selectedAccountNos)),
-    },
-    {
-      label: "리포트 생성",
-      disabled: !hasSelection,
-      keepOpen: true,
-      // 클릭 시점에 meta를 새로 읽어 바뀐 별칭(displayName)을 리포트에 반영. 그룹 헤더 메뉴와
-      // openReportForEntries를 공유(anchor 위치 동기 캡처 포함).
-      onClick: (anchor) =>
-        void openReportForEntries(
-          anchor,
-          entries.filter((e) => selectedAccountNos.has(e.adAccountNo)),
-        ),
     },
     { separator: true },
     {
@@ -2553,20 +2579,14 @@ function renderTableRow(
       items: [
         { label: "바로가기", onClick: goTo },
         {
+          label: "이름 수정",
+          onClick: () => openRenameDialog(entry, () => replaceListRow(tr, entry)),
+        },
+        {
           label: "그룹 지정",
           onClick: () => void openGroupAssignDialog([entry.adAccountNo]),
         },
-        {
-          label: "세팅안 생성",
-          onClick: async () => {
-            const { openSetupFlow } = await import("./setup");
-            void openSetupFlow({
-              adAccountNo: entry.adAccountNo,
-              masterCustomerId: entry.masterCustomerId,
-              name: meta?.displayName?.trim() || entry.name,
-            });
-          },
-        },
+        { separator: true },
         {
           label: "리포트 생성",
           keepOpen: true,
@@ -2590,9 +2610,21 @@ function renderTableRow(
           },
         },
         {
-          label: "이름 수정",
-          onClick: () => openRenameDialog(entry, () => replaceListRow(tr, entry)),
+          label: "세팅안 생성",
+          onClick: async () => {
+            const { openSetupFlow } = await import("./setup");
+            void openSetupFlow({
+              adAccountNo: entry.adAccountNo,
+              masterCustomerId: entry.masterCustomerId,
+              name: meta?.displayName?.trim() || entry.name,
+            });
+          },
         },
+        {
+          label: "대행권 점검",
+          onClick: () => void runAgencyCheck([entry.adAccountNo]),
+        },
+        { separator: true },
         {
           label: "비즈머니 알림",
           onClick: () => openBizMoneyDialogFor([entry.adAccountNo]),
@@ -2601,6 +2633,7 @@ function renderTableRow(
           label: "브랜드검색 알림",
           onClick: () => openBrandSearchDialogFor([entry.adAccountNo]),
         },
+        { separator: true },
         {
           label: "삭제",
           danger: true,

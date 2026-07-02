@@ -1687,6 +1687,7 @@ td.dvads-period-delta-down {
   appearance: none;
   background: transparent;
   border: 0;
+  flex-shrink: 0;
   text-align: left;
   padding: 9px 12px;
   font-family: inherit;
@@ -1730,7 +1731,8 @@ td.dvads-period-delta-down {
 /* 메뉴 항목 구분선 — 그룹 사이 가는 hr. dropdown panel 안에서 음수 좌우 마진으로 패널 양끝까지. */
 .dvads-dropdown-separator {
   height: 1px;
-  background: #F3F4F6;
+  flex-shrink: 0;
+  background: #ECEEF0;
   margin: 4px -4px;
   pointer-events: none;
 }
@@ -1930,8 +1932,12 @@ td.dvads-period-delta-down {
   flex-direction: column;
   overflow: hidden;
   /* 처음 켜질 때 진입 모션. clip-path는 box-shadow를 같이 잘라서 사용 안 함 — translateY +
-     scale + opacity 조합으로 sweep-down 느낌 유지. 위치는 top/left로 잡으므로 transform 자유. */
-  animation: dvads-multi-popover-enter 280ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+     scale + opacity 조합으로 sweep-down 느낌 유지. 위치는 top/left로 잡으므로 transform 자유.
+     fill은 반드시 backwards — both/forwards는 종료 후에도 identity transform(matrix(1,...))이
+     computed style에 영구 잔류하는데, transform 낀 조상 아래의 position:sticky(thead)는
+     컴포지터 sticky 보정이 풀려 메인 스레드에서 1프레임 늦게 따라붙는다 → 스크롤 중 표 헤더
+     떨림. (2026-07-02 CDP 프레임 캡처로 실측 확인: fill both=떨림, transform 제거=완전 고정.) */
+  animation: dvads-multi-popover-enter 280ms cubic-bezier(0.1, 0.8, 0.2, 1) backwards;
   transform-origin: top center;
   /* view 전환 시 width 슬라이드. animation 키프레임이 끝난 뒤에만 발화하지만 진입 모션은
      opacity/transform이라 transition: width와 충돌 없음. */
@@ -2604,7 +2610,8 @@ td.dvads-period-delta-down {
   border-bottom: 0;
 }
 /* sticky를 <thead>에 직접 적용 — border-collapse: separate 환경에서 가장 신뢰성 높음.
-   transform/will-change는 GPU 레이어 만들 때 sticky containing block을 망가뜨릴 수 있어 제거. */
+   스크롤 중 헤더 떨림(jitter)의 진짜 원인은 여기가 아니라 조상 popover의 잔류 transform이었다
+   — .dvads-multi-popover 진입 애니메이션 fill 주석 참조. thead 자체엔 특별 처리 불필요. */
 .dvads-multi-table-wrap thead {
   position: sticky;
   top: 0;
@@ -2612,7 +2619,10 @@ td.dvads-period-delta-down {
 }
 .dvads-multi-table-wrap thead th {
   background: #fafafa;
-  border-bottom: 1px solid #ECEEF0;
+  /* 구분선은 border 대신 inset box-shadow — 셀 배경과 한 레이어로 그려져 sticky 환경에서
+     안전(실측 검증됨). 베이스 .dvads-bid-table th의 border-bottom은 명시 무효화. */
+  border-bottom: 0;
+  box-shadow: inset 0 -1px 0 #ECEEF0;
 }
 /* 헤더 정렬은 각 컬럼의 데이터 셀과 동일하게 — text-align 규칙은 위쪽 dual 셀렉터(th+td)가
    이미 처리. 헤더만 center로 통일하면 데이터(좌측)와 어긋나서 컬럼 라벨이 데이터 위에 안 놓임. */
@@ -2673,8 +2683,8 @@ td.dvads-period-delta-down {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 0 0;
-  margin-bottom: 8px;
+  padding: 6px 0 0;
+  margin-bottom: 6px;
 }
 .dvads-multi-groupchips {
   display: inline-flex;
@@ -2836,10 +2846,10 @@ td.dvads-period-delta-down {
   color: #9CA3AF;
   flex-shrink: 0;
 }
-/* 합계 셀 — 데이터 셀과 같은 우측 정렬(dvads-multi-td-num 상속) + 약간 진한 텍스트.
+/* 합계 셀 — 데이터 셀과 같은 우측 정렬(dvads-multi-td-num 상속). 볼드 없이 일반 굵기.
    specificity: td.dvads-multi-group-subtotal (0,2,1) > .dvads-bid-table td (0,1,1). */
 .dvads-multi-table td.dvads-multi-group-subtotal {
-  font-weight: 600;
+  font-weight: 400;
   color: #374151;
   font-variant-numeric: tabular-nums;
 }
@@ -3068,7 +3078,9 @@ td.dvads-period-delta-down {
   display: flex;
   flex-direction: column;
   box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
-  animation: dvads-rename-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+  /* fill backwards — 카드 안에 sticky 헤더 표(.dvads-agency-table)가 있어 fill both의
+     잔류 transform이 스크롤 중 헤더 떨림 유발 (multi-popover와 동일 원인). */
+  animation: dvads-rename-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) backwards;
 }
 .dvads-agency-head {
   display: flex;
