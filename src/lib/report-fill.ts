@@ -123,15 +123,22 @@ function summaryBlock(
 
 // ── 종합 시트 (sheet2) ──
 // section1 총계: 18 금주 / 19 전주 / 20 증감 / 21 증감률
-// section2 매체: 25 검색광고 / 26 디스플레이 (27 합계=수식). 디스플레이 미진행 시 26행 숨김.
+// section2 매체: 25 검색광고 / 26 디스플레이 / 27 합계(양식 수식을 집계 숫자로 덮어씀). 디스플레이 미진행 시 26행 숨김.
 // section3 캠페인유형은 동적(report-variable.renderSummaryTypes)이라 여기서 안 건드림.
 const SUMMARY_PATH = "xl/worksheets/sheet2.xml";
 
 function fillSummary(files: ZipFiles, model: ReportModel): void {
+  // 합계행(27)은 양식이 M27=M25+M26 / N27=N25+N26 / H27=M27+N27 수식이라, 디스플레이행의
+  // M26/N26='-'(텍스트)와 더해지면 #VALUE!가 되고 그게 구매완료(H)/전환율/전환당비용까지 번진다.
+  // 다른 합계행처럼 집계 숫자를 직접 넣어 수식 의존을 없앤다(setNumber가 <f>를 제거).
+  const mediaTotal = model.hasDisplay
+    ? addMetrics(model.searchCurrent, model.displayCurrent)
+    : model.searchCurrent;
   applyCells(files, SUMMARY_PATH, {
     ...summaryBlock(18, 19, 20, 21, model.totalCurrent, model.totalPrev),
     ...rowCells(25, display(model.searchCurrent)),
     ...rowCells(26, display(model.displayCurrent)),
+    ...rowCells(27, display(mediaTotal)),
   });
   if (!model.hasDisplay) {
     writeText(files, SUMMARY_PATH, setRowHidden(readText(files, SUMMARY_PATH), 26));
