@@ -2628,6 +2628,14 @@ td.dvads-period-delta-down {
 /* 헤더 테이블은 fixed layout — syncHeadCols(JS)가 body 셀 폭을 잰 값을 th에 그대로 강제. */
 .dvads-multi-table-headwrap .dvads-multi-table {
   table-layout: fixed;
+  /* 베이스 .dvads-bid-table의 표 외곽 보더(1px #ECEEF0) 중 하단 — 분리 구조에선 헤더 바로
+     밑에 와서 th 구분선(box-shadow)과 2겹으로 보임. 하단만 제거(상/좌/우는 외곽 유지). */
+  border-bottom: 0;
+}
+/* 본문 테이블의 외곽 상단 보더 — 분리 구조에선 맨 위로 스크롤 시 헤더 구분선 바로 밑에 겹침.
+   headwrap 형제로 스코프해 list view만 적용(검색 view 테이블은 headwrap이 없어 무영향). */
+.dvads-multi-table-headwrap + .dvads-multi-table-wrap .dvads-multi-table {
+  border-top: 0;
 }
 .dvads-multi-table-headwrap thead th,
 .dvads-multi-table-wrap thead th {

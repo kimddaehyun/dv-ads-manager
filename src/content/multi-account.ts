@@ -724,6 +724,8 @@ async function renderListView(wrap: HTMLElement) {
   // 분리형 헤더 컬럼 폭 동기화 — body 첫 가시 행의 셀 폭(border-box)을 th에 그대로 적용.
   // ResizeObserver가 attach 직후 1회 + 테이블 폭 변화(크게 보기·스크롤바 증감) 시 재동기화.
   // 데이터 도착(paintRow)·검색 필터·그룹 접기는 scheduleHeadColSync 훅이 커버.
+  // 폭 측정은 getComputedStyle — getBoundingClientRect는 popover 진입 애니메이션(scale 0.97→1)
+  // 도중 축소된 값을 줘서 컬럼이 ~2% 좁게 어긋난다(실측). computed width는 transform 무관 레이아웃 값.
   const syncHeadCols = () => {
     if (!headTable.isConnected || !table.isConnected) return;
     let src: HTMLTableRowElement | null = null;
@@ -733,10 +735,10 @@ async function renderListView(wrap: HTMLElement) {
     if (!src) return;
     const ths = headTable.querySelectorAll<HTMLTableCellElement>("thead th");
     if (ths.length !== src.children.length) return;
-    headTable.style.width = `${table.getBoundingClientRect().width}px`;
+    headTable.style.width = getComputedStyle(table).width;
     for (let i = 0; i < ths.length; i++) {
-      const w = (src.children[i] as HTMLElement).getBoundingClientRect().width;
-      if (w > 0) ths[i].style.width = `${w}px`;
+      const cell = src.children[i] as HTMLElement;
+      if (cell.offsetWidth > 0) ths[i].style.width = getComputedStyle(cell).width;
     }
   };
   headColSync = syncHeadCols;
