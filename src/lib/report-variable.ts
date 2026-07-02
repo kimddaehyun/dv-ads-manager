@@ -437,8 +437,10 @@ export function renderDetailPlacement(
     DETAIL_METRIC_COLS.forEach((c, i) => (wmax[c] = Math.max(wmax[c], visualLen(metricStr(i, vals[i])))));
   };
 
+  // 지면별은 양식상 2번 섹션이지만 여기서 맨 아래(성별·연령대 3번 섹션 뒤)로 옮겨지므로
+  // 최종 순서에선 4번 섹션 — 다른 섹션 제목과 번호 형식을 맞춘다("N. XXX 성과").
   const titleRow = r++;
-  rows.push(buildRow(titleRow, ["B"], { B: sTitle.B ?? "" }, { B: "지면별 성과" }));
+  rows.push(buildRow(titleRow, ["B"], { B: sTitle.B ?? "" }, { B: "4. 지면별 성과" }));
   newMerges.push(`B${titleRow}:N${titleRow}`);
 
   const headerVals: Record<string, CellValue> = { B: "광고영역" };
