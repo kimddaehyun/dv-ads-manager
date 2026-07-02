@@ -3024,86 +3024,120 @@ td.dvads-period-delta-down {
   filter: brightness(0.95);
 }
 
-/* 그룹 지정 다이얼로그 — rename 카드 기반. 그룹 체크박스 목록 + 새 그룹 인라인 추가. */
-.dvads-groupassign-desc {
-  font-size: 12px;
-  color: #6B7280;
-  margin: 4px 0 12px;
+/* 그룹으로 이동 다이얼로그 — 폴더 이동 스타일(단일 선택). rename 카드 재사용. */
+.dvads-groupmove-card {
+  min-width: 440px;
+  padding: 18px 20px 16px;
 }
-.dvads-groupassign-list {
-  display: flex;
-  flex-direction: column;
-  max-height: 260px;
-  overflow-y: auto;
-  margin-bottom: 12px;
-}
-.dvads-groupassign-row {
+.dvads-groupmove-head {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 8px 4px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.dvads-groupmove-head .dvads-rename-title {
+  margin-bottom: 0;
+  font-size: 16px;
+}
+.dvads-groupmove-close {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  color: #9CA3AF;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-groupmove-close:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
+.dvads-groupmove-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 16px;
+  padding-right: 2px;
+}
+.dvads-groupmove-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
   border-radius: 8px;
   cursor: pointer;
+  color: #374151;
+  transition: background 100ms ease, color 100ms ease;
 }
-.dvads-groupassign-row:hover {
+.dvads-groupmove-row:hover {
   background: #F9FAFB;
 }
-.dvads-groupassign-row input {
-  width: 16px;
-  height: 16px;
-  accent-color: #E6783B;
-  cursor: pointer;
-  flex-shrink: 0;
+.dvads-groupmove-row.is-selected {
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
 }
-.dvads-groupassign-row-name {
-  font-size: 13px;
-  color: #171717;
+.dvads-groupmove-icon-svg {
+  flex-shrink: 0;
+  color: #9CA3AF;
+}
+.dvads-groupmove-row.is-selected .dvads-groupmove-icon-svg {
+  color: #E6783B;
+}
+.dvads-groupmove-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dvads-groupassign-empty {
-  font-size: 12px;
-  color: #9CA3AF;
-  padding: 10px 4px;
+.dvads-groupmove-row.is-selected .dvads-groupmove-name {
+  font-weight: 600;
 }
-.dvads-groupassign-new {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
+.dvads-groupmove-newbtn {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
 }
-.dvads-groupassign-new-input {
+.dvads-groupmove-newbtn:hover {
+  background: rgba(230, 120, 59, 0.10);
+  color: #E6783B;
+}
+.dvads-groupmove-newinput {
   flex: 1;
   min-width: 0;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid #E6783B;
+  border-radius: 7px;
   font-family: inherit;
   font-size: 13px;
   color: #171717;
   outline: none;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.15);
 }
-.dvads-groupassign-new-input:focus {
-  border-color: #E6783B;
-}
-.dvads-groupassign-new-btn {
-  height: 34px;
-  padding: 0 14px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  background: #ffffff;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: #6B7280;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 120ms ease, color 120ms ease;
-}
-.dvads-groupassign-new-btn:hover {
-  background: #F3F4F6;
-  color: #171717;
+.dvads-rename-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+  filter: none;
 }
 
 /* 대행권 점검 모달 — rename/confirm 패턴(backdrop + 중앙 카드) 재사용 */

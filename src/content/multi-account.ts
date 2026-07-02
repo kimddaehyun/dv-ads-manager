@@ -1074,26 +1074,7 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
     trash.classList.remove("is-hot");
     const target = groups.find((g) => g.id === id);
     if (!target) return;
-    void (async () => {
-      await deleteGroup(id);
-      if (activeGroupFilter === id) activeGroupFilter = "all";
-      collapsedSectionKeys.delete(id);
-      if (popoverEl) await renderListView(popoverEl);
-      showToast({
-        message: `'${target.name}' 그룹을 삭제했어요`,
-        variant: "success",
-        keyword: target.name,
-        undo: {
-          label: "되돌리기",
-          onClick: () => {
-            void (async () => {
-              await restoreGroup(target);
-              if (popoverEl) await renderListView(popoverEl);
-            })();
-          },
-        },
-      });
-    })();
+    void deleteGroupAndAccounts(target);
   });
 
   const add = document.createElement("button");
@@ -1244,6 +1225,38 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
   return tr;
 }
 
+// 그룹 삭제 = 그룹 + 그 안의 계정까지 함께 제거("내 계정" 명단·스냅샷 정리). 되돌리기로 그룹과
+// 계정을 복원한다(스냅샷은 복원 대상 아님 — 새로고침 시 다시 불러옴).
+async function deleteGroupAndAccounts(group: MultiAccountGroup): Promise<void> {
+  const nos = [...group.accountNos];
+  await deleteGroup(group.id);
+  if (nos.length > 0) {
+    await removeAccountsFromList(nos);
+    await clearSnapshots(nos);
+  }
+  if (activeGroupFilter === group.id) activeGroupFilter = "all";
+  collapsedSectionKeys.delete(group.id);
+  if (popoverEl) await renderListView(popoverEl);
+  showToast({
+    message:
+      nos.length > 0
+        ? `'${group.name}' 그룹과 계정 ${nos.length}개를 삭제했어요`
+        : `'${group.name}' 그룹을 삭제했어요`,
+    variant: "success",
+    keyword: group.name,
+    undo: {
+      label: "되돌리기",
+      onClick: () => {
+        void (async () => {
+          await restoreGroup(group);
+          if (nos.length > 0) await addAccountsToList(nos);
+          if (popoverEl) await renderListView(popoverEl);
+        })();
+      },
+    },
+  });
+}
+
 function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMenuItem[] {
   const entries = rows.map((r) => r.entry);
   const nos = entries.map((e) => e.adAccountNo);
@@ -1275,13 +1288,8 @@ function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMe
       label: "그룹 삭제",
       danger: true,
       onClick: () => {
-        // 그룹만 삭제 — 계정 자체는 "내 계정"에 남고 소속만 해제.
-        void (async () => {
-          await deleteGroup(g.id);
-          if (activeGroupFilter === g.id) activeGroupFilter = "all";
-          collapsedSectionKeys.delete(g.id);
-          if (popoverEl) await renderListView(popoverEl);
-        })();
+        // 그룹과 그 안의 계정까지 함께 삭제(되돌리기 제공).
+        void deleteGroupAndAccounts(g);
       },
     },
   ];
@@ -1365,61 +1373,109 @@ function openNameDialog(opts: {
   document.addEventListener("keydown", onKey, true);
 }
 
-// 그룹 지정 다이얼로그 — 계정(들)을 어떤 그룹에 넣을지 체크박스로 편집. 여러 계정 일괄 지정 시
-// 일부만 포함된 그룹은 indeterminate로 표시하고, 사용자가 건드리지 않으면 그대로 둔다.
+// 그룹으로 이동 다이얼로그 — 폴더 이동 스타일(단일 선택). 계정(들)을 그룹 하나로 이동하거나
+// "그룹 없음"으로 미지정 처리. "이동" 시 대상 계정을 전 그룹에서 빼고 고른 그룹 하나에만 넣는다
+// (건드리지 않은 다른 계정의 소속은 그대로). 참고: 여러 그룹에 걸친 계정은 이동 시 하나로 정리됨.
+const FOLDER_ICON =
+  '<svg class="dvads-groupmove-icon-svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+const FOLDER_NONE_ICON =
+  '<svg class="dvads-groupmove-icon-svg" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h6a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><line x1="9" y1="13" x2="15" y2="13"/></svg>';
+
 async function openGroupAssignDialog(nos: number[]): Promise<void> {
   if (nos.length === 0) return;
   closeRenameDialog();
   const groups = await loadGroups();
 
   const backdrop = document.createElement("div");
-  backdrop.className = "dvads dvads-rename-backdrop dvads-groupassign-backdrop";
+  backdrop.className = "dvads dvads-rename-backdrop";
   const card = document.createElement("div");
-  card.className = "dvads-rename-card dvads-groupassign-card";
+  card.className = "dvads-rename-card dvads-groupmove-card";
   card.innerHTML = `
-    <div class="dvads-rename-title">그룹 지정</div>
-    <div class="dvads-groupassign-desc">${nos.length === 1 ? "이 계정" : `선택한 ${nos.length}개 계정`}이 속할 그룹을 선택하세요.</div>
-    <div class="dvads-groupassign-list"></div>
-    <div class="dvads-groupassign-new">
-      <input class="dvads-groupassign-new-input" type="text" maxlength="24" placeholder="새 그룹 이름" />
-      <button class="dvads-groupassign-new-btn" type="button">추가</button>
+    <div class="dvads-groupmove-head">
+      <div class="dvads-rename-title">그룹으로 이동</div>
+      <button class="dvads-groupmove-close" type="button" aria-label="닫기">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+      </button>
     </div>
+    <div class="dvads-groupmove-list"></div>
     <div class="dvads-rename-actions">
       <button class="dvads-rename-cancel" type="button">취소</button>
-      <button class="dvads-rename-save" type="button">저장</button>
+      <button class="dvads-rename-save" type="button" disabled>이동</button>
     </div>
   `;
   backdrop.appendChild(card);
   document.body.appendChild(backdrop);
 
-  const listEl = card.querySelector<HTMLDivElement>(".dvads-groupassign-list")!;
-  const rowCheckboxes: { id: string; el: HTMLInputElement }[] = [];
+  const listEl = card.querySelector<HTMLDivElement>(".dvads-groupmove-list")!;
+  const saveBtn = card.querySelector<HTMLButtonElement>(".dvads-rename-save")!;
 
-  const memberCount = (g: MultiAccountGroup) => nos.filter((n) => g.accountNos.includes(n)).length;
+  // undefined = 아무것도 안 고름(이동 비활성), null = 그룹 없음, string = 그룹 id
+  let selectedGid: string | null | undefined = undefined;
 
-  const addGroupRow = (g: MultiAccountGroup, forceChecked = false) => {
-    const cnt = forceChecked ? nos.length : memberCount(g);
-    const row = document.createElement("label");
-    row.className = "dvads-groupassign-row";
-    row.innerHTML = `
-      <input type="checkbox" />
-      <span class="dvads-groupassign-row-name"></span>
-    `;
-    const el = row.querySelector<HTMLInputElement>("input")!;
-    el.checked = cnt === nos.length && cnt > 0;
-    el.indeterminate = cnt > 0 && cnt < nos.length;
-    row.querySelector<HTMLSpanElement>(".dvads-groupassign-row-name")!.textContent = g.name;
-    listEl.appendChild(row);
-    rowCheckboxes.push({ id: g.id, el });
+  const selectGid = (gid: string | null) => {
+    selectedGid = gid;
+    const key = gid ?? "__none__";
+    listEl.querySelectorAll<HTMLElement>(".dvads-groupmove-row").forEach((el) => {
+      el.classList.toggle("is-selected", el.dataset.gid === key);
+    });
+    saveBtn.disabled = false;
   };
 
-  if (groups.length === 0) {
-    const empty = document.createElement("div");
-    empty.className = "dvads-groupassign-empty";
-    empty.textContent = "아직 그룹이 없어요. 아래에서 새 그룹을 만들어 지정하세요.";
-    listEl.appendChild(empty);
-  } else {
-    for (const g of groups) addGroupRow(g);
+  const addGroupRow = (g: MultiAccountGroup) => {
+    const row = document.createElement("div");
+    row.className = "dvads-groupmove-row";
+    row.dataset.gid = g.id;
+    row.innerHTML = `${FOLDER_ICON}<span class="dvads-groupmove-name"></span>`;
+    row.querySelector<HTMLSpanElement>(".dvads-groupmove-name")!.textContent = g.name;
+    row.addEventListener("click", () => selectGid(g.id));
+    listEl.appendChild(row);
+  };
+
+  // "그룹 없음" 행 (+ 새 그룹 버튼 동거) — 맨 위 고정.
+  const noneRow = document.createElement("div");
+  noneRow.className = "dvads-groupmove-row dvads-groupmove-none";
+  noneRow.dataset.gid = "__none__";
+  noneRow.innerHTML = `${FOLDER_NONE_ICON}<span class="dvads-groupmove-name">그룹 없음</span><button class="dvads-groupmove-newbtn" type="button">+ 그룹</button>`;
+  noneRow.addEventListener("click", () => selectGid(null));
+  listEl.appendChild(noneRow);
+
+  for (const g of groups) addGroupRow(g);
+
+  // "+ 새 그룹" — 그룹 없음 행 바로 아래에 입력 행을 띄우고, Enter로 생성+선택.
+  const openNewGroupInput = () => {
+    if (listEl.querySelector(".dvads-groupmove-newrow")) return;
+    const editRow = document.createElement("div");
+    editRow.className = "dvads-groupmove-row dvads-groupmove-newrow";
+    editRow.innerHTML = `${FOLDER_ICON}<input class="dvads-groupmove-newinput" type="text" maxlength="24" placeholder="새 그룹 이름" />`;
+    noneRow.after(editRow);
+    const inp = editRow.querySelector<HTMLInputElement>("input")!;
+    const commit = async () => {
+      const name = inp.value.trim().slice(0, 24);
+      editRow.remove();
+      if (!name) return;
+      const list = await createGroup(name);
+      const created = list[list.length - 1];
+      if (created) { addGroupRow(created); selectGid(created.id); }
+    };
+    inp.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void commit(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); editRow.remove(); }
+    });
+    inp.addEventListener("blur", () => void commit());
+    inp.focus();
+  };
+  noneRow.querySelector<HTMLButtonElement>(".dvads-groupmove-newbtn")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    openNewGroupInput();
+  });
+
+  // 초기 선택 — 대상 계정들의 현재 소속이 명확히 하나로 같을 때만 미리 선택(모호하면 미선택).
+  const membershipKey = (n: number) => groups.filter((g) => g.accountNos.includes(n)).map((g) => g.id).sort().join(",");
+  const keys = nos.map(membershipKey);
+  if (keys.every((k) => k === keys[0])) {
+    const ids = keys[0] ? keys[0].split(",") : [];
+    if (ids.length === 0) selectGid(null);
+    else if (ids.length === 1) selectGid(ids[0]);
   }
 
   const cleanup = () => {
@@ -1427,36 +1483,15 @@ async function openGroupAssignDialog(nos: number[]): Promise<void> {
     document.removeEventListener("keydown", onKey, true);
   };
 
-  const newInput = card.querySelector<HTMLInputElement>(".dvads-groupassign-new-input")!;
-  const addNewGroup = async () => {
-    const name = newInput.value.trim().slice(0, 24);
-    if (!name) return;
-    const list = await createGroup(name);
-    const created = list[list.length - 1];
-    newInput.value = "";
-    const emptyEl = listEl.querySelector(".dvads-groupassign-empty");
-    emptyEl?.remove();
-    if (created) addGroupRow(created, true); // 새 그룹은 체크 상태로 — 저장 시 이 계정들 배정.
-  };
-  card.querySelector<HTMLButtonElement>(".dvads-groupassign-new-btn")?.addEventListener("click", () => void addNewGroup());
-  newInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void addNewGroup(); }
-  });
-
   const save = async () => {
+    if (selectedGid === undefined) return;
     // 저장 시점에 최신 그룹 목록을 다시 읽어 병합(다이얼로그 여는 사이 다른 변경 대비).
     const fresh = await loadGroups();
-    const byId = new Map(fresh.map((g) => [g.id, g]));
     const removeSet = new Set(nos);
-    for (const { id, el } of rowCheckboxes) {
-      const target = byId.get(id);
-      if (!target) continue;
-      if (el.indeterminate) continue; // 건드리지 않은 혼합 상태 → 그대로.
-      if (el.checked) {
-        for (const n of nos) if (!target.accountNos.includes(n)) target.accountNos.push(n);
-      } else {
-        target.accountNos = target.accountNos.filter((n) => !removeSet.has(n));
-      }
+    for (const g of fresh) g.accountNos = g.accountNos.filter((n) => !removeSet.has(n)); // 전 그룹에서 제거
+    if (selectedGid !== null) {
+      const target = fresh.find((g) => g.id === selectedGid);
+      if (target) for (const n of nos) if (!target.accountNos.includes(n)) target.accountNos.push(n);
     }
     await saveGroups(fresh);
     cleanup();
@@ -1468,8 +1503,9 @@ async function openGroupAssignDialog(nos: number[]): Promise<void> {
   };
   wireBackdropDismiss(backdrop, cleanup);
   card.addEventListener("click", (e) => e.stopPropagation());
+  card.querySelector<HTMLButtonElement>(".dvads-groupmove-close")?.addEventListener("click", cleanup);
   card.querySelector<HTMLButtonElement>(".dvads-rename-cancel")?.addEventListener("click", cleanup);
-  card.querySelector<HTMLButtonElement>(".dvads-rename-save")?.addEventListener("click", () => void save());
+  saveBtn.addEventListener("click", () => void save());
   document.addEventListener("keydown", onKey, true);
 }
 

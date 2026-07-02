@@ -140,8 +140,25 @@ export async function clearAllUserMeta(): Promise<void> {
 }
 
 // ─── 계정 그룹 (팀원별 등) ───
-// "내 계정" 위에 얹는 이름 붙은 계정 묶음. 한 계정이 여러 그룹에 중복 소속 가능 →
+// "내 계정" 위에 얹는 이름 붙은 계정 묶음. 한 계정은 그룹 하나에만 소속(중복 금지) →
 // 그룹이 자기 멤버(accountNos)를 들고 있는 모델. 계정 메타와 분리 저장.
+
+// 한 계정은 그룹 하나에만 소속(중복 금지). order 앞선 그룹이 소유권을 갖고, 이후 그룹의
+// 중복 항목(및 한 그룹 내 중복)은 제거한다. 읽기/쓰기 양쪽에 적용해 어떤 경로로도 중복이 안 생기고
+// 과거에 여러 그룹에 걸쳐 있던 계정도 자동 정리된다.
+function dedupeMembership(list: MultiAccountGroup[]): MultiAccountGroup[] {
+  const seen = new Set<number>();
+  for (const g of [...list].sort((a, b) => a.order - b.order)) {
+    const uniq: number[] = [];
+    for (const n of g.accountNos) {
+      if (seen.has(n)) continue;
+      seen.add(n);
+      uniq.push(n);
+    }
+    g.accountNos = uniq;
+  }
+  return list;
+}
 
 export async function loadGroups(): Promise<MultiAccountGroup[]> {
   const r = await chrome.storage.local.get(GROUPS_KEY);
@@ -152,11 +169,11 @@ export async function loadGroups(): Promise<MultiAccountGroup[]> {
     (g): g is MultiAccountGroup =>
       !!g && typeof g === "object" && typeof g.id === "string" && Array.isArray(g.accountNos),
   );
-  return list.sort((a, b) => a.order - b.order);
+  return dedupeMembership(list.sort((a, b) => a.order - b.order));
 }
 
 export async function saveGroups(list: MultiAccountGroup[]): Promise<void> {
-  await chrome.storage.local.set({ [GROUPS_KEY]: list });
+  await chrome.storage.local.set({ [GROUPS_KEY]: dedupeMembership(list) });
 }
 
 export async function createGroup(name: string): Promise<MultiAccountGroup[]> {
