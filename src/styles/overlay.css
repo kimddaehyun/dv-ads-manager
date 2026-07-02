@@ -2609,18 +2609,31 @@ td.dvads-period-delta-down {
 .dvads-multi-table tbody tr:last-child td {
   border-bottom: 0;
 }
-/* sticky를 <thead>에 직접 적용 — border-collapse: separate 환경에서 가장 신뢰성 높음.
-   스크롤 중 헤더 떨림(jitter)의 진짜 원인은 여기가 아니라 조상 popover의 잔류 transform이었다
-   — .dvads-multi-popover 진입 애니메이션 fill 주석 참조. thead 자체엔 특별 처리 불필요. */
+/* [search view 전용] sticky thead — 내 계정(list view)은 헤더를 스크롤 영역 밖 별도 테이블
+   (.dvads-multi-table-headwrap)로 분리해 sticky를 안 쓴다. sticky는 스크롤 오프셋이 소수점일 때
+   (125% 배율·스무스 휠) 고정 위치 반올림이 프레임마다 달라져 헤더가 1px씩 움직이는 문제가
+   구조적으로 있다 (2026-07-02 실측). 새 표에 고정 헤더가 필요하면 분리형 패턴을 따를 것. */
 .dvads-multi-table-wrap thead {
   position: sticky;
   top: 0;
   z-index: 2;
 }
+/* 분리형 헤더 컨테이너 — list view. 스크롤하지 않는 형제 요소라 헤더가 물리적으로 고정.
+   scrollbar-gutter를 본문 스크롤 영역과 동일하게 예약해 좌우 폭 기준을 통일(컬럼 정렬). */
+.dvads-multi-table-headwrap {
+  flex-shrink: 0;
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+/* 헤더 테이블은 fixed layout — syncHeadCols(JS)가 body 셀 폭을 잰 값을 th에 그대로 강제. */
+.dvads-multi-table-headwrap .dvads-multi-table {
+  table-layout: fixed;
+}
+.dvads-multi-table-headwrap thead th,
 .dvads-multi-table-wrap thead th {
   background: #fafafa;
-  /* 구분선은 border 대신 inset box-shadow — 셀 배경과 한 레이어로 그려져 sticky 환경에서
-     안전(실측 검증됨). 베이스 .dvads-bid-table th의 border-bottom은 명시 무효화. */
+  /* 구분선은 border 대신 inset box-shadow — 셀 배경과 한 레이어로 그려짐.
+     베이스 .dvads-bid-table th의 border-bottom은 명시 무효화. */
   border-bottom: 0;
   box-shadow: inset 0 -1px 0 #ECEEF0;
 }
@@ -2732,6 +2745,40 @@ td.dvads-period-delta-down {
   background: #ffffff;
   color: #171717;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+/* 드래그 중인 그룹 탭 — 원본은 흐리게(drag image는 선명 유지, dragstart 다음 프레임에 적용). */
+.dvads-multi-chip.is-dragging {
+  opacity: 0.4;
+}
+/* drop 대상 그룹 탭 — 왼쪽에 주황 삽입선으로 "여기로 이동" 표시. */
+.dvads-multi-chip.is-drop-target {
+  box-shadow: inset 2px 0 0 #E6783B;
+}
+/* 휴지통 — 평소 숨김. 드래그 시작 시에만 나타나 탭 바 오른쪽에 표시. */
+.dvads-multi-grouptabs-trash {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px dashed #D1D5DB;
+  border-radius: 6px;
+  background: transparent;
+  color: #9CA3AF;
+  cursor: default;
+  transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
+}
+.dvads-multi-grouptabs.is-dragging .dvads-multi-grouptabs-trash {
+  display: inline-flex;
+}
+/* 휴지통 위로 그룹을 끌어왔을 때 — 빨강 강조(삭제 예고). */
+.dvads-multi-grouptabs-trash.is-hot {
+  border-style: solid;
+  border-color: #DC2626;
+  background: #FEF2F2;
+  color: #DC2626;
 }
 /* 좌우 스크롤 화살표 — 탭 캡슐 오른쪽에 작게. 넘칠 때만 노출(JS), 양끝에선 dim. */
 .dvads-multi-grouptabs-arrow {

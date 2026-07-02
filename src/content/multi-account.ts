@@ -40,6 +40,8 @@ import {
   createGroup,
   renameGroup,
   deleteGroup,
+  reorderGroups,
+  restoreGroup,
   removeAccountsFromAllGroups,
   type PlatformFilter,
 } from "@/lib/multi-account-storage";
@@ -63,6 +65,7 @@ import type {
 import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "./ui-dropdown";
 import { openInputDialog } from "./input-dialog";
 import { wireBackdropDismiss } from "./dialog-dismiss";
+import { showToast } from "./toast";
 // "./setup"·"./report"은 write-excel-file/fflate(무거운 의존성)을 끌어와 콘텐츠 초기 번들을
 // 부풀린다. 호출 직전 동적 import로 분리해 별도 청크로 빠지게 한다(첫 클릭 시 1회 로드).
 
@@ -429,6 +432,7 @@ export function closePopover() {
   activeGroupFilter = "all";
   collapsedSectionKeys.clear();
   popoverFullscreen = false;
+  headColSync = null;
   document.querySelector(".dvads-multi-backdrop")?.remove();
   selectedAccountNos.clear();
   // 브랜드검색 알림 툴팁 잔여 정리 — popover 떠 있을 때만 의미 있음.
@@ -558,6 +562,20 @@ const COLUMN_DEFS: { key: SortKey; label: string; numeric: boolean }[] = [
 // 매 호출이 token을 증가시키고, await 후 본인 token이 최신인지 체크 — 아니면 조용히 포기.
 let renderListViewToken = 0;
 
+// 분리형 헤더(list view)의 컬럼 폭 동기화 함수 — renderListView가 설정, popover 닫힐 때 해제.
+// paintRow/검색 필터/그룹 접기처럼 컬럼 폭이 바뀔 수 있는 지점들이 scheduleHeadColSync로 호출.
+// rAF 디바운스 — 연속 paintRow가 프레임당 1회만 측정하게.
+let headColSync: (() => void) | null = null;
+let headColSyncQueued = false;
+function scheduleHeadColSync(): void {
+  if (!headColSync || headColSyncQueued) return;
+  headColSyncQueued = true;
+  requestAnimationFrame(() => {
+    headColSyncQueued = false;
+    headColSync?.();
+  });
+}
+
 async function renderListView(wrap: HTMLElement) {
   const token = ++renderListViewToken;
   // ─── 1단계: 모든 데이터 비동기 로드 (DOM 손대지 않음) ───
@@ -630,11 +648,17 @@ async function renderListView(wrap: HTMLElement) {
   // 그룹 칩 바 — 헤더 아래. 전체/각 그룹/미지정 필터 + 새 그룹 생성.
   fragment.appendChild(buildGroupChips(groups, wrap));
 
-  const tableWrap = document.createElement("div");
-  tableWrap.className = "dvads-multi-table-wrap";
-  const table = document.createElement("table");
-  table.className = "dvads-bid-table dvads-multi-table" + (popoverFullscreen ? "" : " is-collapsed");
-  table.innerHTML = `
+  // 헤더는 스크롤 영역 밖 별도 테이블로 분리 — sticky 미사용. sticky는 스크롤 오프셋이
+  // 소수점(125% 배율·스무스 휠)일 때 고정 위치 반올림이 프레임마다 달라져 헤더가 1px씩
+  // 움직이는 걸 피할 수 없다(2026-07-02 실측). 분리된 헤더는 스크롤과 물리적으로 무관.
+  // 컬럼 정렬은 body 첫 가시 행의 셀 폭을 재서 헤더 th에 강제(syncHeadCols + ResizeObserver).
+  const headWrap = document.createElement("div");
+  headWrap.className = "dvads-multi-table-headwrap";
+  const tableClassName =
+    "dvads-bid-table dvads-multi-table" + (popoverFullscreen ? "" : " is-collapsed");
+  const headTable = document.createElement("table");
+  headTable.className = tableClassName;
+  headTable.innerHTML = `
     <thead><tr>
       <th class="dvads-multi-th-cb">${checkboxHTML(false, "전체 선택", "dvads-multi-cb-all")}</th>
       ${COLUMN_DEFS.map((c) => {
@@ -652,10 +676,16 @@ async function renderListView(wrap: HTMLElement) {
       }).join("")}
       <th class="dvads-multi-th-act">작업</th>
     </tr></thead>
-    <tbody></tbody>
   `;
+  headWrap.appendChild(headTable);
+
+  const tableWrap = document.createElement("div");
+  tableWrap.className = "dvads-multi-table-wrap";
+  const table = document.createElement("table");
+  table.className = tableClassName;
+  table.innerHTML = `<tbody></tbody>`;
   // 헤더 정렬 클릭
-  table.querySelectorAll<HTMLTableCellElement>("th.dvads-multi-th-sort").forEach((th) => {
+  headTable.querySelectorAll<HTMLTableCellElement>("th.dvads-multi-th-sort").forEach((th) => {
     th.addEventListener("click", (e) => {
       e.stopPropagation();
       const key = th.dataset.sortKey as SortKey | undefined;
@@ -688,7 +718,33 @@ async function renderListView(wrap: HTMLElement) {
     }
   }
   tableWrap.appendChild(table);
+  fragment.appendChild(headWrap);
   fragment.appendChild(tableWrap);
+
+  // 분리형 헤더 컬럼 폭 동기화 — body 첫 가시 행의 셀 폭(border-box)을 th에 그대로 적용.
+  // ResizeObserver가 attach 직후 1회 + 테이블 폭 변화(크게 보기·스크롤바 증감) 시 재동기화.
+  // 데이터 도착(paintRow)·검색 필터·그룹 접기는 scheduleHeadColSync 훅이 커버.
+  const syncHeadCols = () => {
+    if (!headTable.isConnected || !table.isConnected) return;
+    let src: HTMLTableRowElement | null = null;
+    for (const r of table.querySelectorAll<HTMLTableRowElement>("tbody tr")) {
+      if (r.offsetHeight > 0) { src = r; break; }
+    }
+    if (!src) return;
+    const ths = headTable.querySelectorAll<HTMLTableCellElement>("thead th");
+    if (ths.length !== src.children.length) return;
+    headTable.style.width = `${table.getBoundingClientRect().width}px`;
+    for (let i = 0; i < ths.length; i++) {
+      const w = (src.children[i] as HTMLElement).getBoundingClientRect().width;
+      if (w > 0) ths[i].style.width = `${w}px`;
+    }
+  };
+  headColSync = syncHeadCols;
+  const headColRO = new ResizeObserver(() => scheduleHeadColSync());
+  headColRO.observe(table); // 외곽 폭 변화(크게 보기·뷰포트 리사이즈·스크롤바 증감)
+  headColRO.observe(tbody); // 행 증감 등 외곽 폭이 안 변하는 reflow 일부 감지
+  // 폰트 로드는 표 외곽 크기를 안 바꾸고 내부 컬럼 폭만 바꿔 RO가 못 잡는다 — 명시 훅.
+  void document.fonts.ready.then(() => scheduleHeadColSync());
 
   // ─── 3단계: 단일 atomic swap. 깜빡임 0 ───
   // swap 직전 마지막 token 체크 — 빌드 중 rapid 클릭으로 더 새 render가 시작됐다면 포기.
@@ -748,6 +804,8 @@ function applyListSearchFilter(wrap: HTMLElement, query: string): void {
     ).some((r) => r.style.display !== "none");
     header.style.display = anyVisible ? "" : "none";
   });
+  // 가시 행 구성이 바뀌면 auto layout 컬럼 폭도 바뀔 수 있음 — 분리형 헤더 재동기화.
+  scheduleHeadColSync();
 }
 
 /**
@@ -925,7 +983,18 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
   const leftArrow = makeArrow(-1);
   const rightArrow = makeArrow(1);
 
-  const addChip = (key: string, label: string) => {
+  // 드래그 중인 그룹 id — dragstart에서 채우고 dragend에서 비운다. 재정렬 drop 대상(다른 칩)과
+  // 휴지통 drop이 공유. dataTransfer.getData가 dragover에서 막히는 브라우저가 있어 클로저로 보관.
+  let dragId: string | null = null;
+  const clearHints = () => {
+    capsule
+      .querySelectorAll(".dvads-multi-chip.is-drop-target")
+      .forEach((el) => el.classList.remove("is-drop-target"));
+  };
+
+  // group이 있으면 실제 그룹 탭 — 드래그로 순서 이동 + 다른 그룹 칩 위로 drop 시 재정렬.
+  // group 없으면 "전체"/"미지정" 필터 칩(드래그·drop 대상 아님).
+  const addChip = (key: string, label: string, group?: MultiAccountGroup) => {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "dvads-multi-chip" + (activeGroupFilter === key ? " is-active" : "");
@@ -936,12 +1005,94 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
       activeGroupFilter = key;
       void renderListView(wrap);
     });
+
+    if (group) {
+      btn.draggable = true;
+      btn.addEventListener("dragstart", (e) => {
+        dragId = group.id;
+        e.dataTransfer?.setData("text/plain", group.id);
+        if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+        row.classList.add("is-dragging");
+        // 다음 프레임에 dim — 같은 프레임에 주면 drag image까지 반투명해짐.
+        requestAnimationFrame(() => btn.classList.add("is-dragging"));
+      });
+      btn.addEventListener("dragend", () => {
+        dragId = null;
+        btn.classList.remove("is-dragging");
+        row.classList.remove("is-dragging");
+        clearHints();
+      });
+      // 다른 그룹 칩을 drop 대상으로 — 이 칩 위로 놓으면 그 위치로 재정렬.
+      btn.addEventListener("dragover", (e) => {
+        if (!dragId || dragId === group.id) return;
+        e.preventDefault();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+        btn.classList.add("is-drop-target");
+      });
+      btn.addEventListener("dragleave", () => btn.classList.remove("is-drop-target"));
+      btn.addEventListener("drop", (e) => {
+        if (!dragId || dragId === group.id) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const from = dragId;
+        btn.classList.remove("is-drop-target");
+        void (async () => {
+          await reorderGroups(from, group.id);
+          if (popoverEl) await renderListView(popoverEl);
+        })();
+      });
+    }
+
     capsule.appendChild(btn);
   };
 
   addChip("all", "전체");
-  for (const g of groups) addChip(g.id, g.name);
+  for (const g of groups) addChip(g.id, g.name, g);
   addChip("unassigned", "미지정");
+
+  // 휴지통 — 평소 숨김(CSS display:none), 드래그 시작 시에만 노출(row.is-dragging).
+  // 그룹 칩을 여기 놓으면 삭제 + 5초 되돌리기 토스트. 계정 자체는 "내 계정"에 남고 소속만 해제.
+  const trash = document.createElement("button");
+  trash.type = "button";
+  trash.className = "dvads-multi-grouptabs-trash";
+  trash.setAttribute("aria-label", "그룹 삭제");
+  trash.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 4h11M6 4V2.5h4V4M12.5 4l-.7 9a1 1 0 0 1-1 .9H5.2a1 1 0 0 1-1-.9L3.5 4M6.5 6.8v4.4M9.5 6.8v4.4"/></svg>`;
+  trash.addEventListener("dragover", (e) => {
+    if (!dragId) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    trash.classList.add("is-hot");
+  });
+  trash.addEventListener("dragleave", () => trash.classList.remove("is-hot"));
+  trash.addEventListener("drop", (e) => {
+    if (!dragId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const id = dragId;
+    trash.classList.remove("is-hot");
+    const target = groups.find((g) => g.id === id);
+    if (!target) return;
+    void (async () => {
+      await deleteGroup(id);
+      if (activeGroupFilter === id) activeGroupFilter = "all";
+      collapsedSectionKeys.delete(id);
+      if (popoverEl) await renderListView(popoverEl);
+      showToast({
+        message: `'${target.name}' 그룹을 삭제했어요`,
+        variant: "success",
+        keyword: target.name,
+        undo: {
+          label: "되돌리기",
+          onClick: () => {
+            void (async () => {
+              await restoreGroup(target);
+              if (popoverEl) await renderListView(popoverEl);
+            })();
+          },
+        },
+      });
+    })();
+  });
 
   const add = document.createElement("button");
   add.type = "button";
@@ -963,16 +1114,17 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
     });
   });
 
-  // 탭(캡슐)을 맨 왼쪽에. 화살표는 탭 뒤로 작게 배치, + 그룹은 맨 오른쪽(CSS margin-left:auto).
-  row.append(capsule, leftArrow, rightArrow, add);
+  // 탭(캡슐)을 맨 왼쪽에. 화살표는 탭 뒤로 작게 배치, 휴지통은 드래그 중에만 노출, + 그룹은 맨 오른쪽(CSS margin-left:auto).
+  row.append(capsule, leftArrow, rightArrow, trash, add);
 
-  // 화살표 노출/활성 상태 갱신 — 넘칠 때만 보이되, 자리(공간)는 항상 유지(visibility)해서
-  // 화살표 유무에 따라 탭 위치가 밀리지 않게 한다. 양끝에선 해당 방향 화살표 dim.
+  // 화살표 노출/활성 상태 갱신 — 넘칠 때만 노출(display). 안 넘칠 땐 자리까지 없애 뒤따르는
+  // 휴지통이 캡슐(미지정 탭) 바로 옆에 붙게 한다(visibility로 자리를 남기면 그만큼 떨어져 보임).
+  // 캡슐은 화살표 앞이라 이 토글로 탭 위치는 안 밀림. 양끝에선 해당 방향 화살표 dim.
   const updateArrows = () => {
     const maxScroll = capsule.scrollWidth - capsule.clientWidth;
     const scrollable = maxScroll > 1;
-    leftArrow.style.visibility = scrollable ? "" : "hidden";
-    rightArrow.style.visibility = scrollable ? "" : "hidden";
+    leftArrow.style.display = scrollable ? "" : "none";
+    rightArrow.style.display = scrollable ? "" : "none";
     leftArrow.disabled = capsule.scrollLeft <= 0;
     rightArrow.disabled = capsule.scrollLeft >= maxScroll - 1;
   };
@@ -1049,6 +1201,7 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
       });
     // 펼칠 때 검색어가 있으면 필터 재적용(숨겨야 할 행 다시 숨김).
     if (!nowCollapsed && listSearchQuery) applyListSearchFilter(wrap, listSearchQuery);
+    scheduleHeadColSync();
   };
   tr.querySelector<HTMLButtonElement>(".dvads-multi-group-toggle")?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -2412,14 +2565,16 @@ function applyAnchoredPosition(wrap: HTMLElement): void {
     const popoverWidth = 1100;
     const margin = 8;
     const wouldOverflow = btnRect.left + popoverWidth > window.innerWidth - margin;
+    // 좌표는 정수로 반올림 — rect 소수점 좌표를 그대로 쓰면 popover 내부의 1px 선·sticky
+    // 헤더가 반올림 경계에 걸려 sub-pixel 어긋남(선 떨림)이 생기기 쉽다.
     if (wouldOverflow) {
-      wrap.style.right = `${Math.max(margin, window.innerWidth - btnRect.right)}px`;
+      wrap.style.right = `${Math.round(Math.max(margin, window.innerWidth - btnRect.right))}px`;
       wrap.style.left = "";
     } else {
-      wrap.style.left = `${btnRect.left}px`;
+      wrap.style.left = `${Math.round(btnRect.left)}px`;
       wrap.style.right = "";
     }
-    wrap.style.top = `${btnRect.bottom + margin}px`;
+    wrap.style.top = `${Math.round(btnRect.bottom + margin)}px`;
   } else {
     wrap.style.top = "60px";
     wrap.style.right = "24px";
@@ -2434,7 +2589,9 @@ function setFullscreen(on: boolean): void {
   popoverFullscreen = on;
   if (!popoverEl) return;
   popoverEl.classList.toggle("is-fullscreen", on);
-  popoverEl.querySelector(".dvads-multi-table")?.classList.toggle("is-collapsed", !on);
+  // 분리형 헤더 구조라 테이블이 2개(헤더/본문) — 둘 다 토글해야 컬럼 숨김이 일치.
+  popoverEl.querySelectorAll(".dvads-multi-table").forEach((t) => t.classList.toggle("is-collapsed", !on));
+  scheduleHeadColSync();
   if (on) {
     // anchored 좌표 inline 스타일 비우면 CSS .is-fullscreen의 inset이 인계받음.
     popoverEl.style.top = "";
@@ -2998,6 +3155,9 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
   setCell("bizMoney", snap.bizMoney != null ? formatWon(snap.bizMoney) : "-");
 
   // 계약 D-day는 캠페인 단위 max → min으로 계산. 후속 계약 마련됐으면 자연 OFF.
+  // 데이터가 채워지면 auto layout 컬럼 폭이 바뀔 수 있음 — 분리형 헤더 재동기화 (rAF 디바운스).
+  scheduleHeadColSync();
+
   row.classList.remove("dvads-multi-tr-contract-expired");
   row.removeAttribute("title");
   const dday = computeMinDday(snap.contracts);

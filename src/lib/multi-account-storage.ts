@@ -181,6 +181,31 @@ export async function renameGroup(id: string, name: string): Promise<MultiAccoun
   return list;
 }
 
+// 드래그한 그룹(draggedId)을 targetId 그룹 위치로 옮긴다 — 배열 재배치 후 order를 인덱스로 재부여.
+export async function reorderGroups(
+  draggedId: string,
+  targetId: string,
+): Promise<MultiAccountGroup[]> {
+  const list = await loadGroups(); // order 오름차순
+  const from = list.findIndex((g) => g.id === draggedId);
+  const to = list.findIndex((g) => g.id === targetId);
+  if (from < 0 || to < 0 || from === to) return list;
+  const [moved] = list.splice(from, 1);
+  list.splice(to, 0, moved);
+  list.forEach((g, i) => (g.order = i));
+  await saveGroups(list);
+  return list;
+}
+
+// 삭제된 그룹을 통째로 복원 — 드래그 삭제의 "되돌리기"용. id 중복이면 무시(이미 존재).
+export async function restoreGroup(group: MultiAccountGroup): Promise<MultiAccountGroup[]> {
+  const list = await loadGroups();
+  if (list.some((g) => g.id === group.id)) return list;
+  list.push(group);
+  await saveGroups(list);
+  return list;
+}
+
 export async function deleteGroup(id: string): Promise<MultiAccountGroup[]> {
   const list = await loadGroups();
   const next = list.filter((g) => g.id !== id);
