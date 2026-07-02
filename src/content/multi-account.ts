@@ -1167,11 +1167,7 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
   // 데이터 행과 동일하게 열마다 td 하나씩 + 같은 data-k → 작게 보기 모드의 열 숨김(td[data-k])이
   // 헤더에도 똑같이 적용되어 합계 칸이 각 열에 정확히 정렬된다(colspan 방식은 숨김과 어긋남).
   tr.innerHTML = `
-    <td class="dvads-multi-td-cb dvads-multi-group-cb">
-      <button class="dvads-multi-group-toggle" type="button" aria-label="접기/펼치기">
-        <svg class="dvads-multi-group-chevron" width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4 L10 8 L6 12"/></svg>
-      </button>
-    </td>
+    <td class="dvads-multi-td-cb dvads-multi-group-cb">${checkboxHTML(false, `${g ? g.name : "미지정"} 그룹 전체 선택`, "dvads-multi-cb-group")}</td>
     <td class="dvads-multi-td-name dvads-multi-group-head">
       <div class="dvads-multi-group-head-inner">
         <span class="dvads-multi-group-name">${g ? escapeHtml(g.name) : "미지정"}</span>
@@ -1205,14 +1201,35 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
     if (!nowCollapsed && listSearchQuery) applyListSearchFilter(wrap, listSearchQuery);
     scheduleHeadColSync();
   };
-  tr.querySelector<HTMLButtonElement>(".dvads-multi-group-toggle")?.addEventListener("click", (e) => {
-    e.stopPropagation();
+  // 그룹명(밴드) 클릭 = 접기/펼치기. 좌측 체크박스는 아래에서 별도로 그룹 전체 선택을 담당.
+  tr.querySelector<HTMLElement>(".dvads-multi-group-head")?.addEventListener("click", () => {
     toggleCollapse();
   });
-  tr.querySelector<HTMLElement>(".dvads-multi-group-head")?.addEventListener("click", (e) => {
-    if ((e.target as HTMLElement).closest(".dvads-multi-group-toggle")) return;
-    toggleCollapse();
-  });
+
+  // 좌측 체크박스 = 그룹 전 계정 선택/해제. (체크 시 즉시 그룹 전체 선택)
+  const groupNos = section.rows.map((r) => r.entry.adAccountNo);
+  const groupCb = tr.querySelector<HTMLInputElement>(".dvads-multi-cb-group input");
+  if (groupCb) {
+    const allSel = groupNos.length > 0 && groupNos.every((no) => selectedAccountNos.has(no));
+    groupCb.checked = allSel;
+    groupCb.indeterminate = !allSel && groupNos.some((no) => selectedAccountNos.has(no));
+    groupCb.addEventListener("click", (e) => e.stopPropagation());
+    groupCb.addEventListener("change", () => {
+      if (groupCb.checked) groupNos.forEach((no) => selectedAccountNos.add(no));
+      else groupNos.forEach((no) => selectedAccountNos.delete(no));
+      // 같은 계정이 여러 그룹에 속할 수 있어 화면의 모든 해당 행 체크박스를 함께 동기화.
+      groupNos.forEach((no) => {
+        popoverEl
+          ?.querySelectorAll<HTMLInputElement>(
+            `tr.dvads-multi-tr[data-ad-account-no="${no}"] .dvads-multi-cb input`,
+          )
+          .forEach((el) => {
+            el.checked = groupCb.checked;
+          });
+      });
+      if (popoverEl) updateBulkActionUI(popoverEl);
+    });
+  }
 
   if (g) {
     const trigger = tr.querySelector<HTMLButtonElement>(".dvads-multi-group-action");
@@ -1232,7 +1249,7 @@ function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMe
   const nos = entries.map((e) => e.adAccountNo);
   return [
     {
-      label: `대행권 점검 (${nos.length})`,
+      label: "대행권 점검",
       onClick: () => void runAgencyCheck(nos),
     },
     {
@@ -2316,6 +2333,17 @@ function updateBulkActionUI(wrap: HTMLElement): void {
     selectAll.checked = allSelected;
     selectAll.indeterminate = !allSelected && someSelected;
   }
+  // 그룹 헤더 체크박스 — 각 그룹 전 계정의 선택 상태(전체/일부)를 반영.
+  wrap.querySelectorAll<HTMLInputElement>(".dvads-multi-cb-group input").forEach((gcb) => {
+    const key = gcb.closest("tr")?.dataset.sectionKey;
+    if (!key) return;
+    const nos = [...wrap.querySelectorAll<HTMLElement>(`tr.dvads-multi-tr[data-section-key="${key}"]`)]
+      .map((r) => Number(r.dataset.adAccountNo))
+      .filter(Boolean);
+    const all = nos.length > 0 && nos.every((no) => selectedAccountNos.has(no));
+    gcb.checked = all;
+    gcb.indeterminate = !all && nos.some((no) => selectedAccountNos.has(no));
+  });
 }
 
 // 헤더 select-all 토글 — 현재 보이는 행 전부 선택/해제.
@@ -2462,7 +2490,7 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
         ),
     },
     {
-      label: hasSelection ? `대행권 점검 (${selectedAccountNos.size})` : "대행권 점검",
+      label: "대행권 점검",
       onClick: () => void runAgencyCheck(),
     },
     { separator: true },
@@ -2515,7 +2543,7 @@ function searchKebabItems(): ActionMenuItem[] {
   const hasSelection = selectedAccountNos.size > 0;
   return [
     {
-      label: hasSelection ? `대행권 점검 (${selectedAccountNos.size})` : "대행권 점검",
+      label: "대행권 점검",
       onClick: () => void runAgencyCheck(),
     },
     { separator: true },
