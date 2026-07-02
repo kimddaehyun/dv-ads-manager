@@ -1074,7 +1074,14 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
     trash.classList.remove("is-hot");
     const target = groups.find((g) => g.id === id);
     if (!target) return;
-    void deleteGroupAndAccounts(target);
+    const cnt = target.accountNos.length;
+    openDeleteConfirm({
+      title: "그룹 삭제",
+      message: cnt > 0
+        ? `'${target.name}' 그룹과 그 안의 계정 ${cnt}개를 삭제할까요? 계정도 '내 계정'에서 함께 제거됩니다.`
+        : `'${target.name}' 그룹을 삭제할까요?`,
+      onConfirm: () => deleteGroupAndAccounts(target),
+    });
   });
 
   const add = document.createElement("button");
@@ -1288,8 +1295,15 @@ function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMe
       label: "그룹 삭제",
       danger: true,
       onClick: () => {
-        // 그룹과 그 안의 계정까지 함께 삭제(되돌리기 제공).
-        void deleteGroupAndAccounts(g);
+        // 그룹과 그 안의 계정까지 함께 삭제(확인 후, 되돌리기 제공).
+        const cnt = g.accountNos.length;
+        openDeleteConfirm({
+          title: "그룹 삭제",
+          message: cnt > 0
+            ? `'${g.name}' 그룹과 그 안의 계정 ${cnt}개를 삭제할까요? 계정도 '내 계정'에서 함께 제거됩니다.`
+            : `'${g.name}' 그룹을 삭제할까요?`,
+          onConfirm: () => deleteGroupAndAccounts(g),
+        });
       },
     },
   ];
@@ -1370,6 +1384,48 @@ function openNameDialog(opts: {
     input.value = "";
     input.focus();
   });
+  document.addEventListener("keydown", onKey, true);
+}
+
+// 삭제 확인 다이얼로그 — rename 카드 재사용. 위험 동작(그룹/계정 삭제) 전 한 번 확인.
+function openDeleteConfirm(opts: {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void | Promise<void>;
+}): void {
+  closeRenameDialog();
+  const backdrop = document.createElement("div");
+  backdrop.className = "dvads dvads-rename-backdrop";
+  const card = document.createElement("div");
+  card.className = "dvads-rename-card dvads-confirmdel-card";
+  card.innerHTML = `
+    <div class="dvads-rename-title">${escapeHtml(opts.title)}</div>
+    <div class="dvads-confirmdel-msg">${escapeHtml(opts.message)}</div>
+    <div class="dvads-rename-actions">
+      <button class="dvads-rename-cancel" type="button">취소</button>
+      <button class="dvads-rename-save dvads-rename-danger" type="button">${escapeHtml(opts.confirmLabel ?? "삭제")}</button>
+    </div>
+  `;
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const cleanup = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const confirm = async () => {
+    cleanup();
+    await opts.onConfirm();
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+    if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); void confirm(); }
+  };
+  wireBackdropDismiss(backdrop, cleanup);
+  card.addEventListener("click", (e) => e.stopPropagation());
+  card.querySelector<HTMLButtonElement>(".dvads-rename-cancel")?.addEventListener("click", cleanup);
+  card.querySelector<HTMLButtonElement>(".dvads-rename-save")?.addEventListener("click", () => void confirm());
   document.addEventListener("keydown", onKey, true);
 }
 
@@ -1734,14 +1790,18 @@ function searchRowActionItems(
       label: "삭제",
       danger: true,
       onClick: () => {
-        void (async () => {
-          const next = await removeAccountFromList(entry.adAccountNo);
-          await removeAccountsFromAllGroups([entry.adAccountNo]);
-          await clearSnapshots([entry.adAccountNo]);
-          addedSet.clear();
-          next.forEach((n) => addedSet.add(n));
-          await replaceSearchRow(tr, entry, addedSet);
-        })();
+        openDeleteConfirm({
+          title: "계정 삭제",
+          message: "이 계정을 '내 계정'에서 삭제할까요?",
+          onConfirm: async () => {
+            const next = await removeAccountFromList(entry.adAccountNo);
+            await removeAccountsFromAllGroups([entry.adAccountNo]);
+            await clearSnapshots([entry.adAccountNo]);
+            addedSet.clear();
+            next.forEach((n) => addedSet.add(n));
+            await replaceSearchRow(tr, entry, addedSet);
+          },
+        });
       },
     });
   }
@@ -2562,13 +2622,17 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       onClick: () => {
         const nos = Array.from(selectedAccountNos);
         if (nos.length === 0) return;
-        void (async () => {
-          await removeAccountsFromList(nos);
-          await removeAccountsFromAllGroups(nos);
-          await clearSnapshots(nos);
-          selectedAccountNos.clear();
-          if (popoverEl) await renderListView(popoverEl);
-        })();
+        openDeleteConfirm({
+          title: "계정 삭제",
+          message: `선택한 계정 ${nos.length}개를 '내 계정'에서 삭제할까요?`,
+          onConfirm: async () => {
+            await removeAccountsFromList(nos);
+            await removeAccountsFromAllGroups(nos);
+            await clearSnapshots(nos);
+            selectedAccountNos.clear();
+            if (popoverEl) await renderListView(popoverEl);
+          },
+        });
       },
     },
   ];
@@ -2603,13 +2667,17 @@ function searchKebabItems(): ActionMenuItem[] {
       onClick: () => {
         const nos = Array.from(selectedAccountNos);
         if (nos.length === 0) return;
-        void (async () => {
-          await removeAccountsFromList(nos);
-          await removeAccountsFromAllGroups(nos);
-          await clearSnapshots(nos);
-          selectedAccountNos.clear();
-          if (popoverEl) await renderSearchView(popoverEl);
-        })();
+        openDeleteConfirm({
+          title: "계정 삭제",
+          message: `선택한 계정 ${nos.length}개를 '내 계정'에서 삭제할까요?`,
+          onConfirm: async () => {
+            await removeAccountsFromList(nos);
+            await removeAccountsFromAllGroups(nos);
+            await clearSnapshots(nos);
+            selectedAccountNos.clear();
+            if (popoverEl) await renderSearchView(popoverEl);
+          },
+        });
       },
     },
   ];
@@ -2861,15 +2929,17 @@ function renderTableRow(
           label: "삭제",
           danger: true,
           onClick: () => {
-            // 검색 뷰의 ".dvads-multi-remove"와 동일한 흐름 — confirm 없이 즉시 제거.
-            // 광고계정 자체가 삭제되는 게 아니라 사용자 추가 목록에서만 빠지는 거라
-            // 안전 측 (재추가는 검색 뷰에서 가능).
-            void (async () => {
-              await removeAccountFromList(entry.adAccountNo);
-              await removeAccountsFromAllGroups([entry.adAccountNo]);
-              await clearSnapshots([entry.adAccountNo]);
-              if (popoverEl) await renderListView(popoverEl);
-            })();
+            // 광고계정 자체가 아니라 "내 계정" 목록에서만 빠짐(재추가는 검색 뷰에서 가능). 확인 후 제거.
+            openDeleteConfirm({
+              title: "계정 삭제",
+              message: "이 계정을 '내 계정'에서 삭제할까요?",
+              onConfirm: async () => {
+                await removeAccountFromList(entry.adAccountNo);
+                await removeAccountsFromAllGroups([entry.adAccountNo]);
+                await clearSnapshots([entry.adAccountNo]);
+                if (popoverEl) await renderListView(popoverEl);
+              },
+            });
           },
         },
       ],

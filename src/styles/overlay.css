@@ -1634,7 +1634,9 @@ td.dvads-period-delta-down {
   border: 1px solid #ECEEF0;
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
-  max-height: 320px;
+  /* 기본 높이를 넉넉히 — "설정" 메뉴(10여 항목)가 스크롤 없이 다 보이게. 그보다 길거나
+     화면이 짧으면 스크롤로 폴백(강제 아님). */
+  max-height: 520px;
   overflow-y: auto;
   /* 기본 hidden — 위치 계산 후 data-side가 세팅되면 sweep 애니메이션으로 reveal.
      side 결정 전 한 프레임 flash 방지. */
@@ -3022,6 +3024,16 @@ td.dvads-period-delta-down {
 }
 .dvads-rename-save:hover {
   filter: brightness(0.95);
+}
+/* 삭제 확인 다이얼로그 — 위험(빨강) 확인 버튼 + 안내 문구. */
+.dvads-rename-danger {
+  background: #DC2626;
+}
+.dvads-confirmdel-msg {
+  font-size: 13.5px;
+  color: #4B5563;
+  line-height: 1.55;
+  margin: 2px 0 18px;
 }
 
 /* 그룹으로 이동 다이얼로그 — 폴더 이동 스타일(단일 선택). rename 카드 재사용. */
