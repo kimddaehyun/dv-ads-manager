@@ -259,6 +259,15 @@ export async function clearSnapshot(adAccountNo: number): Promise<void> {
   await chrome.storage.local.remove(key);
 }
 
+// 여러 계정 스냅샷을 remove 1회로 일괄 삭제 — 계정 삭제 흐름에서 호출.
+// 안 지우면 만료된 스냅샷 키가 영구 잔존한다 (재추가·재방문 시 자동 재수집되므로 안전).
+export async function clearSnapshots(adAccountNos: number[]): Promise<void> {
+  if (adAccountNos.length === 0) return;
+  await chrome.storage.local.remove(
+    adAccountNos.map((no) => SNAPSHOT_PREFIX + String(no)),
+  );
+}
+
 export function isSnapshotFresh(snapshot: MultiAccountSnapshot | null): boolean {
   if (!snapshot?.fetched_at) return false;
   const age = Date.now() - new Date(snapshot.fetched_at).getTime();

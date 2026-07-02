@@ -55,7 +55,7 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
     // hot path 진입 시 fire-and-forget으로 throttled prune. 1h 안 됐으면 즉시 return.
     void maybePrune();
     const device = msg.device;
-    handleGetBidEstimate(msg.keywords, device)
+    handleGetBidEstimate(msg.keywords, device, msg.skipPerformance === true)
       .then(sendResponse)
       .catch((e) => {
         const raw = e instanceof Error ? e.message : String(e);
@@ -263,6 +263,7 @@ async function handleRefreshActiveTab(): Promise<RefreshActiveTabResponse> {
 async function handleGetBidEstimate(
   keywords: GetBidEstimateRequest["keywords"],
   device: AdDevice,
+  skipPerformance = false,
 ): Promise<GetBidEstimateResponse> {
   // 키워드 dedupe (currentBid가 다르면 다른 항목으로 취급 — 같은 키워드에 두 bid가 올 일은 거의 없지만)
   const seen = new Set<string>();
@@ -291,9 +292,10 @@ async function handleGetBidEstimate(
     const bidResult = await fetchBidsWithCache(bidKeywords, cred, device);
 
     // 2단계: bid 결과를 펼쳐 perf 쿼리 생성. device별 순위 상한 적용 (PC 10 / MOBILE 5).
+    // skipPerformance면 쿼리를 안 만들어 3단계가 통째로 생략된다.
     const maxPos = MAX_POSITION_BY_DEVICE[device];
     const perfQueries: Array<{ keyword: string; bid: number }> = [];
-    for (const b of bidResult) {
+    if (!skipPerformance) for (const b of bidResult) {
       const seenBids = new Set<number>();
       for (let r = 1; r <= maxPos; r++) {
         const bid = b.rank_to_bid[r as 1];

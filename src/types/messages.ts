@@ -45,6 +45,12 @@ export interface GetBidEstimateRequest {
   keywords: Array<{ keyword: string; currentBid: number | null }>;
   /** 광고 디바이스 (PC | MOBILE). 한 요청은 단일 device. */
   device: AdDevice;
+  /**
+   * true면 1단계(순위별 입찰가)만 수행하고 성과 추정(performance-bulk) 호출을 생략.
+   * F-Setup 예상순위 보강처럼 rank_to_bid만 쓰는 경로용 — 성과 배치(키워드당 최대
+   * 10개 bid 조합)가 통째로 낭비되는 걸 막는다.
+   */
+  skipPerformance?: boolean;
 }
 
 export interface GetBidEstimateResponse {

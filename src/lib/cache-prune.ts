@@ -14,11 +14,16 @@
  * 정책:
  *   - TTL 4h는 volume-cache·performance-cache와 동일하게 통일
  *   - 4개 prefix(volume/performance/shopping/current_bid) 모두 동일 정책으로 처리
+ *   - F-MultiAccount 스냅샷(`multi_account_snapshot:*`)은 별도 7일 TTL — 표시 TTL(1h)이
+ *     지나도 stale-while-revalidate로 옛 숫자를 보여주는 용도가 있어 바로 지우면 안 되고,
+ *     7일 넘게 안 갱신된 것(삭제한 계정·한 번 방문만 한 계정)만 정리한다.
  *   - 형식이 다른 엔트리(타임스탬프 필드가 없는 키)는 안전하게 보존
  */
 
 const TTL_MS = 4 * 60 * 60 * 1000;
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const SNAPSHOT_PREFIX = "multi_account_snapshot:";
+const SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 // 메타 키는 `__` prefix로 캐시 prefix와 분리 — prune 스캔 대상에서도 제외된다.
 const LAST_PRUNE_KEY = "__last_prune_at";
@@ -42,10 +47,17 @@ export async function pruneExpiredCache(): Promise<PruneResult> {
   let kept = 0;
 
   for (const [key, value] of Object.entries(all)) {
-    if (!CACHE_PREFIXES.some((p) => key.startsWith(p))) continue;
+    let ttl: number;
+    if (CACHE_PREFIXES.some((p) => key.startsWith(p))) {
+      ttl = TTL_MS;
+    } else if (key.startsWith(SNAPSHOT_PREFIX)) {
+      ttl = SNAPSHOT_TTL_MS;
+    } else {
+      continue;
+    }
     const ts = extractTimestamp(value);
     if (ts === null) continue; // 알 수 없는 형식 — 안전하게 보존
-    if (now - ts >= TTL_MS) {
+    if (now - ts >= ttl) {
       toRemove.push(key);
     } else {
       kept += 1;

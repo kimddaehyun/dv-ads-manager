@@ -37,7 +37,6 @@ import { invalidateBids } from "@/lib/volume-cache";
 import { invalidatePerformance } from "@/lib/performance-cache";
 import { initPeriodCompare } from "@/content/period-compare";
 import { initAssetBulk } from "@/content/asset-bulk";
-import { initMultiAccount } from "@/content/multi-account";
 import { initShoppingImageImport } from "@/content/shopping-image-import";
 import { attachTooltip } from "@/content/tooltip";
 
@@ -97,6 +96,23 @@ const mounts = new Map<HTMLElement, BadgeMount>();
 const dataCache = new Map<string, KeywordVolumeCache>();
 // 키 = `<device>:<keyword>:<bid>` — 디바이스·bid 모두 키에 포함
 const perfCache = new Map<string, KeywordPerformanceCache>();
+
+// in-memory 캐시 TTL — storage 캐시(volume/performance, 4h)와 동일 정책.
+// 조회 시점에 fetched_at을 검사해 만료 엔트리는 miss 처리 + 삭제한다. 탭을 하루 종일
+// 켜둬도 낡은 입찰가를 계속 표시하지 않고, Map이 무한 성장하지도 않게.
+const MEMORY_CACHE_TTL_MS = 4 * 60 * 60 * 1000;
+
+function cacheGetFresh<T extends { fetched_at: string }>(
+  map: Map<string, T>,
+  key: string,
+): T | undefined {
+  const v = map.get(key);
+  if (!v) return undefined;
+  const t = Date.parse(v.fetched_at);
+  if (Number.isFinite(t) && Date.now() - t < MEMORY_CACHE_TTL_MS) return v;
+  map.delete(key);
+  return undefined;
+}
 let credentialState: "unknown" | "ok" | "missing" = "unknown";
 let lastError: string | null = null;
 let openPopover: HTMLElement | null = null;
@@ -205,7 +221,7 @@ function renderBadge(m: BadgeMount) {
   if (credentialState === "missing") {
     sig = "missing";
   } else {
-    data = dataCache.get(dataKey(m.keyword, DEFAULT_DEVICE));
+    data = cacheGetFresh(dataCache, dataKey(m.keyword, DEFAULT_DEVICE));
     if (!data) {
       sig = lastError ? `error:${lastError}` : "loading";
     } else {
@@ -304,7 +320,7 @@ function togglePopover(anchor: HTMLElement, mount: BadgeMount) {
     closePopoverImmediate();
   }
   // default device 캐시가 비어있으면 popover 의미 없음 — 무시 (배지 loading 상태)
-  if (!dataCache.get(dataKey(mount.keyword, DEFAULT_DEVICE))) return;
+  if (!cacheGetFresh(dataCache, dataKey(mount.keyword, DEFAULT_DEVICE))) return;
 
   // 안전망 — 어떤 race로든 DOM에 남은 잔존 popover 즉시 정리. closePopover는
   // setTimeout으로 140ms 후 제거하는 비동기 path라 빠른 연타에서 누락 가능.
@@ -331,19 +347,26 @@ function togglePopover(anchor: HTMLElement, mount: BadgeMount) {
   // reposition이 매 프레임 같은 좌표를 다시 쓰지 않도록 직전 프레임 값 추적 (#5).
   let lastLeft = NaN;
   let lastTop = NaN;
+  // 잔존 popover 안전망 스로틀 — 전체 문서 querySelectorAll이라 매 프레임 돌리면
+  // 대형 키워드 페이지에서 프레임 예산을 갉아먹는다. 500ms 간격이면 방어선 역할은 충분.
+  let nextOrphanSweep = 0;
   // 배지 위치 기준으로 popover 재배치. 매 프레임 rAF 루프로 호출되어 픽셀 단위로 따라붙는다.
   const reposition = () => {
     if (!anchor.isConnected) {
       closePopover();
       return;
     }
-    // 매 프레임 안전망 — openPopover 외 다른 .dvads-popover가 DOM에 남아있으면 강제 제거.
+    // 안전망 — openPopover 외 다른 .dvads-popover가 DOM에 남아있으면 강제 제거.
     // togglePopover의 closePopoverImmediate + 안전망 이외 경로로 잔존 popover가 생기는
     // race를 마지막 방어선으로 차단 (스크린샷 1300013에서 사용자 보고됨).
-    const allPopovers = document.querySelectorAll<HTMLElement>(".dvads-popover");
-    if (allPopovers.length > 1) {
-      for (const el of Array.from(allPopovers)) {
-        if (el !== popover) el.remove();
+    const now = Date.now();
+    if (now >= nextOrphanSweep) {
+      nextOrphanSweep = now + 500;
+      const allPopovers = document.querySelectorAll<HTMLElement>(".dvads-popover");
+      if (allPopovers.length > 1) {
+        for (const el of Array.from(allPopovers)) {
+          if (el !== popover) el.remove();
+        }
       }
     }
     const rect = anchor.getBoundingClientRect();
@@ -522,7 +545,7 @@ function selectDevice(target: AdDevice): void {
   openPopoverDevice = target;
 
   const mount = openPopoverMount;
-  const cached = dataCache.get(dataKey(mount.keyword, target));
+  const cached = cacheGetFresh(dataCache, dataKey(mount.keyword, target));
   if (cached) {
     animatePopoverBody(buildPopoverBody(mount,target));
     return;
@@ -591,7 +614,7 @@ const SEARCH_URL_BY_DEVICE: Record<AdDevice, string> = {
 function buildPopoverBody(mount: BadgeMount, device: AdDevice): HTMLElement {
   const wrap = document.createElement("div");
 
-  const data = dataCache.get(dataKey(mount.keyword, device));
+  const data = cacheGetFresh(dataCache, dataKey(mount.keyword, device));
 
   const hdr = document.createElement("div");
   hdr.className = "dvads-popover-hdr";
@@ -675,7 +698,7 @@ function buildPopoverBody(mount: BadgeMount, device: AdDevice): HTMLElement {
     tr.appendChild(createCell("td", bid != null ? bid.toLocaleString() : "—"));
 
     const perf =
-      bid != null ? perfCache.get(perfKey(mount.keyword, bid, device)) : undefined;
+      bid != null ? cacheGetFresh(perfCache, perfKey(mount.keyword, bid, device)) : undefined;
     tr.appendChild(createCell("td", perf ? perf.impressions.toLocaleString() : "—"));
     tr.appendChild(createCell("td", perf ? perf.clicks.toLocaleString() : "—"));
     tr.appendChild(
@@ -980,10 +1003,10 @@ async function pollInner() {
   // bid 추정이 아직 없는 키워드 + 성과 추정이 아직 없는 (keyword, bid) 조합.
   // poll은 항상 DEFAULT_DEVICE(모바일) 기준 — PC는 popover 토글 시 lazy 호출.
   const missingBids = Array.from(byKeyword.entries()).filter(
-    ([k]) => !dataCache.has(dataKey(k, DEFAULT_DEVICE)),
+    ([k]) => !cacheGetFresh(dataCache, dataKey(k, DEFAULT_DEVICE)),
   );
   const missingPerf = Array.from(byKeyword.entries()).filter(
-    ([k, bid]) => bid != null && !perfCache.has(perfKey(k, bid, DEFAULT_DEVICE)),
+    ([k, bid]) => bid != null && !cacheGetFresh(perfCache, perfKey(k, bid, DEFAULT_DEVICE)),
   );
 
   // 둘 다 없으면 요청 skip — 단순 재렌더만
@@ -1147,7 +1170,25 @@ initAssetBulk();
 
 // F-MultiAccount — 다계정 대시보드. 광고관리자 페이지 우상단에 fixed 버튼 주입.
 // 명단/어제 데이터/비즈머니/계약 D-day 표시. F001/F-PoP과 독립적으로 동작.
-initMultiAccount();
+// 그룹 탭·대행권 점검까지 포함한 큰 모듈이고 버튼·수집이 전부 top frame의
+// `/manage/ad-accounts/` URL에서만 쓰이므로, 정적 import 대신 해당 URL 첫 진입 시
+// 동적 로드해 (a) 콘텐츠 초기 번들에서 제외 (b) iframe·무관 페이지에서의
+// 인터벌/디렉터리 갱신 실행을 원천 차단한다. 로드 후에는 모듈 내부의 300ms 인터벌이
+// SPA 전환(mount/unmount·자연 캐싱)을 자체 처리하므로 1회만 로드하면 된다.
+let multiAccountLoaded = false;
+function maybeInitMultiAccount() {
+  if (multiAccountLoaded) return;
+  if (window !== window.top) return;
+  if (!/\/manage\/ad-accounts\//.test(location.pathname)) return;
+  multiAccountLoaded = true;
+  import("@/content/multi-account")
+    .then((m) => m.initMultiAccount())
+    .catch((e) => {
+      multiAccountLoaded = false;
+      console.warn("[dv-ads] 다계정 모듈 로드 실패", e);
+    });
+}
+maybeInitMultiAccount();
 
 // F-ShoppingImage — 쇼핑검색 소재 수정 모달에 상세페이지 대표 이미지 불러오기 주입.
 // 모달의 네이티브 이미지 업로드칸 하단에 후보 그리드 추가, 클릭 시 file input에 주입.
@@ -1163,6 +1204,8 @@ new MutationObserver(() => {
     // SPA navigation — 캐시는 유지, 배지만 새 페이지에서 재mount
     teardown();
     schedule();
+    // 첫 진입이 무관 페이지였다가 SPA로 광고계정 URL에 도달하는 경우 커버
+    maybeInitMultiAccount();
   }
 }).observe(document, { childList: true, subtree: true });
 

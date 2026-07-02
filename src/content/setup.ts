@@ -336,6 +336,8 @@ async function enrichRanks(campaigns: SetupCampaign[]): Promise<void> {
       type: "GET_BID_ESTIMATE",
       keywords: chunk.map((k) => ({ keyword: k, currentBid: null })),
       device: "PC",
+      // 여기선 rank_to_bid만 쓰므로 성과 추정(2단계)은 생략 — 호출량·소요시간 절감.
+      skipPerformance: true,
     };
     let resp: GetBidEstimateResponse | undefined;
     try {

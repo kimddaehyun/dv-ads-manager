@@ -30,6 +30,7 @@ import {
   saveSnapshot,
   isSnapshotFresh,
   clearAllSnapshots,
+  clearSnapshots,
   loadPlatformFilter,
   savePlatformFilter,
   loadAgencyIdentity,
@@ -126,16 +127,23 @@ export function initMultiAccount() {
  * 자연 캐싱 — 사용자가 광고관리자에서 특정 계정 페이지에 진입할 때마다
  * 그 계정 데이터를 자동으로 캐시 갱신. directory에서 customerId 찾아 직접 fetch.
  */
+// in-flight 가드 — collectAccount(수 초, ~10콜)가 도는 동안 같은 계정 안에서 SPA URL이
+// 연속으로 바뀌면(캠페인 목록 → 그룹 상세 → 키워드 탭) 스냅샷 저장 전이라 fresh 체크를
+// 매번 통과해 동일 계정 수집이 중복 실행된다. 계정번호 단위로 1개만 허용.
+const autoUpdateInFlight = new Set<number>();
+
 async function autoUpdateActiveAccount() {
   const activeNo = extractActiveAdAccountNo();
   if (activeNo === null) return;
-  // stale 체크 — 신선한 캐시가 있으면 굳이 다시 안 부름
-  const cached = await loadSnapshot(activeNo);
-  if (cached && isSnapshotFresh(cached)) return;
-  const dir = await loadDirectory();
-  const entry = dir?.entries.find((e) => e.adAccountNo === activeNo);
-  if (!entry?.masterCustomerId) return; // directory가 아직 안 받아왔거나 customerId 없는 계정 — skip
+  if (autoUpdateInFlight.has(activeNo)) return;
+  autoUpdateInFlight.add(activeNo);
   try {
+    // stale 체크 — 신선한 캐시가 있으면 굳이 다시 안 부름
+    const cached = await loadSnapshot(activeNo);
+    if (cached && isSnapshotFresh(cached)) return;
+    const dir = await loadDirectory();
+    const entry = dir?.entries.find((e) => e.adAccountNo === activeNo);
+    if (!entry?.masterCustomerId) return; // directory가 아직 안 받아왔거나 customerId 없는 계정 — skip
     const payload = await collectAccount(activeNo, entry.masterCustomerId, yesterdayKST());
     const snap: MultiAccountSnapshot = {
       adAccountNo: activeNo,
@@ -152,6 +160,8 @@ async function autoUpdateActiveAccount() {
     void refreshBadge();
   } catch (e) {
     console.warn("[dv-ads/multi-account] 자연 캐싱 실패", e);
+  } finally {
+    autoUpdateInFlight.delete(activeNo);
   }
 }
 
@@ -214,6 +224,10 @@ function syncMount() {
     unmountButton();
     return;
   }
+  // 버튼이 컨테이너에 그대로 살아있으면 칩 재탐색(querySelector + rect 읽기) 자체를 생략 —
+  // steady state에서 300ms 인터벌이 매 tick DOM/layout 읽기를 만들지 않게 한다.
+  // 헤더가 SPA로 다시 그려지면 버튼이 detach되어 이 가드를 통과 못 하고 아래 re-mount로 간다.
+  if (buttonEl?.isConnected && lastButtonContainer?.isConnected) return;
   const chip = findOperationChip();
   if (!chip || !chip.parentElement) {
     // 헤더가 아직 로딩 중 → 마운트 보류 (버튼 자체 미존재)
@@ -755,6 +769,11 @@ async function backgroundRefreshStale(
   if (stale.length === 0) return;
   backgroundRefreshStaleInFlight = true;
   try {
+    // 배치 시작 시 1회만 읽어 계정마다 storage 중복 조회 방지 (refreshAllStale과 동일).
+    const platforms = await loadPlatformFilter().catch(
+      () => ({ sa: true, da: true }) as PlatformFilter,
+    );
+    const metaAll = await loadAllUserMeta();
     const queue = [...stale];
     const workers = Array.from(
       { length: Math.min(REFRESH_ALL_CONCURRENCY, queue.length) },
@@ -763,7 +782,7 @@ async function backgroundRefreshStale(
           const entry = queue.shift();
           if (!entry) break;
           try {
-            await refreshRow(entry, activeNo, { force: false });
+            await refreshRow(entry, activeNo, { force: false, platforms, metaAll });
           } catch (e) {
             console.warn("[content/multi-account] background refresh 실패", entry.adAccountNo, e);
           }
@@ -1485,6 +1504,7 @@ function searchRowActionItems(
         void (async () => {
           const next = await removeAccountFromList(entry.adAccountNo);
           await removeAccountsFromAllGroups([entry.adAccountNo]);
+          await clearSnapshots([entry.adAccountNo]);
           addedSet.clear();
           next.forEach((n) => addedSet.add(n));
           await replaceSearchRow(tr, entry, addedSet);
@@ -1994,7 +2014,12 @@ function openAgencyModal(
       listWrap.appendChild(table);
     };
 
-    searchInput.addEventListener("input", () => paintList(searchInput.value));
+    // 검색은 키 입력마다 전체 테이블을 재빌드하므로 디바운스 — renderSearchView(140ms)와 동일 패턴.
+    let searchDebounce: number | undefined;
+    searchInput.addEventListener("input", () => {
+      window.clearTimeout(searchDebounce);
+      searchDebounce = window.setTimeout(() => paintList(searchInput.value), 140);
+    });
     paintList("");
 
     // 엑셀: 전체 결과(정상 포함) 기록. write-excel-file은 무거워 클릭 시 동적 import.
@@ -2295,6 +2320,7 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
         void (async () => {
           await removeAccountsFromList(nos);
           await removeAccountsFromAllGroups(nos);
+          await clearSnapshots(nos);
           selectedAccountNos.clear();
           if (popoverEl) await renderListView(popoverEl);
         })();
@@ -2335,6 +2361,7 @@ function searchKebabItems(): ActionMenuItem[] {
         void (async () => {
           await removeAccountsFromList(nos);
           await removeAccountsFromAllGroups(nos);
+          await clearSnapshots(nos);
           selectedAccountNos.clear();
           if (popoverEl) await renderSearchView(popoverEl);
         })();
@@ -2584,6 +2611,7 @@ function renderTableRow(
             void (async () => {
               await removeAccountFromList(entry.adAccountNo);
               await removeAccountsFromAllGroups([entry.adAccountNo]);
+              await clearSnapshots([entry.adAccountNo]);
               if (popoverEl) await renderListView(popoverEl);
             })();
           },
@@ -2601,10 +2629,31 @@ function renderTableRow(
  */
 const REFRESH_ALL_CONCURRENCY = 4;
 
+// 재진입 가드 — 전체 수집(계정당 ~10콜)이 도는 30~60초 사이 kebab "새로고침"을 다시 누르면
+// 워커 풀이 이중으로 돌아 같은 호출을 통째로 두 번 발사한다. backgroundRefreshStale과 동일 패턴.
+let refreshAllInFlight = false;
+
 async function refreshAllStale(entries: MultiAccountDirectoryEntry[]) {
+  if (!popoverEl) return;
+  if (refreshAllInFlight) return;
+  refreshAllInFlight = true;
+  try {
+    await refreshAllStaleImpl(entries);
+  } finally {
+    refreshAllInFlight = false;
+  }
+}
+
+async function refreshAllStaleImpl(entries: MultiAccountDirectoryEntry[]) {
   if (!popoverEl) return;
   const btn = popoverEl.querySelector<HTMLButtonElement>(".dvads-multi-refresh-all");
   const activeNo = extractActiveAdAccountNo();
+  // 필터·별칭 메타는 계정 수만큼 반복 조회할 필요가 없어 시작 시 1회만 읽어 전달.
+  // (도중에 필터·별칭이 바뀌는 엣지는 종료 후 renderListView 전체 재렌더가 흡수)
+  const platforms = await loadPlatformFilter().catch(
+    () => ({ sa: true, da: true }) as PlatformFilter,
+  );
+  const metaAll = await loadAllUserMeta();
   const total = entries.length;
   let done = 0;
   const updateLabel = () => {
@@ -2625,7 +2674,7 @@ async function refreshAllStale(entries: MultiAccountDirectoryEntry[]) {
       const entry = queue.shift();
       if (!entry) break;
       try {
-        await refreshRow(entry, activeNo, { force: true });
+        await refreshRow(entry, activeNo, { force: true, platforms, metaAll });
       } catch (e) {
         console.warn("[content/multi-account] refresh 실패", entry.adAccountNo, e);
       }
@@ -2654,7 +2703,12 @@ async function refreshAllStale(entries: MultiAccountDirectoryEntry[]) {
 async function refreshRow(
   entry: MultiAccountDirectoryEntry,
   _activeNo: number | null,
-  opts: { force: boolean } = { force: false },
+  opts: {
+    force: boolean;
+    /** 배치 호출(refreshAllStale 등)이 1회 로드해 주입 — 계정마다 storage 중복 조회 방지 */
+    platforms?: PlatformFilter;
+    metaAll?: Record<number, MultiAccountUserMeta>;
+  } = { force: false },
 ): Promise<void> {
   if (!opts.force) {
     const cached = await loadSnapshot(entry.adAccountNo);
@@ -2672,6 +2726,7 @@ async function refreshRow(
       entry.adAccountNo,
       entry.masterCustomerId,
       yesterdayKST(),
+      opts.platforms,
     );
     const snap: MultiAccountSnapshot = {
       adAccountNo: entry.adAccountNo,
@@ -2681,7 +2736,7 @@ async function refreshRow(
       fetched_at: new Date().toISOString(),
     };
     await saveSnapshot(snap);
-    const all = await loadAllUserMeta();
+    const all = opts.metaAll ?? (await loadAllUserMeta());
     paintRow(entry.adAccountNo, snap, all[entry.adAccountNo]);
     void refreshBadge();
   } catch (e) {
