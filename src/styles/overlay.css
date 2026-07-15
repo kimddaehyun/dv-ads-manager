@@ -2263,6 +2263,298 @@ td.dvads-period-delta-down {
   background: #DC2626;
 }
 
+/* ─── 변경이력 알림 칩 ────────────────────────────────────────────────── */
+
+/* 예산/수정 두 칩을 나란히. 둘 다 없으면 각 칩이 display:none이라 줄 자체가 사라진다. */
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* 계정명 셀 안 작은 칩 — 수정은 회색, 예산 소진은 빨강(급함).
+   이름 셀 클릭(계정 이동)과 겹치므로 클릭은 JS에서 stopPropagation. */
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip {
+  margin-top: 4px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: #EEF0F2;
+  color: #4B5563;
+  font-family: inherit;
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip:hover {
+  background: #E1E4E8;
+}
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip.is-budget {
+  background: #FEE2E2;
+  color: #DC2626;
+  font-weight: 600;
+}
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip.is-budget:hover {
+  background: #FECACA;
+}
+
+/* ─── 변경이력 상세 패널 ──────────────────────────────────────────────── */
+
+/* 칩 클릭 시 뜨는 목록. 호스트 페이지와 분리되도록 오버레이 규약(주황 1.5px + 10px)을 따른다. */
+.dvads-change-panel {
+  position: fixed;
+  z-index: 2147483647;
+  width: 320px;
+  max-width: 92vw;
+  background: #ffffff;
+  border: 1.5px solid #E6783B;
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.10);
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  color: #171717;
+  /* 위치를 JS inline transform이 아니라 left/top으로 잡으므로 진입 모션은 opacity만 —
+     transform 키프레임을 쓰면 inline 위치를 덮어 0,0으로 튄다. */
+  animation: dvads-change-panel-fade 140ms ease-out both;
+}
+@keyframes dvads-change-panel-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.dvads-change-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #ECEEF0;
+}
+.dvads-change-panel-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.dvads-change-panel-read.dvads-btn {
+  height: 26px;
+  padding: 0 10px;
+  font-size: 11.5px;
+}
+.dvads-change-panel-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+.dvads-change-item {
+  padding: 8px 12px;
+  border-left: 3px solid transparent;
+}
+.dvads-change-item.is-budget {
+  border-left-color: #DC2626;
+  background: #FEF6F6;
+}
+.dvads-change-item + .dvads-change-item {
+  border-top: 1px solid #F3F4F6;
+}
+.dvads-change-item-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.dvads-change-kind {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #4B5563;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-change-item.is-budget .dvads-change-kind {
+  color: #DC2626;
+}
+.dvads-change-when {
+  font-size: 11px;
+  color: #9CA3AF;
+  flex-shrink: 0;
+}
+.dvads-change-target {
+  margin-top: 2px;
+  font-size: 12.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-change-summary {
+  margin-top: 1px;
+  font-size: 11.5px;
+  color: #6B7280;
+  word-break: break-all;
+}
+.dvads-change-more {
+  padding: 8px 12px;
+  font-size: 11.5px;
+  color: #9CA3AF;
+  text-align: center;
+}
+
+/* ─── 변경이력 알림 다이얼로그 (켜기/끄기 + 제외 변경자 선택) ─────────── */
+
+.dvads-actor-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.40);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: dvads-input-backdrop-fade 200ms ease-out both;
+}
+.dvads-actor-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 18px 22px 18px;
+  width: 460px;
+  max-width: 92vw;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  animation: dvads-input-card-enter 220ms cubic-bezier(0.1, 0.8, 0.2, 1) both;
+  font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  color: #171717;
+}
+.dvads-actor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.dvads-actor-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+.dvads-actor-close {
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  line-height: 1;
+  color: #9CA3AF;
+  cursor: pointer;
+  padding: 0 2px;
+}
+.dvads-actor-close:hover {
+  color: #4B5563;
+}
+.dvads-actor-chips {
+  margin-top: 14px;
+  padding: 10px;
+  min-height: 44px;
+  max-height: 220px;
+  overflow-y: auto;
+  border-radius: 8px;
+  background: #F7F8F9;
+  font-size: 12px;
+  color: #9CA3AF;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 6px;
+}
+/* 변경자 불러오는 동안 — 스피너 + "불러오는 중..." 한 줄로 가운데 정렬. */
+.dvads-actor-chips.is-loading {
+  align-items: center;
+  gap: 7px;
+}
+.dvads-actor-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1.5px solid #C9CED4;
+  border-top-color: transparent;
+  animation: dvads-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dvads-actor-spinner { animation: none; }
+}
+.dvads-actor-chip {
+  border: 0;
+  border-radius: 999px;
+  background: #ffffff;
+  padding: 5px 11px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4B5563;
+  cursor: pointer;
+}
+.dvads-actor-chip:hover {
+  background: #ECEEF0;
+}
+/* 고른 변경자 = 알림 제외 대상. 선택 상태만 DV 주황(사용 면적 최소). */
+.dvads-actor-chip.is-on {
+  background: #E6783B;
+  color: #ffffff;
+}
+.dvads-actor-chip.is-on:hover {
+  background: #D96C31;
+}
+/* 입력창 + 지우기(×) — × 는 값이 있을 때만 노출(JS가 display 토글). */
+.dvads-actor-input-wrap {
+  position: relative;
+  display: flex;
+  margin-top: 10px;
+}
+.dvads-actor-input {
+  flex: 1;
+  height: 34px;
+  padding: 0 30px 0 10px;
+  border: 1px solid #E1E4E8;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  outline: none;
+  min-width: 0;
+}
+.dvads-actor-input:focus {
+  border-color: #E6783B;
+  box-shadow: 0 0 0 3px rgba(230, 120, 59, 0.18);
+}
+.dvads-actor-input-clear {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #9CA3AF;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dvads-actor-input-clear:hover {
+  background: #ECEEF0;
+  color: #4B5563;
+}
+.dvads-actor-actions {
+  margin-top: 18px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* 해제는 좌측으로 밀어 [확인][켜기]와 분리 — 비즈머니 알림 다이얼로그의 해제 배치와 동일.
+   해제 버튼이 없을 땐 spacer도 같이 빠져서 [확인][켜기]만 우측에 남는다. */
+.dvads-cw-spacer {
+  flex: 1;
+}
+
+
 /* 페이지 우상단 햄버거 버튼 알림 배지 (iOS 스타일) — 가로/세로 동일한 정원 고정.
    숫자 자릿수가 늘면 font-size를 줄여 원형 유지 (글자가 원을 깨지 않게). */
 .dvads-multi-btn { position: relative; }

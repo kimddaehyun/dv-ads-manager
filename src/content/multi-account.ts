@@ -43,6 +43,18 @@ import {
   reorderGroups,
   restoreGroup,
   removeAccountsFromAllGroups,
+  loadChangeWatchIdentity,
+  saveChangeWatchIdentity,
+  loadChangeWatchState,
+  loadChangeWatchStateMany,
+  saveChangeWatchState,
+  clearChangeWatchStates,
+  isChangeWatchFresh,
+  unreadChangeWatchEvents,
+  readUpToFor,
+  CHANGE_WATCH_TTL_MS,
+  CHANGE_WATCH_BOOTSTRAP_MS,
+  CHANGE_WATCH_KEEP_MS,
   type PlatformFilter,
 } from "@/lib/multi-account-storage";
 import {
@@ -55,12 +67,15 @@ import {
   type AgencyOperationOutcome,
   type AgencyOperationRow,
 } from "@/lib/multi-account-data";
+import { fetchChangeHistory, classifyHistory, observedActors } from "@/lib/change-watch";
 import type {
   MultiAccountDirectoryCache,
   MultiAccountDirectoryEntry,
   MultiAccountUserMeta,
   MultiAccountGroup,
   MultiAccountSnapshot,
+  ChangeWatchState,
+  ChangeWatchEvent,
 } from "@/types/storage";
 import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "./ui-dropdown";
 import { openInputDialog } from "./input-dialog";
@@ -95,6 +110,9 @@ export function initMultiAccount() {
 
   registerMessageListener();
   registerStorageListener();
+  // 변경이력 주기 점검 — iframe(all_frames)에서 중복으로 돌지 않게 최상위 창에서만.
+  // 실제 호출은 광고계정 페이지일 때만 나간다(changeWatchTick 내부 가드).
+  if (window === window.top) startChangeWatchTimer();
 
   let lastUrl = location.href;
   const onTick = () => {
@@ -435,8 +453,9 @@ export function closePopover() {
   headColSync = null;
   document.querySelector(".dvads-multi-backdrop")?.remove();
   selectedAccountNos.clear();
-  // 브랜드검색 알림 툴팁 잔여 정리 — popover 떠 있을 때만 의미 있음.
+  // 브랜드검색 알림 툴팁 / 변경이력 패널 잔여 정리 — popover 떠 있을 때만 의미 있음.
   hideBrandTooltip();
+  closeChangeWatchPanel();
   // close 아이콘 → 햄버거로 복귀
   buttonEl?.classList.remove("is-open");
 }
@@ -760,6 +779,8 @@ async function renderListView(wrap: HTMLElement) {
     if (snap) paintRow(entry.adAccountNo, snap, meta[entry.adAccountNo]);
     else paintRowLoading(entry.adAccountNo);
   }
+  // 변경이력 알림 칩 — 스냅샷과 별개 저장소라 따로 칠한다(fire-and-forget, 캐시 기준 즉시 표시).
+  void paintChangeWatchRows(sorted.map((s) => s.entry.adAccountNo));
   void refreshBadge();
 
   // 기존 검색 쿼리가 있으면(예: sort 변경 후 재렌더) 적용.
@@ -773,6 +794,9 @@ async function renderListView(wrap: HTMLElement) {
   // refresh. force:false라 fresh 행은 자동 skip. 결과 도착하는 대로 paintRow가 행 업데이트.
   // popover 닫혀도 fetch는 끝까지 진행되어 다음 진입 시 fresh 캐시 보장.
   void backgroundRefreshStale(entries, snapshots);
+  // 변경이력도 같은 요령으로 — TTL(30분) 지난 계정만 조용히 재점검. 스냅샷과 주기가 달라
+  // 별도 호출이고, 자체 in-flight 가드가 있어 주기 타이머와 겹쳐도 안전.
+  void scanChangeWatchAll(entries, false);
 }
 
 /**
@@ -1797,6 +1821,7 @@ function searchRowActionItems(
             const next = await removeAccountFromList(entry.adAccountNo);
             await removeAccountsFromAllGroups([entry.adAccountNo]);
             await clearSnapshots([entry.adAccountNo]);
+            await clearChangeWatchStates([entry.adAccountNo]);
             addedSet.clear();
             next.forEach((n) => addedSet.add(n));
             await replaceSearchRow(tr, entry, addedSet);
@@ -2600,6 +2625,11 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       disabled: !hasSelection,
       onClick: () => openBrandSearchDialogFor(Array.from(selectedAccountNos)),
     },
+    {
+      label: "변경이력 알림",
+      disabled: !hasSelection,
+      onClick: () => void openChangeWatchDialogFor(Array.from(selectedAccountNos)),
+    },
     { separator: true },
     // 광고 유형 필터 — 둘 중 하나만/둘 다 선택. 선택에 따라 어제 데이터가 SA/GFA/합산으로 바뀐다.
     {
@@ -2629,6 +2659,7 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
             await removeAccountsFromList(nos);
             await removeAccountsFromAllGroups(nos);
             await clearSnapshots(nos);
+            await clearChangeWatchStates(nos);
             selectedAccountNos.clear();
             if (popoverEl) await renderListView(popoverEl);
           },
@@ -2674,6 +2705,7 @@ function searchKebabItems(): ActionMenuItem[] {
             await removeAccountsFromList(nos);
             await removeAccountsFromAllGroups(nos);
             await clearSnapshots(nos);
+            await clearChangeWatchStates(nos);
             selectedAccountNos.clear();
             if (popoverEl) await renderSearchView(popoverEl);
           },
@@ -2800,6 +2832,10 @@ function renderTableRow(
     <td class="dvads-multi-td-name">
       <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
       <div class="dvads-multi-no">${subLine}</div>
+      <div class="dvads-multi-change-chips">
+        <button class="dvads-multi-change-chip is-budget" type="button" data-kind="budget" style="display:none"></button>
+        <button class="dvads-multi-change-chip" type="button" data-kind="external" style="display:none"></button>
+      </div>
     </td>
     <td class="dvads-multi-td-num" data-k="bizMoney">-</td>
     <td class="dvads-multi-td-num" data-k="impressions">-</td>
@@ -2842,6 +2878,16 @@ function renderTableRow(
   nameTd?.addEventListener("mouseleave", () => {
     if (!tr.classList.contains("dvads-multi-tr-brand-alert")) return;
     scheduleHideBrandTooltip();
+  });
+
+  // 변경이력 알림 칩(예산/수정 각각) — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게
+  // 전파를 끊는다. 칩마다 자기 종류만 목록으로 띄운다.
+  tr.querySelectorAll<HTMLButtonElement>(".dvads-multi-change-chip").forEach((chip) => {
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const kind = chip.dataset.kind === "budget" ? "budget" : "external";
+      void openChangeWatchPanel(entry, chip, kind);
+    });
   });
 
   // 체크박스 wire — 선택 토글 + 헤더 카운트 동기화.
@@ -2924,6 +2970,10 @@ function renderTableRow(
           label: "브랜드검색 알림",
           onClick: () => openBrandSearchDialogFor([entry.adAccountNo]),
         },
+        {
+          label: "변경이력 알림",
+          onClick: () => void openChangeWatchDialogFor([entry.adAccountNo]),
+        },
         { separator: true },
         {
           label: "삭제",
@@ -2937,6 +2987,7 @@ function renderTableRow(
                 await removeAccountFromList(entry.adAccountNo);
                 await removeAccountsFromAllGroups([entry.adAccountNo]);
                 await clearSnapshots([entry.adAccountNo]);
+                await clearChangeWatchStates([entry.adAccountNo]);
                 if (popoverEl) await renderListView(popoverEl);
               },
             });
@@ -3070,6 +3121,174 @@ async function refreshRow(
   }
 }
 
+// ─── 변경이력 알림 (F-ChangeWatch) ───────────────────────────────────────
+//
+// 광고관리자 변경이력을 계정마다 훑어서 두 가지를 잡는다:
+//   1. 예산을 다 써서 멈춘 캠페인/광고그룹
+//   2. 제외 목록(변경이력 알림 설정)에 없는 사람이 건드린 기록
+//
+// 조회는 ads.naver.com 탭 안에서만 가능(다른 데이터와 동일 제약)하므로 별도 알람 권한 없이
+// 페이지가 열려있는 동안 주기적으로 돈다. 창(window)은 고정 기간이 아니라 "직전 점검 이후"라
+// 놓치는 이력도 중복 알림도 없다.
+
+let changeWatchScanPromise: Promise<void> | null = null;
+let changeWatchTimer = 0;
+
+/**
+ * 한 계정 점검. 직전 점검 시각(scanned_until)이 다음 조회의 since가 된다.
+ * 실패 시 scanned_until을 전진시키지 않아 다음 점검이 같은 구간을 다시 훑는다(이력 유실 방지).
+ */
+async function refreshChangeWatchRow(
+  entry: MultiAccountDirectoryEntry,
+  actors: string[],
+  force: boolean,
+): Promise<void> {
+  if (!entry.masterCustomerId) return;
+  const prev = await loadChangeWatchState(entry.adAccountNo);
+  if (!force && isChangeWatchFresh(prev)) return;
+  const now = Date.now();
+  const since = prev?.scanned_until ?? now - CHANGE_WATCH_BOOTSTRAP_MS;
+  try {
+    const rows = await fetchChangeHistory(entry.masterCustomerId, since, now);
+    const readBudget = readUpToFor(prev, "budget");
+    const readExternal = readUpToFor(prev, "external");
+    const cutoff = now - CHANGE_WATCH_KEEP_MS;
+    // 확인한 알림은 다시 표시될 일이 없으므로 버린다 — 안 그러면 매일 쌓이는 예산 소진 기록이
+    // 계정 수만큼 저장소를 잡아먹는다(입찰가 캐시와 같은 할당량을 나눠 쓴다).
+    const keep = (e: ChangeWatchState["events"][number]) =>
+      e.ts >= cutoff && e.ts > (e.kind === "budget" ? readBudget : readExternal);
+    // id 기준 병합 — 실패 후 같은 구간을 다시 훑어도 알림이 두 번 쌓이지 않는다.
+    const byId = new Map<string, ChangeWatchState["events"][number]>();
+    for (const e of prev?.events ?? []) if (keep(e)) byId.set(e.id, e);
+    for (const e of classifyHistory(rows, actors)) if (keep(e)) byId.set(e.id, e);
+    const next: ChangeWatchState = {
+      adAccountNo: entry.adAccountNo,
+      events: [...byId.values()].sort((a, b) => b.ts - a.ts),
+      scanned_until: now,
+      read_budget_up_to: readBudget,
+      read_external_up_to: readExternal,
+      fetched_at: new Date(now).toISOString(),
+    };
+    await saveChangeWatchState(next);
+    paintChangeWatchRow(entry.adAccountNo, next);
+  } catch (e) {
+    console.warn("[dv-ads/change-watch] 점검 실패", entry.adAccountNo, e);
+    // fetched_at은 갱신해 실패한 endpoint를 30분간 다시 두드리지 않게 한다.
+    await saveChangeWatchState({
+      adAccountNo: entry.adAccountNo,
+      events: prev?.events ?? [],
+      scanned_until: prev?.scanned_until ?? since,
+      read_budget_up_to: readUpToFor(prev, "budget"),
+      read_external_up_to: readUpToFor(prev, "external"),
+      fetched_at: new Date(now).toISOString(),
+      error: friendlyMessage(e),
+    });
+  }
+}
+
+/**
+ * 여러 계정 점검 — 새로고침과 같은 4-worker 풀.
+ *
+ * 주기/진입 점검(force:false)은 이미 도는 중이면 그냥 건너뛴다. 반면 강제 점검(force:true,
+ * 알림을 켜거나 제외 변경자를 바꾼 직후)은 반드시 돌아야 한다 — 그냥 skip하면 방금 비운 상태가 다음 주기(30분)
+ * 까지 빈 채로 남아 알림이 사라진 것처럼 보인다. 그래서 앞 점검이 끝나길 기다렸다가 다시 돈다.
+ */
+async function scanChangeWatchAll(
+  entries: MultiAccountDirectoryEntry[],
+  force = false,
+): Promise<void> {
+  // 알림을 켠 계정만 — 광고주가 직접 운영하는 계정은 외부 수정이 정상이라 소음이 된다.
+  const metaAll = await loadAllUserMeta();
+  const targets = entries.filter(
+    (e) => e.masterCustomerId && metaAll[e.adAccountNo]?.changeWatch,
+  );
+  if (targets.length === 0) return;
+  const running = changeWatchScanPromise;
+  if (running) {
+    if (!force) return;
+    await running.catch(() => {});
+  }
+  const run = (async () => {
+    const actors = await loadChangeWatchIdentity();
+    const queue = [...targets];
+    const workers = Array.from(
+      { length: Math.min(REFRESH_ALL_CONCURRENCY, queue.length) },
+      async () => {
+        while (queue.length > 0) {
+          const entry = queue.shift();
+          if (!entry) break;
+          await refreshChangeWatchRow(entry, actors, force);
+        }
+      },
+    );
+    await Promise.all(workers);
+    void refreshBadge();
+  })();
+  changeWatchScanPromise = run;
+  try {
+    await run;
+  } finally {
+    if (changeWatchScanPromise === run) changeWatchScanPromise = null;
+  }
+}
+
+/** 주기 점검 1회분. 광고계정 페이지에 있을 때만 — 다른 페이지에서 괜히 호출하지 않는다. */
+async function changeWatchTick(): Promise<void> {
+  if (!ADACCT_URL_PATTERN.test(location.pathname)) return;
+  const [dir, added] = await Promise.all([loadDirectory(), loadAddedList()]);
+  const entries = pickAddedEntries(dir?.entries ?? [], added);
+  if (entries.length === 0) return;
+  await scanChangeWatchAll(entries, false);
+}
+
+function startChangeWatchTimer(): void {
+  if (changeWatchTimer) return;
+  changeWatchTimer = window.setInterval(() => void changeWatchTick(), CHANGE_WATCH_TTL_MS);
+  void changeWatchTick();
+}
+
+// 종류별 칩 문구 — 예산은 지금 조치가 필요한 일, 수정은 확인이 필요한 일이라 따로 센다.
+const CHIP_TEXT = {
+  budget: (n: number) => `예산 ${n}`,
+  external: (n: number) => `수정 ${n}`,
+} as const;
+const CHIP_TITLE = {
+  budget: "예산을 다 써서 멈춘 광고가 있어요",
+  external: "우리가 아닌 다른 사람이 광고를 수정했어요",
+} as const;
+
+function paintChangeWatchRow(adAccountNo: number, state: ChangeWatchState | null): void {
+  if (!popoverEl) return;
+  const counts = {
+    budget: unreadChangeWatchEvents(state, "budget").length,
+    external: unreadChangeWatchEvents(state, "external").length,
+  };
+  for (const row of findRows(adAccountNo)) {
+    row.dataset.alertChange = counts.budget + counts.external > 0 ? "1" : "0";
+    row.querySelectorAll<HTMLButtonElement>(".dvads-multi-change-chip").forEach((chip) => {
+      const kind = chip.dataset.kind === "budget" ? "budget" : "external";
+      const n = counts[kind];
+      if (n > 0) {
+        chip.textContent = CHIP_TEXT[kind](n);
+        chip.title = CHIP_TITLE[kind];
+        chip.style.display = "";
+      } else {
+        chip.style.display = "none";
+      }
+    });
+    syncAlertBar(row);
+  }
+  scheduleHeadColSync();
+}
+
+/** 렌더 직후 일괄 칠하기 — storage.get 1회로 묶는다. */
+async function paintChangeWatchRows(adAccountNos: number[]): Promise<void> {
+  if (!popoverEl || adAccountNos.length === 0) return;
+  const map = await loadChangeWatchStateMany(adAccountNos);
+  if (!popoverEl) return;
+  for (const no of adAccountNos) paintChangeWatchRow(no, map.get(no) ?? null);
+}
+
 function paintRowEmpty(adAccountNo: number) {
   if (!popoverEl) return;
   for (const row of findRows(adAccountNo)) row.classList.add("dvads-multi-tr-empty");
@@ -3149,6 +3368,184 @@ async function openBizMoneyDialogFor(nos: number[]) {
   });
 }
 
+/**
+ * 변경이력 알림 켜기/끄기. 비즈머니·브랜드검색 알림과 같은 자리·같은 방식(계정 선택 후 설정)이나
+ * 임계값이 없는 on/off라 입력창 대신 [끄기][취소][켜기] 세 버튼.
+ * 끌 때는 쌓인 알림 상태도 같이 지운다 — 안 그러면 꺼둔 계정의 칩이 그대로 남는다.
+ */
+/** 제외 변경자 후보를 긁어올 기간. 최근 이력이 없으면 칩이 안 나오므로 넉넉히. */
+const ACTOR_SCAN_DAYS = 14;
+
+/**
+ * 변경이력 알림 — 켜기/끄기 + 알림에서 제외할 변경자 선택을 한 화면에서.
+ *
+ * 버튼 배치는 비즈머니 알림과 동일 — [해제][취소][확인]. 해제는 선택 계정 중 하나라도
+ * 켜져 있을 때만 노출(꺼진 계정엔 의미 없는 버튼). 확인 = 제외 목록 저장 + 알림 켜기이고,
+ * 목록이 비면 판별이 불가능하므로(우리 것도 남의 것으로 보임) 확인을 막는다.
+ *
+ * 변경자 표기가 제각각(`dvcompany:naver` / `김아라` / `GW10500` / `SYSTEM`)이라 맨입력은
+ * 거의 실패한다. 그래서 열면 **선택한 계정의** 최근 이력에서 실제 등장한 변경자를 긁어와
+ * 칩으로 고르게 한다. 제외 목록은 계정별이 아니라 전역 — 누가 우리 사람인지는 계정과 무관.
+ * 끌 때는 쌓인 알림 상태도 같이 지운다 (안 그러면 꺼둔 계정의 칩이 그대로 남는다).
+ */
+async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
+  if (nos.length === 0) return;
+  closeRenameDialog();
+  const [current, dir, metaMap] = await Promise.all([
+    loadChangeWatchIdentity(),
+    loadDirectory(),
+    loadAllUserMeta(),
+  ]);
+  const chosen = new Set(current);
+  // 해제는 이미 켜진 계정이 있을 때만 노출 — 꺼져 있는 계정엔 의미 없는 버튼이다
+  // (비즈머니 알림의 해제 노출 규칙과 동일).
+  const showClear = nos.some((no) => metaMap[no]?.changeWatch);
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "dvads dvads-actor-backdrop";
+  const card = document.createElement("div");
+  card.className = "dvads-actor-card";
+  card.innerHTML = `
+    <div class="dvads-actor-head">
+      <div class="dvads-actor-title">변경이력 알림</div>
+      <button class="dvads-actor-close" type="button" aria-label="닫기">×</button>
+    </div>
+    <div class="dvads-actor-chips is-loading"><span class="dvads-actor-spinner"></span>불러오는 중...</div>
+    <div class="dvads-actor-input-wrap">
+      <input class="dvads-actor-input" type="text" placeholder="변경자를 선택해 주세요" />
+      <button class="dvads-actor-input-clear" type="button" aria-label="지우기">×</button>
+    </div>
+    <div class="dvads-actor-actions">
+      ${showClear ? `<button class="dvads-cw-off dvads-btn dvads-btn-secondary" type="button">해제</button><div class="dvads-cw-spacer"></div>` : ""}
+      <button class="dvads-cw-cancel dvads-btn dvads-btn-secondary" type="button">취소</button>
+      <button class="dvads-cw-confirm dvads-btn dvads-btn-primary" type="button">확인</button>
+    </div>
+  `;
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  const chipsEl = card.querySelector<HTMLDivElement>(".dvads-actor-chips")!;
+  const input = card.querySelector<HTMLInputElement>(".dvads-actor-input")!;
+  const clearBtn = card.querySelector<HTMLButtonElement>(".dvads-actor-input-clear")!;
+  const confirmBtn = card.querySelector<HTMLButtonElement>(".dvads-cw-confirm")!;
+  input.value = current.join(", ");
+
+  // 제외할 변경자가 하나도 없으면 우리 것까지 전부 남의 것으로 보여 알림이 무의미하다.
+  // 그래서 입력이 비면 확인(=켜기)을 막는다. 끄는 건 해제 버튼으로.
+  const syncOnEnabled = () => {
+    const empty = chosen.size === 0;
+    confirmBtn.disabled = empty;
+    confirmBtn.classList.toggle("is-disabled", empty);
+    clearBtn.style.display = input.value === "" ? "none" : "";
+  };
+  // 입력창이 값의 원천 — 칩은 그 값을 편하게 넣는 수단일 뿐이다. 손으로 글자를 지웠을 때
+  // 칩 선택이 남아있으면 "비운 것 같은데 안 비워진" 상태가 되므로 입력에서 되읽어 맞춘다.
+  const syncFromInput = () => {
+    chosen.clear();
+    for (const t of input.value.split(",").map((s) => s.trim()).filter(Boolean)) chosen.add(t);
+    chipsEl.querySelectorAll<HTMLButtonElement>(".dvads-actor-chip").forEach((c) => {
+      c.classList.toggle("is-on", chosen.has(c.textContent ?? ""));
+    });
+    syncOnEnabled();
+  };
+  input.addEventListener("input", syncFromInput);
+  clearBtn.addEventListener("click", () => {
+    input.value = "";
+    syncFromInput();
+    input.focus();
+  });
+  syncOnEnabled();
+
+  const cleanup = () => {
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+  };
+  wireBackdropDismiss(backdrop, cleanup);
+  card.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("keydown", onKey, true);
+  card.querySelector<HTMLButtonElement>(".dvads-actor-close")?.addEventListener("click", cleanup);
+
+  /**
+   * 제외 목록을 저장하고 선택 계정의 알림 on/off를 적용.
+   * 목록이 비면 판별 자체가 불가능하므로(우리 것도 남의 것으로 보임) 알림을 끈다 — 별도
+   * "끄기" 버튼 없이 입력창을 비우는 것이 곧 끄기다.
+   */
+  const apply = async (turnOn: boolean) => {
+    await saveChangeWatchIdentity([...chosen]);
+    await updateUserMetaMany(nos, { changeWatch: turnOn });
+    // 제외 목록이 바뀌었을 수 있어 기존 판정은 무효 — 비우고 처음부터 다시 훑는다.
+    await clearChangeWatchStates(nos);
+    if (popoverEl) await renderListView(popoverEl);
+    if (turnOn) {
+      // 바로 확인 — 다음 주기(30분)까지 기다리면 켠 티가 안 난다.
+      await scanChangeWatchAll(pickAddedEntries(dir?.entries ?? [], nos), true);
+      if (popoverEl) await paintChangeWatchRows(nos);
+    }
+    void refreshBadge();
+  };
+
+  // 해제 = 선택 계정 알림 끄기 + 쌓인 알림 정리. 확인 = 제외 목록 저장 + 알림 켜기.
+  // 취소는 아무것도 저장하지 않고 닫기만 한다.
+  card.querySelector<HTMLButtonElement>(".dvads-cw-off")?.addEventListener("click", () => {
+    cleanup();
+    void apply(false);
+  });
+  card.querySelector<HTMLButtonElement>(".dvads-cw-cancel")?.addEventListener("click", cleanup);
+  confirmBtn.addEventListener("click", () => {
+    if (confirmBtn.disabled) return;
+    cleanup();
+    void apply(true);
+  });
+
+  // ─── 변경자 후보 수집 (선택한 계정의 최근 이력) ───
+  // 알림을 켜기 *전에도* 후보가 보여야 한다 — 켠 계정만 훑으면 처음 켤 때 칩이 늘 비어버린다.
+  const targets = pickAddedEntries(dir?.entries ?? [], nos).filter((e) => e.masterCustomerId);
+  const until = Date.now();
+  const since = until - ACTOR_SCAN_DAYS * 24 * 60 * 60 * 1000;
+  const found = new Set<string>(current);
+  const queue = [...targets];
+  const workers = Array.from({ length: Math.min(REFRESH_ALL_CONCURRENCY, queue.length) }, async () => {
+    while (queue.length > 0) {
+      const e = queue.shift();
+      if (!e?.masterCustomerId) break;
+      try {
+        const rows = await fetchChangeHistory(e.masterCustomerId, since, until);
+        for (const a of observedActors(rows)) found.add(a);
+      } catch (err) {
+        console.warn("[dv-ads/change-watch] 변경자 수집 실패", e.adAccountNo, err);
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (!backdrop.isConnected) return;
+
+  chipsEl.innerHTML = "";
+  chipsEl.classList.remove("is-loading");
+  const actors = [...found].sort();
+  if (actors.length === 0) {
+    chipsEl.textContent = "최근 이력에 변경자가 없어요. 아래에 직접 입력해 주세요";
+    return;
+  }
+  for (const a of actors) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "dvads-actor-chip";
+    chip.textContent = a;
+    chip.classList.toggle("is-on", chosen.has(a));
+    chip.addEventListener("click", () => {
+      if (chosen.has(a)) chosen.delete(a);
+      else chosen.add(a);
+      // 칩으로 고른 건 입력창에 쓴 뒤 입력창 기준으로 되읽는다 — 두 경로가 어긋나지 않게.
+      input.value = [...chosen].join(", ");
+      syncFromInput();
+    });
+    chipsEl.appendChild(chip);
+  }
+}
+
 async function openBrandSearchDialogFor(nos: number[]) {
   if (nos.length === 0) return;
   const metaMap = await loadAllUserMeta();
@@ -3201,25 +3598,31 @@ async function refreshBadgeImpl() {
   if (!badge) return;
   const addedList = await loadAddedList();
   const metaMap = await loadAllUserMeta();
-  // 임계값이 설정된 계정만 후보 — 그 계정들의 스냅샷만 한 번에 읽어 저장소 호출을 1회로 묶는다.
+  // 임계값이 설정된 계정만 스냅샷 후보 — 그 계정들의 스냅샷만 한 번에 읽어 저장소 호출을 1회로 묶는다.
+  // 변경이력은 임계값과 무관하게 전 계정 대상이라 따로 일괄 로드.
   const candidates = addedList.filter((no) => {
     const meta = metaMap[no];
     return !!meta && (meta.bizMoneyThreshold != null || meta.brandSearchDaysThreshold != null);
   });
-  const snapMap = await loadSnapshotMany(candidates);
+  const [snapMap, changeMap] = await Promise.all([
+    loadSnapshotMany(candidates),
+    loadChangeWatchStateMany(addedList),
+  ]);
   let count = 0;
-  for (const no of candidates) {
-    const meta = metaMap[no]!;
+  for (const no of addedList) {
+    const meta = metaMap[no];
     const snap = snapMap.get(no);
-    if (!snap) continue;
     let alerted = false;
-    if (meta.bizMoneyThreshold != null && snap.bizMoney != null && snap.bizMoney <= meta.bizMoneyThreshold) {
-      alerted = true;
+    if (meta && snap) {
+      if (meta.bizMoneyThreshold != null && snap.bizMoney != null && snap.bizMoney <= meta.bizMoneyThreshold) {
+        alerted = true;
+      }
+      if (!alerted && meta.brandSearchDaysThreshold != null) {
+        const dday = computeMinDday(snap.contracts);
+        if (dday !== null && dday <= meta.brandSearchDaysThreshold) alerted = true;
+      }
     }
-    if (!alerted && meta.brandSearchDaysThreshold != null) {
-      const dday = computeMinDday(snap.contracts);
-      if (dday !== null && dday <= meta.brandSearchDaysThreshold) alerted = true;
-    }
+    if (!alerted && unreadChangeWatchEvents(changeMap.get(no) ?? null).length > 0) alerted = true;
     if (alerted) count++;
   }
   if (count > 0) {
@@ -3249,7 +3652,8 @@ function registerStorageListener() {
       if (
         k === "multi_account_user_meta" ||
         k === "multi_account_added_list" ||
-        k.startsWith("multi_account_snapshot:")
+        k.startsWith("multi_account_snapshot:") ||
+        k.startsWith("change_watch_state:")
       ) {
         void refreshBadge();
         return;
@@ -3323,9 +3727,168 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
     delete row.dataset.brandDday;
   }
 
-  // 통합 알림 cue — 비즈/브랜드 어느 쪽이든 임계 도달 시 행 좌측 빨간 세로 선.
+  // 통합 알림 cue — 비즈/브랜드/변경이력 어느 쪽이든 알림이 뜨면 행 좌측 빨간 세로 선.
   // "이 계정에 뭔가 알림이 떴음"이라는 단일 시각 신호로 통일.
-  row.classList.toggle("dvads-multi-tr-threshold-alert", bizAlert || brandAlert);
+  row.dataset.alertBiz = bizAlert ? "1" : "0";
+  row.dataset.alertBrand = brandAlert ? "1" : "0";
+  syncAlertBar(row);
+}
+
+/**
+ * 좌측 알림 선은 서로 다른 시점에 도는 두 경로가 칠한다 — 스냅샷 paint(비즈/브랜드)와
+ * 변경이력 스캔. 각자 classList.toggle을 하면 나중에 칠한 쪽이 앞선 쪽 결과를 지운다.
+ * 그래서 각 경로는 자기 판정만 dataset에 남기고, 실제 선은 여기서 합쳐 칠한다.
+ */
+function syncAlertBar(row: HTMLTableRowElement) {
+  const on =
+    row.dataset.alertBiz === "1" ||
+    row.dataset.alertBrand === "1" ||
+    row.dataset.alertChange === "1";
+  row.classList.toggle("dvads-multi-tr-threshold-alert", on);
+}
+
+// ─── 변경이력 알림 상세 패널 ─────────────────────────────────────────────
+//
+// 행의 "이력 N" 칩 클릭 → 무엇이 언제 누구에 의해 바뀌었는지 목록 + [모두 확인].
+// 확인을 누르면 그 시점까지를 읽음 처리해 다음부터는 새 이력만 알린다.
+
+let changePanelEl: HTMLDivElement | null = null;
+let changePanelKey: string | null = null;
+
+function closeChangeWatchPanel(): void {
+  changePanelEl?.remove();
+  changePanelEl = null;
+  changePanelKey = null;
+  document.removeEventListener("mousedown", onChangePanelPointer, true);
+  document.removeEventListener("keydown", onChangePanelKey, true);
+}
+
+function onChangePanelPointer(e: MouseEvent): void {
+  if (!changePanelEl) return;
+  const t = e.target as HTMLElement | null;
+  if (!t || changePanelEl.contains(t)) return;
+  // 칩 클릭은 아래 openChangeWatchPanel이 토글로 처리 — 여기서 닫으면 곧바로 다시 열려 깜빡인다.
+  if (t.closest?.(".dvads-multi-change-chip")) return;
+  closeChangeWatchPanel();
+}
+
+function onChangePanelKey(e: KeyboardEvent): void {
+  if (e.key !== "Escape") return;
+  // capture 단계에서 먼저 삼켜 popover까지 같이 닫히지 않게 한다.
+  e.stopPropagation();
+  closeChangeWatchPanel();
+}
+
+function formatEventTime(ts: number): string {
+  const d = new Date(ts);
+  const mm = d.getMonth() + 1;
+  const dd = d.getDate();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mi = String(d.getMinutes()).padStart(2, "0");
+  return `${mm}/${dd} ${hh}:${mi}`;
+}
+
+async function openChangeWatchPanel(
+  entry: MultiAccountDirectoryEntry,
+  anchor: HTMLElement,
+  kind: ChangeWatchEvent["kind"],
+): Promise<void> {
+  // 같은 칩을 다시 누르면 닫기(토글). 계정+종류 단위라 예산→수정으로 바로 갈아탈 수 있다.
+  const key = `${entry.adAccountNo}:${kind}`;
+  if (changePanelKey === key) {
+    closeChangeWatchPanel();
+    return;
+  }
+  closeChangeWatchPanel();
+  const state = await loadChangeWatchState(entry.adAccountNo);
+  const unread = unreadChangeWatchEvents(state, kind);
+  if (!popoverEl || !anchor.isConnected || unread.length === 0) return;
+
+  const panel = document.createElement("div");
+  panel.className = "dvads dvads-change-panel";
+  panel.innerHTML = `
+    <div class="dvads-change-panel-head">
+      <span class="dvads-change-panel-title"></span>
+      <button class="dvads-change-panel-read dvads-btn dvads-btn-primary" type="button">모두 확인</button>
+    </div>
+    <div class="dvads-change-panel-list"></div>
+  `;
+  panel.querySelector<HTMLElement>(".dvads-change-panel-title")!.textContent =
+    kind === "budget" ? `예산 소진 ${unread.length}건` : `외부 수정 ${unread.length}건`;
+
+  const list = panel.querySelector<HTMLDivElement>(".dvads-change-panel-list")!;
+  // 아주 많으면 스크롤보다 상한이 낫다 — 확인을 누르면 어차피 전부 읽음 처리된다.
+  const MAX_SHOWN = 50;
+  for (const ev of unread.slice(0, MAX_SHOWN)) {
+    const item = document.createElement("div");
+    item.className = "dvads-change-item" + (ev.kind === "budget" ? " is-budget" : "");
+    const who = document.createElement("span");
+    who.className = "dvads-change-kind";
+    who.textContent = ev.kind === "budget" ? "예산 소진" : ev.actor;
+    const when = document.createElement("span");
+    when.className = "dvads-change-when";
+    when.textContent = formatEventTime(ev.ts);
+    const top = document.createElement("div");
+    top.className = "dvads-change-item-top";
+    top.append(who, when);
+    const target = document.createElement("div");
+    target.className = "dvads-change-target";
+    target.textContent = ev.target || "-";
+    const summary = document.createElement("div");
+    summary.className = "dvads-change-summary";
+    summary.textContent = ev.summary;
+    item.append(top, target, summary);
+    list.appendChild(item);
+  }
+  if (unread.length > MAX_SHOWN) {
+    const more = document.createElement("div");
+    more.className = "dvads-change-more";
+    more.textContent = `외 ${unread.length - MAX_SHOWN}건 더 있어요`;
+    list.appendChild(more);
+  }
+
+  panel.addEventListener("click", (e) => e.stopPropagation());
+  panel.querySelector<HTMLButtonElement>(".dvads-change-panel-read")?.addEventListener("click", () => {
+    void (async () => {
+      const cur = await loadChangeWatchState(entry.adAccountNo);
+      if (cur) {
+        // 이 종류만 확인 처리 — 화면에 뜬 것뿐 아니라 저장된 같은 종류 전체 중 최신 시각까지.
+        const readUpTo = cur.events
+          .filter((e) => e.kind === kind)
+          .reduce((m, e) => Math.max(m, e.ts), readUpToFor(cur, kind));
+        // 확인한 건 다시 안 뜨므로 목록에서도 비운다 (저장소 절약). 다른 종류는 그대로 둔다.
+        const next: ChangeWatchState = {
+          ...cur,
+          read_budget_up_to: kind === "budget" ? readUpTo : readUpToFor(cur, "budget"),
+          read_external_up_to: kind === "external" ? readUpTo : readUpToFor(cur, "external"),
+          events: cur.events.filter((e) => e.kind !== kind || e.ts > readUpTo),
+        };
+        await saveChangeWatchState(next);
+        paintChangeWatchRow(entry.adAccountNo, next);
+        void refreshBadge();
+      }
+      closeChangeWatchPanel();
+    })();
+  });
+
+  document.body.appendChild(panel);
+  changePanelEl = panel;
+  changePanelKey = key;
+
+  // 위치 — 칩 아래 좌측 정렬. 아래 공간이 모자라면 위로 뒤집는다.
+  const a = anchor.getBoundingClientRect();
+  const p = panel.getBoundingClientRect();
+  const GAP = 8;
+  let left = a.left;
+  if (left + p.width > window.innerWidth - 8) left = window.innerWidth - 8 - p.width;
+  if (left < 8) left = 8;
+  let top = a.bottom + GAP;
+  if (top + p.height > window.innerHeight - 8) top = Math.max(8, a.top - p.height - GAP);
+  panel.style.left = `${Math.round(left)}px`;
+  panel.style.top = `${Math.round(top)}px`;
+
+  document.addEventListener("mousedown", onChangePanelPointer, true);
+  document.addEventListener("keydown", onChangePanelKey, true);
 }
 
 // ─── 브랜드검색 알림 호버 툴팁 ───────────────────────────────────────────

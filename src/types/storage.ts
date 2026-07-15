@@ -171,6 +171,11 @@ export interface MultiAccountUserMeta {
   bizMoneyThreshold?: number;
   /** 브랜드검색 최소 D-day 알림 임계값 (일). 최소 dday가 이 값 이하면 알림. undefined = 비활성 */
   brandSearchDaysThreshold?: number;
+  /**
+   * 변경이력 알림 켜기. 켠 계정만 30분마다 변경이력을 훑는다. undefined = 비활성.
+   * 광고주가 직접 운영하는 계정은 외부 수정이 정상이라 알림이 소음이 되므로 계정별 선택.
+   */
+  changeWatch?: boolean;
 }
 
 /**
@@ -233,5 +238,53 @@ export interface MultiAccountSnapshot {
   /** 캐시 적재 시각 (ISO date string) */
   fetched_at: string;
   /** 수집 중 실패 사유 (사용자 친화 한글 메시지) */
+  error?: string;
+}
+
+/**
+ * F-ChangeWatch — 변경이력 알림 1건.
+ *
+ * 데이터 소스: `POST /apis/sa/api/histories/_search` (정찰 결과는 메모리
+ * `project_f_changewatch_endpoints` 참조).
+ */
+export interface ChangeWatchEvent {
+  /** 응답 eventId — 중복 제거 + 읽음 처리 키 */
+  id: string;
+  /** 발생 시각 (epoch ms) */
+  ts: number;
+  /** budget = 예산 초과로 중단(ncc.charge.*_LOCK), external = 우리 목록에 없는 사람이 수정 */
+  kind: "budget" | "external";
+  /** 변경자 표시명(actorDisplayName). budget은 시스템이 올린 거라 빈 문자열 */
+  actor: string;
+  /** 대상 이름 (캠페인/광고그룹명). 못 잡으면 빈 문자열 */
+  target: string;
+  /** 사람이 읽는 한 줄 요약 (예: "일예산 10,000원 -> 15,000원") */
+  summary: string;
+}
+
+/**
+ * F-ChangeWatch — 광고계정별 변경이력 알림 상태.
+ * chrome.storage.local 키: `change_watch_state:<adAccountNo>`
+ *
+ * 조회 창(window)은 고정 기간이 아니라 "직전 점검 이후"다. `scanned_until`이 다음 조회의
+ * since가 되어 놓치는 이력도, 중복 알림도 없다. 첫 점검만 CHANGE_WATCH_BOOTSTRAP_MS 만큼
+ * 거슬러 올라간다.
+ */
+export interface ChangeWatchState {
+  adAccountNo: number;
+  /** 아직 확인 안 한 알림만. 확인한 건 다시 안 뜨므로 저장하지 않는다 (CHANGE_WATCH_KEEP_MS 참조) */
+  events: ChangeWatchEvent[];
+  /** 이 시각(epoch ms)까지 조회 완료 — 다음 조회의 since */
+  scanned_until: number;
+  /**
+   * 읽음 기준 (epoch ms). ts가 이 값 이하인 알림은 확인된 것으로 침묵.
+   * 예산/수정을 따로 확인할 수 있어야 해서 종류별로 나눠 기억한다 — 하나로 두면 예산만
+   * 확인했는데 그보다 오래된 수정 알림까지 같이 사라진다.
+   */
+  read_budget_up_to: number;
+  read_external_up_to: number;
+  /** 마지막 점검 시각 (ISO date string) */
+  fetched_at: string;
+  /** 점검 실패 사유 (사용자 친화 한글 메시지) */
   error?: string;
 }
