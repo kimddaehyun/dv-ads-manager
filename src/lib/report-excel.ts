@@ -503,9 +503,12 @@ export function updateDimension(xml: string): string {
 }
 
 // 행 숨김 (종합 매체별 디스플레이 행 등 — 차트는 plotVisOnly=1이라 숨김행 자동 제외).
+// 자기닫힘(`<row .../>`)과 열림(`<row ...>`) 둘 다 처리 — `[^>]*?`가 `/`까지 먹어버리면
+// `<row ... customHeight="1"/ hidden="1">` 같은 깨진 태그가 나온다(엑셀 '복구' 대화상자 원인).
+// deleteRows·replaceCell의 같은 함정. 내용 없는 여백/그래프 자리 행이 자기닫힘으로 들어온다.
 export function setRowHidden(xml: string, rowNum: number): string {
-  return xml.replace(new RegExp(`<row r="${rowNum}"([^>]*?)>`), (full, a) =>
-    /\shidden=/.test(a) ? full : `<row r="${rowNum}"${a} hidden="1">`,
+  return xml.replace(new RegExp(`<row r="${rowNum}"([^>]*?)(/?)>`), (full, a, slash) =>
+    /\shidden=/.test(a) ? full : `<row r="${rowNum}"${a} hidden="1"${slash}>`,
   );
 }
 

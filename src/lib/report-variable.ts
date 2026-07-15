@@ -146,17 +146,96 @@ export function renderKeywordSheet(
   writeText(files, sheetPath, xml);
 }
 
-// ── 검색광고 캠페인별 성과 (sheet3 섹션2, 차트 없음) ──
-// 표본행(11/소계/합계)의 지표 스타일은 항상 D~O(12개)에 있다 — 거기서 떠와 실제 배치로 옮긴다.
-// 섹션1(주간요약 4~7행)은 report-fill이 채우므로 11행부터 재생성(이상 행만 교체).
+// ── 쇼핑검색 상품별 성과 (sheet9) ──
+// 키워드 시트와 달리 **캠페인/그룹을 안 나누고 상품명 한 열**만 쓴다(같은 상품은 이미 합산됨).
+// 그래서 열 배치가 [B 상품명][C~N 12지표]로 종합/상세 표와 같다 — 키워드 시트(B~D 라벨 + E~P)와 다름.
+// 양식은 sheet6(쇼핑검색_키워드) 복제라 표본 스타일은 그 시트 것(4=데이터, B:D 병합행=전체합계)을 쓰고,
+// 지표 스타일은 E~P에 있으므로 C~N으로 옮겨 붙인다.
+const PROD_COLS = ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+const PROD_METRIC_COLS = ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+const PROD_SAMPLE_METRIC_COLS = ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"];
+
+export interface ProductRow {
+  label: string; // 상품명 (못 얻었으면 소재ID)
+  metrics: ReportMetrics;
+}
+
+export function renderProductSheet(
+  files: ZipFiles,
+  sheetPath: string,
+  rows: ProductRow[],
+  title: string,
+): void {
+  let xml = readText(files, sheetPath);
+  xml = setString(xml, "B2", title);
+
+  // 표본 스타일: 3=헤더, 4=데이터, 전체합계(B:D 병합행). 지표 스타일은 E~P → C~N으로 이동.
+  const shift = (st: Record<string, string>): Record<string, string> => {
+    const out: Record<string, string> = { B: st.B ?? "" };
+    PROD_METRIC_COLS.forEach((c, i) => { out[c] = st[PROD_SAMPLE_METRIC_COLS[i]] ?? ""; });
+    return out;
+  };
+  const sHeader = shift(harvestRowStyles(xml, 3));
+  const sData = shift(harvestRowStyles(xml, 4));
+  const totalM = xml.match(/<mergeCell ref="B(\d+):D\1"\/>/);
+  const sTotal = shift(harvestRowStyles(xml, totalM ? Number(totalM[1]) : 11));
+
+  const wmax: Record<string, number> = { B: visualLen("상품명") };
+  PROD_METRIC_COLS.forEach((c, i) => { wmax[c] = visualLen(METRIC_HEADERS[i]); });
+  const noteMetrics = (m: ReportMetrics) => {
+    const vals = metricValues(m);
+    PROD_METRIC_COLS.forEach((c, i) => { wmax[c] = Math.max(wmax[c], visualLen(metricStr(i, vals[i]))); });
+  };
+
+  const out: string[] = [];
+  let r = 3;
+  const headerVals: Record<string, CellValue> = { B: "상품명" };
+  PROD_METRIC_COLS.forEach((c, i) => { headerVals[c] = METRIC_HEADERS[i]; });
+  out.push(buildRow(r++, PROD_COLS, sHeader, headerVals));
+
+  let total = ZERO_METRICS;
+  for (const row of rows) {
+    wmax.B = Math.max(wmax.B, visualLen(row.label));
+    noteMetrics(row.metrics);
+    const v: Record<string, CellValue> = { B: row.label };
+    metricValues(row.metrics).forEach((val, i) => { v[PROD_METRIC_COLS[i]] = val; });
+    out.push(buildRow(r++, PROD_COLS, sData, v));
+    total = addMetrics(total, row.metrics);
+  }
+
+  noteMetrics(total);
+  const tv: Record<string, CellValue> = { B: "전체 합계" };
+  metricValues(total).forEach((val, i) => { tv[PROD_METRIC_COLS[i]] = val; });
+  out.push(buildRow(r, PROD_COLS, sTotal, tv));
+
+  xml = replaceRowsFrom(xml, 3, out);
+  // 제목 병합만 남긴다 — 양식의 전체합계 B:D 병합은 이 배치에서 의미 없다(라벨 열이 B 하나).
+  xml = setMergeCells(xml, ["B2:N2"]);
+  const widths: Record<string, number> = {};
+  for (const c of PROD_COLS) widths[c] = widthFor(wmax[c]);
+  widths.O = 0; // 양식(키워드 시트) 잔여 열 — 이 배치에선 안 쓰므로 접는다
+  widths.P = 0;
+  xml = setColumnWidths(xml, widths);
+  writeText(files, sheetPath, xml);
+}
+
+// ── 검색광고 캠페인별 성과 (sheet3 섹션2) ──
+// 표본행(첫 데이터행/소계/합계)의 지표 스타일은 항상 D~O(12개)에 있다 — 거기서 떠와 실제 배치로 옮긴다.
+// 섹션1(요약 4~7행)은 report-fill이 채우므로 첫 데이터행부터 재생성(이상 행만 교체).
 const CAMP_SAMPLE_METRIC_COLS = ["D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O"];
+
+// 섹션2 행 위치. 원래 9/10/11이었는데 제목(2행) 아래 3~13에 일자별 콤보 그래프 자리가 생기며
+// +11 밀렸다 (scripts/build-report-template-charts.ts). 양식을 다시 손대면 이 상수도 같이 맞춰야 한다.
+const CAMP_BAR_ROW = 20;    // 섹션 헤더 바 (B~마지막지표열 병합)
+const CAMP_HEADER_ROW = 21; // 컬럼 헤더
+const CAMP_FIRST_ROW = 22;  // 첫 데이터행 (= 표본 스타일 행)
 
 export interface CampaignTypeGroup {
   type: string; // 파워링크/쇼핑검색광고/...
   rows: { campaign?: string; group: string; metrics: ReportMetrics }[]; // campaign은 withGroup일 때만
 }
 
-// 시트별 표본 행 위치. 검색광고(sheet3)=14/27, 디스플레이(sheet7)=13/35.
+// 시트별 표본 행 위치. 그래프 자리 11행 삽입 후 검색광고(sheet3)=25/38, 디스플레이(sheet7)=24/46.
 // dashConv=true면 직접/간접 전환(마지막 2개 지표열)을 '-'로 (디스플레이는 split 없음).
 // withGroup=true면 [유형|캠페인|그룹|지표(E~P)] 3단계 + 같은 캠페인 세로병합 (검색광고).
 // false면 [유형|캠페인|지표(D~O)] 2단계 (디스플레이는 캠페인 단위라 그룹 없음).
@@ -166,8 +245,8 @@ export interface CampaignSheetLayout {
   dashConv?: boolean;
   withGroup?: boolean;
 }
-const SEARCH_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 14, totalSampleRow: 27, withGroup: true };
-export const DISPLAY_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 13, totalSampleRow: 35, dashConv: true };
+const SEARCH_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 25, totalSampleRow: 38, withGroup: true };
+export const DISPLAY_CAMPAIGN_LAYOUT: CampaignSheetLayout = { subtotalSampleRow: 24, totalSampleRow: 46, dashConv: true };
 
 export function renderCampaignSheet(
   files: ZipFiles,
@@ -189,7 +268,7 @@ export function renderCampaignSheet(
   const cols = [...labelCols, ...metricCols, ...spacerCols];
   const lastCol = metricCols[metricCols.length - 1]; // 지표 마지막(스페이서 제외) — 헤더바 병합 기준
 
-  const sFirst = harvestRowStyles(xml, 11);
+  const sFirst = harvestRowStyles(xml, CAMP_FIRST_ROW);
   const sSubtotal = harvestRowStyles(xml, layout.subtotalSampleRow);
   const sTotal = harvestRowStyles(xml, layout.totalSampleRow);
 
@@ -209,16 +288,19 @@ export function renderCampaignSheet(
   const subStyle = styleFor(sSubtotal, true);
   const totalStyle = styleFor(sTotal, false);
 
-  // 헤더(행 10). withGroup이면 지표 라벨이 E~P로 밀리므로 행 전체 재구성(D10=그룹 신설).
+  // 컬럼 헤더행. withGroup이면 지표 라벨이 E~P로 밀리므로 행 전체 재구성(그룹 열 신설).
   // 아니면 B/C 라벨만 교체(디스플레이는 지표 라벨이 양식 그대로 D~O).
   if (withGroup) {
-    const headerStyle = styleFor(harvestRowStyles(xml, 10), false);
+    const headerStyle = styleFor(harvestRowStyles(xml, CAMP_HEADER_ROW), false);
     const headerValues: Record<string, CellValue> = { B: "캠페인 유형", C: "캠페인", D: "그룹" };
     metricCols.forEach((mc, i) => { headerValues[mc] = METRIC_HEADERS[i]; });
-    xml = xml.replace(/<row r="10"[^>]*>[\s\S]*?<\/row>/, buildRow(10, cols, headerStyle, headerValues));
+    xml = xml.replace(
+      new RegExp(`<row r="${CAMP_HEADER_ROW}"[^>]*>[\\s\\S]*?</row>`),
+      buildRow(CAMP_HEADER_ROW, cols, headerStyle, headerValues),
+    );
   } else {
-    xml = setString(xml, "B10", "캠페인 유형");
-    xml = setString(xml, "C10", "캠페인");
+    xml = setString(xml, `B${CAMP_HEADER_ROW}`, "캠페인 유형");
+    xml = setString(xml, `C${CAMP_HEADER_ROW}`, "캠페인");
   }
 
   const dashLast = (cells: Record<string, CellValue>): Record<string, CellValue> => {
@@ -238,8 +320,8 @@ export function renderCampaignSheet(
   };
 
   const rows: string[] = [];
-  const merges = ["B2:N2", `B9:${lastCol}9`];
-  let r = 11;
+  const merges = ["B2:N2", `B${CAMP_BAR_ROW}:${lastCol}${CAMP_BAR_ROW}`];
+  let r = CAMP_FIRST_ROW;
   let grand = ZERO_METRICS;
 
   for (const g of groups) {
@@ -293,7 +375,7 @@ export function renderCampaignSheet(
   if (withGroup) totalValues.D = null;
   rows.push(buildRow(r, cols, totalStyle, totalValues));
 
-  xml = replaceRowsFrom(xml, 11, rows);
+  xml = replaceRowsFrom(xml, CAMP_FIRST_ROW, rows);
   xml = setMergeCells(xml, merges);
   const widths: Record<string, number> = {};
   for (const c of [...labelCols, ...metricCols]) widths[c] = widthFor(wmax[c]);

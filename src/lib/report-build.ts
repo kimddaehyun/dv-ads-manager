@@ -12,11 +12,11 @@ import {
   readText, writeText, hideRowRange, type ZipFiles,
 } from "./report-excel";
 import {
-  fillFixedSheets, expandDailyRows, SEARCH_DAILY_EXPAND, DISPLAY_DAILY_EXPAND,
+  fillFixedSheets, expandDailyRows, insertSummaryDaily, SEARCH_DAILY_EXPAND, DISPLAY_DAILY_EXPAND,
   type ReportModel, type NamedMetrics,
 } from "./report-fill";
 import {
-  renderKeywordSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement,
+  renderKeywordSheet, renderProductSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement,
   DISPLAY_PLACEMENT, DISPLAY_CAMPAIGN_LAYOUT,
   type KeywordGroup, type CampaignTypeGroup, type SummaryType,
 } from "./report-variable";
@@ -26,7 +26,7 @@ import {
   ZERO_METRICS, type ReportMetrics, type AdvReportResult,
 } from "./report-data";
 import {
-  rangeForPreset, previousRange, eachDay, dayLabel, ymdToIso, proratedBrand,
+  rangeForPreset, previousRange, rangeText, eachDay, dayLabel, ymdToIso, proratedBrand,
   type DateRange, type ReportPreset, type ProrationContract,
 } from "./report-period";
 import { fetchGfaTotal, fetchGfaData, type GfaData } from "./report-gfa";
@@ -133,6 +133,7 @@ function orderedNamed(map: Map<string, ReportMetrics>, order: string[]): NamedMe
 export async function buildReportModel(
   target: ReportTarget, range: DateRange, meta: ReportMeta, brandCur = 0, brandPrev = 0,
   displayCurrent?: GfaData | Promise<GfaData>,
+  brandRaw: BrandRawContract[] = [], // 일자별에 브랜드 계약금액을 하루 단위로 나눠 넣기 위한 원본
 ): Promise<ReportModel> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
@@ -186,9 +187,18 @@ export async function buildReportModel(
   const saPrev = brandPrev > 0 ? { ...saPrevRaw, cost: saPrevRaw.cost + brandPrev } : saPrevRaw;
 
   // 일자별: 기간 내 모든 날짜를 라벨로, 데이터 매칭(없으면 0)
+  //
+  // 브랜드검색은 계약 기반이라 소진비용(salesAmt)이 0 → 다차원보고서 일자별에 비용이 안 잡힌다.
+  // 반면 총계(saCur)에는 계약금액 일할분(brandCur)이 더해져 있어, 그대로 두면 일자별 합계가
+  // 총계보다 브랜드 금액만큼 작다. 종합 시트에선 이 둘이 바로 위아래에 붙으므로 티가 난다.
+  // → 같은 일할 계산(proratedBrand)을 **하루 단위 기간**으로 돌려 날짜마다 나눠 넣는다.
+  //   (캠페인별 표가 이미 brandCur.byAdgroup으로 그룹 단위 배분을 하는 것과 같은 방식)
+  // 하루씩 Math.round 하므로 합계가 brandCur와 몇 원(30일 기준 최대 15원) 어긋날 수 있다.
   const byDay: NamedMetrics[] = eachDay(range).map((d) => {
     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    return { label: dayLabel(d), metrics: byDayMap.get(iso) ?? ZERO_METRICS };
+    const m = byDayMap.get(iso) ?? ZERO_METRICS;
+    const brand = brandRaw.length > 0 ? proratedBrand(brandRaw, { since: iso, until: iso }).total : 0;
+    return { label: dayLabel(d), metrics: brand > 0 ? { ...m, cost: m.cost + brand } : m };
   });
 
   const hasDisplay = gfaCur.impressions > 0 || gfaCur.cost > 0;
@@ -221,17 +231,31 @@ export async function buildReportModel(
     }
   }
 
+  // 종합 일자별 = 검색 + 디스플레이. 둘 다 eachDay(range)로 만들어 인덱스가 맞는다.
+  // 디스플레이를 운영하는데 분해 수집이 실패하면(hasDisplayDetail=false) 검색분만 남아 섹션1
+  // 총계와 안 맞으므로, 그 사실을 제목에 표기하도록 플래그를 넘긴다.
+  const summaryByDay = displayByDay.length > 0
+    ? byDay.map((d, i) => ({
+      label: d.label,
+      metrics: addMetrics(d.metrics, displayByDay[i]?.metrics ?? ZERO_METRICS),
+    }))
+    : byDay;
+
   return {
     advertiserName: target.name,
     periodText: `${range.since.replace(/-/g, ".")} ~ ${range.until.replace(/-/g, ".")}`,
     authorName: meta.authorName,
     createdDate: meta.createdDate,
+    curPeriodLabel: `설정 기간(${rangeText(range)})`,
+    prevPeriodLabel: `이전 기간(${rangeText(prev)})`,
     totalCurrent: addMetrics(saCur, gfaCur), // 종합 = 검색광고 + 디스플레이
     totalPrev: addMetrics(saPrev, gfaPrev),
     searchCurrent: saCur,
     searchPrev: saPrev,
     displayCurrent: gfaCur,
     displayPrev: gfaPrev,
+    summaryByDay,
+    summaryByDayIsSearchOnly: hasDisplay && !hasDisplayDetail,
     byDay,
     byPlacement: byPlaceRows, // 이미 동적 정렬된 NamedMetrics[]
     byGender: orderedNamed(byGenderMap, GENDER_ORDER),
@@ -260,7 +284,40 @@ function normalizeNamed(
   return out;
 }
 
+// ── 자잘한 행 접기 ──
+// 총비용이 표 전체 총비용의 0.5% 미만인 행(100만원 집행이면 5천원 미만)은 표를 덮기만 하므로
+// "기타 ..." 한 행으로 합친다. 합친 값도 그대로 더해지므로 소계/합계는 계속 정확하다.
+const MINOR_ROW_RATIO = 0.005;
+
+// 표 전체 총비용의 0.5%. 합계가 0이면 임계도 0이라 아무것도 안 접힌다(전부 0원인 기간).
+function minorThreshold(rows: { metrics: ReportMetrics }[]): number {
+  return rows.reduce((s, r) => s + r.metrics.cost, 0) * MINOR_ROW_RATIO;
+}
+
+// 전환이 하나라도 붙은 행. 비용이 작아도 성과가 난 것이라 접어서 묻으면 안 된다.
+// 이 리포트의 파생지표(전환율/ROAS)는 구매완료 기준이지만, 직접·간접 전환도 별도 칸으로 보여주므로
+// 셋 중 하나라도 있으면 전환으로 본다.
+function hasConversion(m: ReportMetrics): boolean {
+  return m.purchaseConv > 0 || m.directConv > 0 || m.indirectConv > 0;
+}
+
+// 총비용 내림차순으로 이미 정렬된 목록을 [주요 행..., 기타 1행]으로 접는다.
+// 접을 게 없으면 원본 그대로. 임계는 호출 측이 정한다(키워드는 캠페인별, 지면·상품은 표 전체).
+// keep(예: 전환 발생)에 걸리는 행은 임계 미만이어도 남긴다.
+function foldMinorRows(
+  rows: NamedMetrics[], threshold: number, otherLabel: string,
+  keep?: (m: ReportMetrics) => boolean,
+): NamedMetrics[] {
+  const isMinor = (r: NamedMetrics) => r.metrics.cost < threshold && !keep?.(r.metrics);
+  const minor = rows.filter(isMinor);
+  if (minor.length === 0) return rows;
+  let sum = ZERO_METRICS;
+  for (const m of minor) sum = addMetrics(sum, m.metrics);
+  return [...rows.filter((r) => !isMinor(r)), { label: otherLabel, metrics: sum }];
+}
+
 // 지면별: mediaNm별 동적. 노출(impressions)>0인 지면만, 총비용 내림차순. (고정 7버킷 폐기)
+// 총비용 0.5% 미만 지면은 "기타 매체" 한 행으로 접는다.
 async function fetchPlacement(customerId: number, range: DateRange): Promise<NamedMetrics[]> {
   const res = await fetchAdvancedReport({ attributes: ["mediaNm"], range, customerId });
   const idx = colIndex(res.head);
@@ -270,10 +327,11 @@ async function fetchPlacement(customerId: number, range: DateRange): Promise<Nam
     if (!name) continue;
     map.set(name, addMetrics(map.get(name) ?? ZERO_METRICS, rowMetrics(r, idx)));
   }
-  return [...map.entries()]
+  const rows = [...map.entries()]
     .map(([label, metrics]) => ({ label, metrics }))
     .filter((p) => p.metrics.impressions > 0)
     .sort((a, b) => b.metrics.cost - a.metrics.cost);
+  return foldMinorRows(rows, minorThreshold(rows), "기타 매체");
 }
 
 // ── 브랜드검색 계약금액 (일할 계산) ──
@@ -408,11 +466,15 @@ function sortByCampaign(rows: CampGroupRow[]): CampGroupRow[] {
   return out;
 }
 
-// 키워드 시트: 파워링크(등록 키워드) / 쇼핑검색(실제 검색어 비용 TOP)
+// 키워드 시트: 파워링크(등록 키워드) / 쇼핑검색(실제 검색어)
 // 이미 받아둔 advanced-report 응답(유형x캠페인x그룹x검색어)을 유형(apiType)으로 필터해 그룹핑한다.
 // 파워링크·쇼핑검색은 attributes가 동일하므로 호출부에서 보고서를 1회만 받아 두 유형에 각각 적용.
-function buildKeywordGroups(
-  res: AdvReportResult, apiType: string, keyAttr: "keyword" | "expKeyword", topN?: number,
+//
+// 총비용이 **시트 전체 총비용**의 0.5% 미만인 키워드는 그룹마다 "기타 키워드" 한 행으로 접는다
+// (그룹 소계 기준이 아님 — 작은 그룹의 키워드가 살아남는 걸 막는다). 예전엔 상위 N개로 잘랐는데,
+// 잘린 만큼 소계가 실제 그룹 총액과 어긋났다. 접기는 값을 버리지 않아 소계·합계가 항상 정확하다.
+export function buildKeywordGroups(
+  res: AdvReportResult, apiType: string, keyAttr: "keyword" | "expKeyword",
 ): KeywordGroup[] {
   const idx = colIndex(res.head);
   const items: { campaign: string; group: string; kw: string; metrics: ReportMetrics }[] = [];
@@ -427,23 +489,123 @@ function buildKeywordGroups(
       metrics: rowMetrics(r, idx),
     });
   }
-  // 총비용(cost) 상위 N개만 (쇼핑 검색어 등 폭주 방지)
-  const picked = topN ? [...items].sort((a, b) => b.metrics.cost - a.metrics.cost).slice(0, topN) : items;
+  // 접기 임계는 **캠페인마다 따로** — 그 캠페인 총비용의 0.5%. 시트 전체 기준으로 하면 비용이 큰
+  // 캠페인이 임계를 끌어올려, 작은 캠페인은 키워드가 통째로 "기타"로 접혀 볼 게 없어진다.
+  const campaignCost = new Map<string, number>();
+  for (const it of items) campaignCost.set(it.campaign, (campaignCost.get(it.campaign) ?? 0) + it.metrics.cost);
+
   // (campaign, group)별 묶기 — 이름에 공백이 있을 수 있어 JSON 배열을 키로 사용(split 버그 회피)
   const map = new Map<string, KeywordGroup>();
-  for (const it of picked) {
+  for (const it of items) {
     const key = JSON.stringify([it.campaign, it.group]);
     let g = map.get(key);
     if (!g) { g = { campaign: it.campaign, group: it.group, keywords: [] }; map.set(key, g); }
     g.keywords.push({ keyword: it.kw, metrics: it.metrics });
   }
-  // 정렬: 그룹 내 키워드 총비용 내림차순, 그룹은 그룹 총비용 내림차순
+  // 정렬: 그룹 내 총비용 내림차순 → 자잘한 것 접기(기타는 항상 그룹 끝), 그룹은 그룹 총비용 내림차순
   const result = [...map.values()];
+  for (const g of result) {
+    g.keywords.sort((a, b) => b.metrics.cost - a.metrics.cost);
+    const threshold = (campaignCost.get(g.campaign) ?? 0) * MINOR_ROW_RATIO;
+    g.keywords = foldMinorRows(
+      g.keywords.map((k) => ({ label: k.keyword, metrics: k.metrics })), threshold, "기타 키워드",
+      hasConversion, // 전환 난 키워드는 비용이 적어도 남긴다
+    ).map((n) => ({ keyword: n.label, metrics: n.metrics }));
+  }
   const groupCost = (g: KeywordGroup) => g.keywords.reduce((s, k) => s + k.metrics.cost, 0);
-  for (const g of result) g.keywords.sort((a, b) => b.metrics.cost - a.metrics.cost);
   result.sort((a, b) => groupCost(b) - groupCost(a));
   return result;
 }
+
+// ── 쇼핑검색 상품별 (sheet9) ──
+//
+// advanced-report에는 상품명 차원이 아예 없다(차원 26개 전수 확인, 2026-07-15 라이브). 게다가
+// `nccAdId`는 캠페인/그룹과 달리 이름 자리에도 ID가 온다 — `[nad-...](nad-...)`. 그래서 성과는
+// 다차원 보고서로 받고 **상품명만 소재 목록에서 조인**한다(네이버 자체 상품별 리포트도 같은 구조).
+//
+// 이 시트는 캠페인/그룹을 나누지 않고 **같은 상품끼리 합친다** — 같은 상품이 여러 그룹에 등록돼
+// 있으면 한 줄로 모인다(라이브에서 실제로 중복 확인). 그래서 소재ID 단위 성과를 상품명 기준으로
+// 다시 합산하는 2단계 집계가 된다.
+//
+// ⚠️ 순서: **상품명 합산이 먼저, 0.5% 접기가 나중.** 소재 단위로 먼저 접으면, 여러 그룹에 흩어져
+// 각각은 임계 미만이지만 합치면 임계를 넘는 상품이 통째로 "기타"로 사라진다. 그래서 접기 전에
+// 모든 소재의 이름이 필요하다(소재가 많으면 조회도 그만큼 — worker pool로 병렬).
+// 정찰 기록: 메모리 project_f_report_product_dimension.
+
+// 소재ID 단위 행 (상품명 조인 전). label = nccAdId.
+export function buildProductAdRows(res: AdvReportResult, apiType: string): NamedMetrics[] {
+  const idx = colIndex(res.head);
+  const map = new Map<string, ReportMetrics>();
+  for (const r of res.rows) {
+    if ((r[idx["nccCampaignTp"]] ?? "").trim() !== apiType) continue;
+    const adId = parseEntity(r[idx["nccAdId"]] ?? "").id.trim();
+    if (!adId || adId === "-") continue;
+    // 같은 소재가 여러 행으로 쪼개져 올 수 있어 합산부터
+    map.set(adId, addMetrics(map.get(adId) ?? ZERO_METRICS, rowMetrics(r, idx)));
+  }
+  return [...map.entries()].map(([label, metrics]) => ({ label, metrics }));
+}
+
+// 소재ID → 상품명 치환 후 **상품명 기준 재합산** + 0.5% 접기. 표 전체 총비용 기준(캠페인 구분 없음).
+export function buildProductRows(adRows: NamedMetrics[], titles: Map<string, string>): NamedMetrics[] {
+  const byTitle = new Map<string, ReportMetrics>();
+  for (const a of adRows) {
+    // 이름을 못 얻은 소재는 ID를 그대로 라벨로 (빈칸보다 낫고, 다른 상품과 섞이지도 않는다)
+    const title = titles.get(a.label) ?? a.label;
+    byTitle.set(title, addMetrics(byTitle.get(title) ?? ZERO_METRICS, a.metrics));
+  }
+  const rows = [...byTitle.entries()]
+    .map(([label, metrics]) => ({ label, metrics }))
+    .sort((a, b) => b.metrics.cost - a.metrics.cost);
+  return foldMinorRows(rows, minorThreshold(rows), "기타 상품");
+}
+
+// URL 길이 여유(소재ID ~30자 x 50 = 1,500자). 계정당 소재가 1,000개대라 병렬로 훑는다.
+const AD_ID_CHUNK = 50;
+const AD_TITLE_WORKERS = 4;
+
+interface RawAdRef {
+  nccAdId?: string;
+  referenceData?: Record<string, unknown>;
+}
+
+// 소재ID → 상품명. 소재 type은 계정마다 다르므로(SHOPPING_PRODUCT_AD / CATALOG_AD ...)
+// **종류로 거르지 않고** referenceData.productTitle만 꺼낸다 — 거르면 카탈로그형 계정이 통째로 빈다.
+// productName(브랜드 없음) 말고 productTitle(브랜드 포함)이 네이버 리포트 '상품명' 칸과 같다.
+async function fetchProductTitles(customerId: number, ids: string[]): Promise<Map<string, string>> {
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += AD_ID_CHUNK) chunks.push(ids.slice(i, i + AD_ID_CHUNK));
+  const out = new Map<string, string>();
+  let next = 0;
+  const worker = async () => {
+    while (next < chunks.length) {
+      const chunk = chunks[next++];
+      const ads = await authFetch<RawAdRef[]>(
+        `/apis/sa/api/ncc/ads?ids=${chunk.map(encodeURIComponent).join(",")}`, undefined, customerId,
+      );
+      for (const a of ads ?? []) {
+        const t = a.referenceData?.["productTitle"];
+        if (a.nccAdId && typeof t === "string" && t.trim()) out.set(a.nccAdId, t.trim());
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(AD_TITLE_WORKERS, chunks.length) }, worker));
+  return out;
+}
+
+// 소재ID 목록 → 상품명 맵. 조회가 통째로 실패해도 빈 맵을 줘 시트가 성과 숫자를 살린 채 나가게 한다
+// (이름 자리에 소재ID가 찍히지만 표 자체는 유효).
+async function resolveProductTitles(customerId: number, ids: string[]): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map();
+  try {
+    return await fetchProductTitles(customerId, ids);
+  } catch (e) {
+    console.warn("[dv-ads/report] 상품명 조회 실패 → 소재ID로 표기", e);
+    return new Map();
+  }
+}
+
+const DISPLAY_SHEET = "xl/worksheets/sheet7.xml";
 
 // ── 전체 조립 → xlsx bytes ──
 export async function buildReportBytes(target: ReportTarget, range: DateRange, meta: ReportMeta): Promise<Uint8Array> {
@@ -462,6 +624,7 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
       return [] as BrandRawContract[];
     })
     .then((brandRaw) => ({
+      brandRaw, // 일자별 하루 단위 일할에 필요 (buildReportModel)
       brandCur: proratedBrand(brandRaw, range),
       brandPrev: proratedBrand(brandRaw, previousRange(range)),
     }));
@@ -487,11 +650,20 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   const keywordReportP = fetchAdvancedReport({
     attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "expKeyword"], range, customerId: cid,
   });
+  // 상품별은 별도 호출 — nccAdId는 expKeyword와 조합 불가(API exclusive 제약)라 위 보고서에 못 얹는다.
+  // 소재 단위라 행이 많아(실측 1,478행) maxRows를 넉넉히. 접기는 buildProductGroups가 한다.
+  const productReportP = fetchAdvancedReport({
+    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "nccAdId"], range, customerId: cid,
+    maxRows: 20000,
+  }).catch((e) => {
+    console.warn("[dv-ads/report] 쇼핑검색 상품별 조회 실패 → 시트 제거", e);
+    return { head: [], rows: [], totalResults: 0 } as AdvReportResult;
+  });
 
-  const [model, searchTypes, displayData, campGroups, keywordRes] = await Promise.all([
+  const [model, searchTypes, displayData, campGroups, keywordRes, productRes] = await Promise.all([
     (async () => {
-      const { brandCur, brandPrev } = await brandP;
-      return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP);
+      const { brandRaw, brandCur, brandPrev } = await brandP;
+      return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP, brandRaw);
     })(),
     (async () => {
       const { brandCur } = await brandP;
@@ -503,10 +675,17 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
       return fetchCampaignGroups(cid, range, brandCur.byAdgroup);
     })(),
     keywordReportP,
+    productReportP,
   ]);
-  // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님). 비용 상위 N개.
-  const plKeywords = buildKeywordGroups(keywordRes, "파워링크", "expKeyword", 50);
-  const shKeywords = buildKeywordGroups(keywordRes, "쇼핑검색", "expKeyword", 50);
+  // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님).
+  const plKeywords = buildKeywordGroups(keywordRes, "파워링크", "expKeyword");
+  const shKeywords = buildKeywordGroups(keywordRes, "쇼핑검색", "expKeyword");
+  // 상품별 — 소재 성과 → 상품명 조인 → 상품명 기준 재합산 → 0.5% 접기 (순서 주의: 위 주석 참고)
+  const productAdRows = buildProductAdRows(productRes, "쇼핑검색");
+  const shProducts = buildProductRows(
+    productAdRows,
+    await resolveProductTitles(cid, productAdRows.map((a) => a.label)),
+  );
   const displayTypes = displayData.byType;
 
   // 고정형
@@ -516,9 +695,12 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   writeText(files, "xl/worksheets/sheet2.xml", hideRowRange(readText(files, "xl/worksheets/sheet2.xml"), 3, 16));
   // 동적: 종합 유형별 / 검색광고 캠페인별 / 키워드
   renderSummaryTypes(files, searchTypes, displayTypes);
+  // 종합 섹션2 일자별 삽입 — renderSummaryTypes 뒤에. 아래 섹션이 최종 위치에 있어야 한 번에 밀린다.
+  insertSummaryDaily(files, model);
   renderCampaignSheet(files, "xl/worksheets/sheet3.xml", campGroups);
   renderKeywordSheet(files, "xl/worksheets/sheet5.xml", plKeywords);
   renderKeywordSheet(files, "xl/worksheets/sheet6.xml", shKeywords, "쇼핑검색 키워드별 성과");
+  renderProductSheet(files, "xl/worksheets/sheet9.xml", shProducts, "쇼핑검색 상품별 성과");
   // 검색_상세 지면별 → 맨 아래 동적 + 옛 영역 삭제 + 지면 그래프 제거(내부 처리) + 성별 그래프 여성색
   renderDetailPlacement(files, model.byPlacement);
   replaceChartColor(files, "xl/charts/chart5.xml", "92D050", "F67676");
@@ -533,6 +715,12 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   // 디스플레이 시트(sheet7) 캠페인별 표 — 디스플레이 운영 계정일 때만(섹션1은 fillFixedSheets에서).
   if (model.hasDisplay) {
     renderCampaignSheet(files, "xl/worksheets/sheet7.xml", displayData.byCampaign, DISPLAY_CAMPAIGN_LAYOUT);
+    // 일자별 콤보 그래프(chart12)는 디스플레이_상세 시트를 참조한다. 그 시트가 제거되면 #REF!가
+    // 되므로 그래프를 통째로 빼고 빈 자리는 숨긴다(종합 시트의 차트 자리 처리와 동일 패턴).
+    if (!model.hasDisplayDetail) {
+      removeSheetDrawing(files, DISPLAY_SHEET);
+      writeText(files, DISPLAY_SHEET, hideRowRange(readText(files, DISPLAY_SHEET), 3, 13));
+    }
   }
 
   // 비진행 매체 시트 제거. 디스플레이 시트는 디스플레이 미진행 시 제거.
@@ -542,6 +730,7 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   if (!model.hasDisplayDetail) toRemove.push("디스플레이_상세");
   if (plKeywords.length === 0) toRemove.push("파워링크_키워드");
   if (shKeywords.length === 0) toRemove.push("쇼핑검색_키워드");
+  if (shProducts.length === 0) toRemove.push("쇼핑검색_상품");
   if (toRemove.length > 0) removeSheets(files, toRemove);
 
   removeCalcChain(files); // stale 수식 캐시 제거 → 엑셀 "복구" 대화상자 방지

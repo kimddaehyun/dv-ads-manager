@@ -1,7 +1,7 @@
 // F-Report 기간 프리셋 + 직전 동일기간 계산.
 //
 // 스크린샷(140030.png)의 프리셋: 오늘/어제/이번주/지난주/최근7일(오늘 포함·제외)/
-// 이번달/지난달/최근30일(오늘 포함·제외). "금주/전주" 비교용 직전 동일기간도 여기서 계산.
+// 이번달/지난달/최근30일(오늘 포함·제외). 증감 비교용 직전 동일기간도 여기서 계산.
 //
 // 모든 함수는 기준일(today)을 인자로 받아 순수하게 동작 — 테스트 가능.
 
@@ -92,7 +92,12 @@ export function rangeForPreset(preset: ReportPreset, today: Date): DateRange {
   }
 }
 
-// 직전 동일기간 (금주 → 전주). 같은 일수만큼 바로 앞으로 당긴다.
+// "2026.06.01~2026.06.30" — 증감표 기간 라벨용. 표지(periodText)는 " ~ "(공백 포함)라 별개.
+export function rangeText(range: DateRange): string {
+  return `${range.since.replace(/-/g, ".")}~${range.until.replace(/-/g, ".")}`;
+}
+
+// 직전 동일기간 (설정 기간 → 이전 기간). 같은 일수만큼 바로 앞으로 당긴다.
 export function previousRange(range: DateRange): DateRange {
   const since = new Date(range.since + "T00:00:00");
   const until = new Date(range.until + "T00:00:00");

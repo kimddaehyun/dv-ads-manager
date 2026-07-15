@@ -97,5 +97,40 @@ const contracts = [
   eq(proratedBrand(ds, prev).total, 0, "전주(06-01~07, 계약 전) = 0");
 }
 
+// 하루 단위 일할 = 종합 일자별 표에 브랜드 비용을 나눠 넣는 방식.
+// 핵심: 날짜별로 따로 계산한 합이 기간 전체 계산과 같아야 종합 시트에서 총계와 일자별 합계가 맞는다.
+{
+  const eachDayIso = (r: DateRange): string[] => {
+    const out: string[] = [];
+    for (let d = new Date(r.since + "T00:00:00Z"); d <= new Date(r.until + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1)) {
+      out.push(d.toISOString().slice(0, 10));
+    }
+    return out;
+  };
+  const dayBrandSum = (cs: Array<ProrationContract & { adgroupId: string }>, r: DateRange) =>
+    eachDayIso(r).reduce((s, iso) => s + proratedBrand(cs, R(iso, iso)).total, 0);
+
+  // 나누어떨어지는 계약(1일 10만) — 하루씩 합해도 정확히 전액.
+  const cs = [{ ...A, adgroupId: "ag" }];
+  const full = R("2026-06-01", "2026-06-30");
+  eq(dayBrandSum(cs, full), proratedBrand(cs, full).total, "하루씩 합 == 기간 전체 (나누어떨어지는 계약)");
+  eq(dayBrandSum(cs, R("2026-06-01", "2026-06-07")), 700_000, "하루씩 합, 앞 7일 = 70만");
+  eq(dayBrandSum(cs, R("2026-05-25", "2026-05-31")), 0, "계약 전 기간은 하루씩 합해도 0");
+
+  // 나누어떨어지지 않는 계약(1,000,000 / 30일 = 33,333.33) — 반올림 드리프트 상한 확인.
+  const odd = [{
+    contractAmt: 1_000_000,
+    contractStartDt: "2026-05-31T15:00:00.000Z",
+    contractEndDt: "2026-06-30T15:00:00.000Z",
+    adgroupId: "ag",
+  }];
+  const drift = Math.abs(dayBrandSum(odd, full) - proratedBrand(odd, full).total);
+  ok(drift <= 15, `반올림 드리프트 ${drift}원 <= 15원 (30일 x 0.5원 상한)`);
+
+  // 기간 중 취소된 계약도 하루씩 합이 맞는지 (중단일 이후 0)
+  const cancelled = [{ ...A, cancelTm: "2026-06-14T15:00:00.000Z", adgroupId: "ag" }];
+  eq(dayBrandSum(cancelled, full), 1_400_000, "기간 중 취소 계약도 하루씩 합 = 140만");
+}
+
 console.log(fail === 0 ? "\n전체 통과 ✅" : `\n${fail}건 실패 ❌`);
 process.exit(fail === 0 ? 0 : 1);

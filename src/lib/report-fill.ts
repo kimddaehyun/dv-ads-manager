@@ -8,7 +8,8 @@
 
 import {
   applyCells, readText, writeText, setString, setNumber, setRowHidden, setColumnWidths, centerCells,
-  harvestRowStyles, buildRow, insertRowsAt, shiftDrawingRowAnchors, shiftChartRowRefs, setChartRangeEndRow,
+  harvestRowStyles, buildRow, insertRowsAt, setMergeCells, shiftDrawingRowAnchors, shiftChartRowRefs,
+  setChartRangeEndRow,
 } from "./report-excel";
 import type { ZipFiles, CellValue } from "./report-excel";
 import {
@@ -37,13 +38,20 @@ export interface ReportModel {
   periodText: string; // "2026.06.15 ~ 2026.06.21"
   authorName: string;
   createdDate: string; // 작성일 "2026.06.23"
-  // 종합 + 검색광고 주간요약
-  totalCurrent: ReportMetrics; // 계정 전체 금주
-  totalPrev: ReportMetrics; // 계정 전체 전주
-  searchCurrent: ReportMetrics; // 검색광고 금주 (매체별 + 검색광고 시트 섹션1)
-  searchPrev: ReportMetrics; // 검색광고 전주
-  displayCurrent: ReportMetrics; // 디스플레이 금주 (매체별 + 디스플레이 시트 섹션1)
-  displayPrev: ReportMetrics; // 디스플레이 전주 (디스플레이 시트 섹션1)
+  // 증감표 행 라벨. 기간이 주 단위가 아닐 수 있어(지난달/최근30일) 실제 날짜를 적는다.
+  curPeriodLabel: string; // "설정 기간(2026.06.01~2026.06.30)"
+  prevPeriodLabel: string; // "이전 기간(2026.05.02~2026.05.31)"
+  // 종합 + 검색광고 요약
+  totalCurrent: ReportMetrics; // 계정 전체 설정 기간
+  totalPrev: ReportMetrics; // 계정 전체 이전 기간
+  searchCurrent: ReportMetrics; // 검색광고 설정 기간 (매체별 + 검색광고 시트 섹션1)
+  searchPrev: ReportMetrics; // 검색광고 이전 기간
+  displayCurrent: ReportMetrics; // 디스플레이 설정 기간 (매체별 + 디스플레이 시트 섹션1)
+  displayPrev: ReportMetrics; // 디스플레이 이전 기간 (디스플레이 시트 섹션1)
+  // 종합 섹션2 일자별 — 검색 + 디스플레이 합산. summaryByDayIsSearchOnly면 디스플레이 분해
+  // 수집 실패로 검색광고분만 들어있다(제목에 표기해 섹션1 총계와의 차이를 오해 안 하게).
+  summaryByDay: NamedMetrics[];
+  summaryByDayIsSearchOnly: boolean;
   // 검색_상세
   byDay: NamedMetrics[];
   byPlacement: NamedMetrics[]; // 7 버킷(양식 라벨)
@@ -107,7 +115,7 @@ function clearRow(xml: string, r: number, withLabel: boolean): string {
   return out;
 }
 
-// 금주/전주/증감/증감률 4행 블록(열 C~N). 종합 섹션1과 검색광고 섹션1이 동일 레이아웃.
+// 설정 기간/이전 기간/증감/증감률 4행 블록(열 C~N). 종합 섹션1과 검색광고 섹션1이 동일 레이아웃.
 function summaryBlock(
   rCur: number, rPrev: number, rDelta: number, rRate: number,
   cur: ReportMetrics, prev: ReportMetrics,
@@ -122,7 +130,7 @@ function summaryBlock(
 }
 
 // ── 종합 시트 (sheet2) ──
-// section1 총계: 18 금주 / 19 전주 / 20 증감 / 21 증감률
+// section1 총계: 18 설정 기간 / 19 이전 기간 / 20 증감 / 21 증감률
 // section2 매체: 25 검색광고 / 26 디스플레이 / 27 합계(양식 수식을 집계 숫자로 덮어씀). 디스플레이 미진행 시 26행 숨김.
 // section3 캠페인유형은 동적(report-variable.renderSummaryTypes)이라 여기서 안 건드림.
 const SUMMARY_PATH = "xl/worksheets/sheet2.xml";
@@ -140,6 +148,12 @@ function fillSummary(files: ZipFiles, model: ReportModel): void {
     ...rowCells(26, display(model.displayCurrent)),
     ...rowCells(27, display(mediaTotal)),
   });
+  // 섹션1 제목 + 증감표 기간 라벨 — 양식은 "주간/금주/전주" 고정이라 실제 기간으로 덮어쓴다.
+  applyCells(files, SUMMARY_PATH, {}, {
+    B2: "1. 운영 요약",
+    B18: model.curPeriodLabel,
+    B19: model.prevPeriodLabel,
+  });
   if (!model.hasDisplay) {
     writeText(files, SUMMARY_PATH, setRowHidden(readText(files, SUMMARY_PATH), 26));
   } else {
@@ -151,7 +165,8 @@ function fillSummary(files: ZipFiles, model: ReportModel): void {
   }
   // 열 너비 — B열은 섹션3 캠페인유형명까지 들어가므로 알려진 라벨 전부 고려.
   const labels = [
-    "구분", "금주", "전주", "증감", "증감률", "매체 유형", "검색광고", "디스플레이", "합계", "캠페인 유형",
+    "구분", model.curPeriodLabel, model.prevPeriodLabel, "증감", "증감률",
+    "매체 유형", "검색광고", "디스플레이", "합계", "캠페인 유형",
     "파워링크", "쇼핑검색광고", "플레이스", "브랜드검색/신제품검색", "파워컨텐츠", "웹사이트전환", "앱전환",
     "인지도 및 트래픽", "동영상 조회", "애드부스트", "카탈로그", "쇼핑프로모션", "참여유도",
     "검색광고 소계", "디스플레이 소계", "전체 합계",
@@ -161,29 +176,41 @@ function fillSummary(files: ZipFiles, model: ReportModel): void {
 }
 
 // ── 검색광고 시트 섹션1 (sheet3) ──
-// 주간요약: 4 금주 / 5 전주 / 6 증감 / 7 증감률 (열 C~N, 종합과 동일). 섹션2는 동적.
+// 요약: 15 설정 기간 / 16 이전 기간 / 17 증감 / 18 증감률 (열 C~N, 종합과 동일). 섹션2는 동적.
+// 원래 4~7이었는데 제목(2행) 아래 3~13에 일자별 콤보 그래프 자리가 생기며 +11 밀렸다
+// (scripts/build-report-template-charts.ts). 양식을 다시 손대면 여기도 같이 맞춰야 한다.
 const SEARCH_PATH = "xl/worksheets/sheet3.xml";
+const SUMMARY_CUR_ROW = 15;  // 설정 기간
+const SUMMARY_PREV_ROW = 16; // 이전 기간
 
 function fillSearchSummary(files: ZipFiles, model: ReportModel): void {
-  applyCells(files, SEARCH_PATH, summaryBlock(4, 5, 6, 7, model.searchCurrent, model.searchPrev));
+  applyCells(files, SEARCH_PATH, summaryBlock(15, 16, 17, 18, model.searchCurrent, model.searchPrev), {
+    B2: "1. 검색광고 요약",
+    [`B${SUMMARY_CUR_ROW}`]: model.curPeriodLabel,
+    [`B${SUMMARY_PREV_ROW}`]: model.prevPeriodLabel,
+  });
   // 섹션1(C~N) 열 너비 — 섹션2(renderCampaignSheet)와 max 병합됨
-  const labels = ["구분", "금주", "전주", "증감", "증감률"];
+  const labels = ["구분", model.curPeriodLabel, model.prevPeriodLabel, "증감", "증감률"];
   writeText(files, SEARCH_PATH, setColumnWidths(readText(files, SEARCH_PATH), metricColWidths([model.searchCurrent, model.searchPrev], labels)));
 }
 
 // ── 디스플레이 시트 섹션1 (sheet7) ──
-// 주간요약: 4 금주 / 5 전주 / 6 증감 / 7 증감률 (열 C~N, 검색광고와 동일 레이아웃). 섹션2는 동적.
+// 요약: 15 설정 기간 / 16 이전 기간 / 17 증감 / 18 증감률 (검색광고와 동일 레이아웃 — 그래프 자리 +11).
 // 디스플레이(GFA)는 직접/간접 전환 split이 없어 M/N 칸은 '-'.
 const DISPLAY_PATH = "xl/worksheets/sheet7.xml";
 
 function fillDisplaySummary(files: ZipFiles, model: ReportModel): void {
-  applyCells(files, DISPLAY_PATH, summaryBlock(4, 5, 6, 7, model.displayCurrent, model.displayPrev));
+  applyCells(files, DISPLAY_PATH, summaryBlock(15, 16, 17, 18, model.displayCurrent, model.displayPrev), {
+    B2: "1. 디스플레이 요약",
+    [`B${SUMMARY_CUR_ROW}`]: model.curPeriodLabel,
+    [`B${SUMMARY_PREV_ROW}`]: model.prevPeriodLabel,
+  });
   let xml = readText(files, DISPLAY_PATH);
-  for (const r of [4, 5, 6, 7]) {
+  for (const r of [15, 16, 17, 18]) {
     xml = setString(xml, `M${r}`, "-");
     xml = setString(xml, `N${r}`, "-");
   }
-  const labels = ["구분", "금주", "전주", "증감", "증감률"];
+  const labels = ["구분", model.curPeriodLabel, model.prevPeriodLabel, "증감", "증감률"];
   xml = setColumnWidths(xml, metricColWidths([model.displayCurrent, model.displayPrev], labels));
   writeText(files, DISPLAY_PATH, xml);
 }
@@ -343,19 +370,22 @@ function fillCover(files: ZipFiles, model: ReportModel): void {
 export interface DailyExpandConfig {
   sheetPath: string;
   drawingPath: string;
-  dailyChart: string; // 일자 그래프 (chart3 / chart7) — 데이터 범위 끝행 확장
+  // 일자 표를 참조하는 그래프 — 데이터 범위 끝행 확장. 상세 시트의 추이 그래프(chart3/chart7)와
+  // **검색광고·디스플레이 시트의 콤보 그래프(chart11/chart12)**가 같은 표를 보므로 둘 다 넣는다.
+  // (콤보 그래프는 다른 시트에 있지만 데이터는 이 상세 시트를 참조 — 빼먹으면 월간에서 7일만 그려짐)
+  dailyCharts: string[];
   otherCharts: string[]; // 성별/연령 그래프 — 데이터 ref를 아래로 이동
 }
 export const SEARCH_DAILY_EXPAND: DailyExpandConfig = {
   sheetPath: "xl/worksheets/sheet4.xml",
   drawingPath: "xl/drawings/drawing2.xml",
-  dailyChart: "xl/charts/chart3.xml",
+  dailyCharts: ["xl/charts/chart3.xml", "xl/charts/chart11.xml"],
   otherCharts: ["xl/charts/chart5.xml", "xl/charts/chart6.xml"],
 };
 export const DISPLAY_DAILY_EXPAND: DailyExpandConfig = {
   sheetPath: "xl/worksheets/sheet8.xml",
   drawingPath: "xl/drawings/drawing3.xml",
-  dailyChart: "xl/charts/chart7.xml",
+  dailyCharts: ["xl/charts/chart7.xml", "xl/charts/chart12.xml"],
   otherCharts: ["xl/charts/chart9.xml", "xl/charts/chart10.xml"],
 };
 
@@ -387,7 +417,88 @@ export function expandDailyRows(
   // 아래 표/차트 이동 + 일자 그래프 범위 확장
   shiftDrawingRowAnchors(files, cfg.drawingPath, 21, -extra); // 성별/연령 그래프 앵커 아래로
   for (const ch of cfg.otherCharts) shiftChartRowRefs(files, ch, 21, -extra); // 성별/연령 데이터 ref 아래로
-  setChartRangeEndRow(files, cfg.dailyChart, 21, 21 + extra); // 일자 그래프 범위 15~(21+extra)
+  // 일자 표를 보는 그래프 전부 범위 15~(21+extra)로 확장 (없는 파트는 setChartRangeEndRow가 무시)
+  for (const ch of cfg.dailyCharts) setChartRangeEndRow(files, ch, 21, 21 + extra);
+}
+
+// ── 종합 섹션2 "일자별 운영 요약" 삽입 ──
+//
+// 양식에는 없는 섹션이라 23행(옛 "2. 매체 유형별 요약") 앞에 통째로 끼워 넣고, 아래 섹션 번호를
+// 3./4.로 민다. **renderSummaryTypes(섹션3 동적 재생성) 이후 마지막에 호출** — 그래야 아래 행이
+// 최종 위치에 있고 insertRowsAt이 한 번에 민다. 종합 시트는 removeSheetDrawing으로 그림이 통째로
+// 빠지므로 옮길 차트·앵커가 없다(상세 시트의 expandDailyRows와 다른 점).
+//
+// 표본 스타일은 섹션2(매체 유형별)에서 뜬다 — 제목/헤더/데이터/합계 4종이 같은 레이아웃이라.
+const SUMMARY_DAY_COLS = ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+const SUMMARY_DAY_METRIC_COLS = ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
+
+// buildRow는 ht를 안 붙인다(양식 데이터행과 동일). 제목(24)/헤더(30)만 양식 높이를 맞춘다.
+function withHeight(row: string, ht: number): string {
+  return row.replace(/^<row ([^>]*)>/, `<row $1 ht="${ht}" customHeight="1">`);
+}
+
+export function insertSummaryDaily(files: ZipFiles, model: ReportModel): void {
+  const byDay = model.summaryByDay;
+  if (byDay.length === 0) return;
+
+  let xml = readText(files, SUMMARY_PATH);
+  // 1) 삽입 전에 아래 섹션 번호부터 민다(양식 고정 주소일 때가 제일 단순).
+  xml = setString(xml, "B23", "3. 매체 유형별 요약");
+  xml = setString(xml, "B29", "4. 캠페인 유형별 요약");
+
+  // 2) 표본 스타일 (섹션2: 23 제목 / 24 헤더 / 25 데이터 / 27 합계)
+  const sTitle = harvestRowStyles(xml, 23);
+  const sHeader = harvestRowStyles(xml, 24);
+  const sData = harvestRowStyles(xml, 25);
+  const sTotal = harvestRowStyles(xml, 27);
+
+  // 3) 행 빌드: 제목 / 헤더 / 일자 N개 / 합계 / 빈 줄(섹션 간 여백 — 양식 22·28행 리듬)
+  const rows: string[] = [];
+  let r = 23;
+  const title = model.summaryByDayIsSearchOnly
+    ? "2. 일자별 운영 요약 (검색광고)" // 디스플레이 분해 실패 → 합계가 섹션1과 다름을 명시
+    : "2. 일자별 운영 요약";
+  rows.push(withHeight(buildRow(r++, ["B"], { B: sTitle.B ?? "" }, { B: title }), 24));
+
+  const headerVals: Record<string, CellValue> = { B: "일자" };
+  SUMMARY_DAY_METRIC_COLS.forEach((c, i) => (headerVals[c] = METRIC_HEADERS[i]));
+  rows.push(withHeight(buildRow(r++, SUMMARY_DAY_COLS, sHeader, headerVals), 30));
+
+  let total = ZERO_METRICS;
+  for (const d of byDay) {
+    const disp = display(d.metrics);
+    const v: Record<string, CellValue> = { B: d.label };
+    for (const c of SUMMARY_DAY_METRIC_COLS) v[c] = disp[c];
+    rows.push(buildRow(r++, SUMMARY_DAY_COLS, sData, v));
+    total = addMetrics(total, d.metrics);
+  }
+
+  const tv: Record<string, CellValue> = { B: "합계" };
+  const tDisp = display(total);
+  for (const c of SUMMARY_DAY_METRIC_COLS) tv[c] = tDisp[c];
+  const totalRow = r++;
+  rows.push(buildRow(totalRow, SUMMARY_DAY_COLS, sTotal, tv));
+
+  rows.push(`<row r="${r}" spans="2:14"/>`); // 여백(양식 22·28행처럼 내용 없는 줄)
+
+  // 4) 삽입 — 행번호·셀ref·수식ref·mergeCells 전부 insertRowsAt이 민다.
+  xml = insertRowsAt(xml, 23, rows);
+  // 제목 병합은 새로 추가(기존 B2/B16/B23→B(23+n)/B29→B(29+n)은 insertRowsAt이 이미 이동시킴)
+  const existing = [...xml.matchAll(/<mergeCell ref="([^"]+)"\/>/g)].map((m) => m[1]);
+  xml = setMergeCells(xml, [...existing, "B23:N23"]);
+  writeText(files, SUMMARY_PATH, xml);
+
+  // 5) 데이터+합계행 가운데 정렬 (다른 표와 동일)
+  const addrs: string[] = [];
+  for (let rr = 25; rr <= totalRow; rr++) for (const c of SUMMARY_DAY_COLS) addrs.push(`${c}${rr}`);
+  centerCells(files, SUMMARY_PATH, addrs);
+
+  // 6) B열 너비 — 일자 라벨("06/15 (월)")이 기존 라벨보다 짧아 실제로는 안 넓어지지만,
+  //    기간 라벨(설정 기간(...))이 이미 최대치라 재계산해도 그대로다. 누락 방지용으로만.
+  writeText(files, SUMMARY_PATH, setColumnWidths(readText(files, SUMMARY_PATH), metricColWidths(
+    byDay.map((d) => d.metrics),
+    [model.curPeriodLabel, model.prevPeriodLabel, "일자", "합계", ...byDay.map((d) => d.label)],
+  )));
 }
 
 // 고정형 시트 전체 채우기 + 비진행 매체 시트 제거는 호출 측(orchestrator)에서 removeSheets로.
