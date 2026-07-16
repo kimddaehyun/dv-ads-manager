@@ -93,6 +93,17 @@ export interface BriefRuleInput {
   targetRoas?: number;
   /** 순위가 보강된 키워드 행. brief.ts가 pickRankTargets 대상만 rank를 채워 넘긴다. */
   rankedRows?: BriefKeywordRow[];
+  /** 상품별 현재/전기 지표. 현재 기간에 존재하는 상품만(이름을 얻을 수 있는 것만). */
+  products?: BriefProductDelta[];
+}
+
+/** 매출 낙폭이 이 값 미만이면 후보로 안 만든다 — 소음 방지. */
+export const REVENUE_DROP_FLOOR = 100_000;
+
+export interface BriefProductDelta {
+  label: string;
+  cur: ReportMetrics;
+  prev: ReportMetrics;
 }
 
 /** 그룹 계층(캠페인 > 그룹 > 키워드)을 행 목록으로 평탄화. 캠페인/그룹을 각 행에 붙인다. */
@@ -256,6 +267,45 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
       },
       selected: false,
     });
+  }
+
+  // ⑤ 전기 대비 전환이 빠진 상품 — 보고 로그의 "객단가 높은 [온열 찜질기]에서 전환이
+  // 발생하지 않아"가 이것. 매출 낙폭 임계로 소음을 거른다.
+  if (input.products) {
+    const dropped = input.products
+      .filter((p) =>
+        p.cur.purchaseConv < p.prev.purchaseConv &&
+        p.prev.revenue - p.cur.revenue >= REVENUE_DROP_FLOOR,
+      )
+      .sort((a, b) => (b.prev.revenue - b.cur.revenue) - (a.prev.revenue - a.cur.revenue));
+    if (dropped.length > 0) {
+      out.push({
+        kind: "productConvDrop",
+        facts: {
+          기준: "이전 기간 대비 구매완료 전환 감소",
+          products: dropped.map((p) => p.label).join(", "),
+          count: dropped.length,
+          매출감소합계: dropped.reduce((s, p) => s + (p.prev.revenue - p.cur.revenue), 0),
+        },
+        table: {
+          title: "상품별 성과 (이전 기간 대비)",
+          columns: ["상품", "총비용", "구매완료", "이전 구매완료", "매출액", "이전 매출액", "수익률"],
+          rows: dropped.map((p) => ({
+            cells: [
+              p.label,
+              `${p.cur.cost.toLocaleString()}원`,
+              String(p.cur.purchaseConv),
+              String(p.prev.purchaseConv),
+              `${p.cur.revenue.toLocaleString()}원`,
+              `${p.prev.revenue.toLocaleString()}원`,
+              `${roasPct(p.cur).toFixed(0)}%`,
+            ],
+            band: targetRoas != null ? roasBand(roasPct(p.cur), targetRoas) : undefined,
+          })),
+        },
+        selected: false,
+      });
+    }
   }
 
   return out;

@@ -132,6 +132,7 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
       placements: data.model.byPlacement,
       targetRoas,
       rankedRows: plRows,
+      products: data.products,
     });
 
     // Task 10 전까지는 요약 + 후보별 표만. AI 문장은 아직 없다.

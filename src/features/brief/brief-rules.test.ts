@@ -3,6 +3,7 @@ import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
   pickRankTargets, LOW_RANK_FLOOR,
+  type BriefProductDelta,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
 import { type KeywordGroup } from "@/features/report/report-variable";
@@ -206,5 +207,39 @@ describe("extractCandidates - highRoasLowRank", () => {
     rows[0].rank = 8;
     expect(extractCandidates({ keywords: [], placements: [], rankedRows: rows })
       .find((x) => x.kind === "highRoasLowRank")).toBeUndefined();
+  });
+});
+
+describe("extractCandidates - productConvDrop", () => {
+  const products: BriefProductDelta[] = [
+    // 전환 5 → 0, 매출 -340,000 → 후보
+    { label: "온열 찜질기", cur: m(80_000, 0, 0), prev: m(75_000, 5, 340_000) },
+    // 전환 유지 → 후보 아님
+    { label: "대나무 돗자리", cur: m(50_000, 4, 300_000), prev: m(50_000, 4, 310_000) },
+    // 전환 증가 → 후보 아님
+    { label: "17MM", cur: m(60_000, 8, 500_000), prev: m(60_000, 3, 200_000) },
+    // 전환 감소하나 매출 낙폭이 임계 미만 → 후보 아님 (소음)
+    { label: "소품", cur: m(20_000, 1, 30_000), prev: m(20_000, 2, 35_000) },
+  ];
+  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+
+  it("전환이 줄고 매출 낙폭이 임계 이상인 상품만", () => {
+    const c = extractCandidates({ ...base, products }).find((x) => x.kind === "productConvDrop");
+    expect(c).toBeDefined();
+    expect(c!.facts.products).toBe("온열 찜질기");
+  });
+
+  it("매출 낙폭이 임계 미만이면 제외 — 소음 방지", () => {
+    const c = extractCandidates({ ...base, products }).find((x) => x.kind === "productConvDrop");
+    expect(String(c!.facts.products)).not.toContain("소품");
+  });
+
+  it("표에 전기/현재를 나란히 — 비교가 문장의 근거다", () => {
+    const c = extractCandidates({ ...base, products }).find((x) => x.kind === "productConvDrop");
+    expect(c!.table.columns).toContain("이전 구매완료");
+  });
+
+  it("상품 데이터가 없으면 후보 없음", () => {
+    expect(extractCandidates(base).find((x) => x.kind === "productConvDrop")).toBeUndefined();
   });
 });

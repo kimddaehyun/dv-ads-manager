@@ -5,21 +5,68 @@
  * 물어본 적이 없으므로 AI가 이 숫자를 틀릴 확률은 0이다(설계 §3 1겹).
  */
 
-import { collectReportData, type ReportData, type ReportTarget } from "@/features/report/report-build";
-import { rangeText, type DateRange } from "@/features/report/report-period";
-import { type ReportMetrics } from "@/features/report/report-data";
-import { type BriefTableSpec } from "./brief-rules";
+import { collectReportData, buildProductAdRows, type ReportData, type ReportTarget } from "@/features/report/report-build";
+import { rangeText, previousRange, type DateRange } from "@/features/report/report-period";
+import {
+  fetchAdvancedReport, CAMPAIGN_TP_CODE, ZERO_METRICS,
+  type ReportMetrics, type AdvReportResult,
+} from "@/features/report/report-data";
+import { type NamedMetrics } from "@/features/report/report-fill";
+import { type BriefTableSpec, type BriefProductDelta } from "./brief-rules";
 import { roasPct } from "./brief-rules";
 
 export interface BriefData extends ReportData {
   range: DateRange;
   advertiserName: string;
+  /** 현재 기간에 존재하는 상품의 현재/전기 지표. 이름은 현재 기준으로만 얻을 수 있다. */
+  products: BriefProductDelta[];
+}
+
+/**
+ * 전기 쇼핑검색 상품(소재ID 기준) 성과 — collectReportData의 productReportP와 동일 호출을
+ * 전기 range로 1회 더. 필터도 동일해야 한다(없으면 앞쪽 유형이 상한을 채워 실종되는 그 사고).
+ */
+async function fetchPrevProducts(customerId: number, range: DateRange): Promise<NamedMetrics[]> {
+  const res: AdvReportResult = await fetchAdvancedReport({
+    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "nccAdId"],
+    range,
+    customerId,
+    maxRows: 30000,
+    filters: [
+      { type: "in", field: "nccCampaignTp", values: [CAMPAIGN_TP_CODE.쇼핑검색] },
+      { type: "bound", field: "salesAmt", operator: "gt", value: 0 },
+      { type: "bound", field: "impCnt", operator: "gt", value: 0 },
+    ],
+  });
+  return buildProductAdRows(res, "쇼핑검색");
 }
 
 export async function collectBriefData(target: ReportTarget, range: DateRange): Promise<BriefData> {
+  const cid = target.masterCustomerId;
+  if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
   // 담당자/작성일은 엑셀 표지 전용이라 문구엔 안 쓰인다. 빈 값으로 넘긴다.
-  const data = await collectReportData(target, range, { authorName: "", createdDate: "" });
-  return { ...data, range, advertiserName: target.name };
+  // 전기 상품은 F-Brief만 필요하다 — collectReportData를 건드리지 않고 여기서 1회 더 부른다.
+  // 두 수집을 동시에 출발시켜 왕복을 더하지 않는다. 실패해도 상품 후보만 생략.
+  const [data, prevAdRows] = await Promise.all([
+    collectReportData(target, range, { authorName: "", createdDate: "" }),
+    fetchPrevProducts(cid, previousRange(range)).catch((e) => {
+      console.warn("[dv-ads/brief] 전기 상품 조회 실패 — 상품 후보만 생략", e);
+      return [] as NamedMetrics[];
+    }),
+  ]);
+
+  // 소재ID로 매칭. shProducts(ProductRow)는 이름 조인 후라 ID가 없어 못 쓴다.
+  const prevById = new Map(prevAdRows.map((r) => [r.label, r.metrics]));
+  const products: BriefProductDelta[] = data.shProductAdRows
+    .map((cur) => ({
+      // 이름을 못 얻은 소재는 ID를 광고주에게 보여줄 수 없어 label을 비워 걸러낸다.
+      label: data.shProductInfo.get(cur.label)?.title ?? "",
+      cur: cur.metrics,
+      prev: prevById.get(cur.label) ?? ZERO_METRICS,
+    }))
+    .filter((p) => p.label !== "");
+
+  return { ...data, range, advertiserName: target.name, products };
 }
 
 /** 기간 일수. "지난 30일 동안" 같은 표현에 쓴다. */
