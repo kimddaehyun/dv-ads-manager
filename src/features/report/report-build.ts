@@ -637,11 +637,35 @@ async function resolveProductInfo(customerId: number, ids: string[]): Promise<Ma
 const DISPLAY_SHEET = "xl/worksheets/sheet7.xml";
 
 // ── 전체 조립 → xlsx bytes ──
-export async function buildReportBytes(target: ReportTarget, range: DateRange, meta: ReportMeta): Promise<Uint8Array> {
+
+/**
+ * F-Report(엑셀)와 F-Brief(문구)가 공유하는 수집 결과. 엑셀 생성과 무관하다.
+ * F-Brief는 이걸 받아 규칙 엔진만 돌리고 엑셀은 만들지 않는다.
+ */
+export interface ReportData {
+  model: ReportModel;
+  searchTypes: SummaryType[];
+  displayData: GfaData;
+  campGroups: CampaignTypeGroup[];
+  plKeywords: KeywordGroup[];
+  shKeywords: KeywordGroup[];
+  shProducts: ProductRow[];
+  /** 소재ID 기준 상품 지표(이름 조인 전). F-Brief가 전기와 소재ID로 매칭할 때 쓴다. */
+  shProductAdRows: NamedMetrics[];
+  /** 소재ID → 상품명/URL. */
+  shProductInfo: Map<string, ProductInfo>;
+}
+
+/**
+ * 실데이터 수집만 담당 - 엑셀 생성(양식 fetch/openXlsx/fill/render)과 분리.
+ * 병렬 구조(brandP/displayDataP를 await로 막지 않고 promise로 먼저 출발)는 성능 감사 2026-07-02
+ * 확정 - 순서·동시성을 바꾸지 말 것. F-Report·F-Brief가 이 함수를 공유한다.
+ */
+export async function collectReportData(
+  target: ReportTarget, range: DateRange, meta: ReportMeta,
+): Promise<ReportData> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
-  const url = chrome.runtime.getURL("src/assets/report-template.xlsx");
-  const files: ZipFiles = openXlsx(new Uint8Array(await (await fetch(url)).arrayBuffer()));
 
   // 브랜드검색 계약 raw 수집(없거나 실패 시 빈 목록) → 금주/전주 기간으로 각각 일할 계산.
   // 검색 비용 가산(금주/전주)·종합 섹션3·검색 섹션2 그룹 비용에 공통 사용.
@@ -741,10 +765,28 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
   const shKeywords = buildKeywordGroups(shRes, "쇼핑검색", "expKeyword");
   // 상품별 — 소재 성과 → 상품명 조인 → 상품명 기준 재합산 → 0.5% 접기 (순서 주의: 위 주석 참고)
   const productAdRows = buildProductAdRows(productRes, "쇼핑검색");
-  const shProducts = buildProductRows(
-    productAdRows,
-    await resolveProductInfo(cid, productAdRows.map((a) => a.label)),
-  );
+  // resolveProductInfo 결과를 변수로 뽑아 ReportData로도 반환(F-Brief 소재ID 매칭). 동작은 동일.
+  const productInfo = await resolveProductInfo(cid, productAdRows.map((a) => a.label));
+  const shProducts = buildProductRows(productAdRows, productInfo);
+
+  return {
+    model, searchTypes, displayData, campGroups,
+    plKeywords, shKeywords, shProducts,
+    shProductAdRows: productAdRows,
+    shProductInfo: productInfo,
+  };
+}
+
+export async function buildReportBytes(target: ReportTarget, range: DateRange, meta: ReportMeta): Promise<Uint8Array> {
+  const url = chrome.runtime.getURL("src/assets/report-template.xlsx");
+  // 양식 로드와 데이터 수집을 동시 출발 - 수집이 양식 fetch를 기다리지 않게(기존과 동일).
+  const filesP = (async (): Promise<ZipFiles> =>
+    openXlsx(new Uint8Array(await (await fetch(url)).arrayBuffer())))();
+  const dataP = collectReportData(target, range, meta);
+  const files = await filesP;
+  const {
+    model, searchTypes, displayData, campGroups, plKeywords, shKeywords, shProducts,
+  } = await dataP;
   const displayTypes = displayData.byType;
 
   // 고정형
