@@ -290,20 +290,34 @@ function roasBand(roas: number, target: number): RoasBand {
 **PRD 원칙 조정 필요**: `docs/PRD.md`의 "사용자 데이터 외부 전송 0건"은
 **"광고 데이터는 네이버와 사내 서버 외로 나가지 않는다"**로 개정한다 (§12).
 
-### 6.2 서버 (최소)
+### 6.2 서버 - Supabase Edge Function
 
 ```
-POST /brief/compose
+POST https://<project>.supabase.co/functions/v1/brief-compose
 Authorization: Bearer <사내 AE 토큰>
 
 요청:  { advertiser, periodText, totals, prevTotals, facts[], memo }
 응답:  { blocks: [{ text, isAiJudgment }] }
 ```
 
-- 인증: 사내 AE에게 발급한 토큰의 **화이트리스트 대조**. 계정 시스템 없음.
+- **Edge Function 1개.** DB 테이블 없음, Auth 없음, Storage 없음.
+- 인증: 사내 AE에게 발급한 토큰의 **화이트리스트 대조**(Edge Function 환경변수).
+  Supabase Auth를 쓰지 않는다 - 사내 전용이라 계정 시스템이 과하다.
 - 토큰은 옵션 페이지에 입력, `chrome.storage.local`에 보관.
+- AI API 키는 Edge Function 환경변수. 확장에 없다.
+- 프롬프트·말투 샘플도 Edge Function 안에 둔다 → 확장 재배포 없이 튜닝 (§6.1).
 - 저장 없음. 요청/응답을 로그에 남기지 않는다 (광고주 데이터).
-- `host_permissions`에 서버 도메인 1개 추가.
+
+**`@supabase/supabase-js`를 다시 넣지 않는다.** Edge Function 호출은 단순 HTTPS POST라
+`fetch`로 충분하다. SDK는 DB/Auth/Realtime을 위한 것이고 우리는 아무것도 안 쓴다.
+2026-05-15에 제거한 의존성을 번들 크기만 늘리며 되살릴 이유가 없다.
+
+**되돌리는 것** (2026-05-15 라이선스 제거 시 삭제됨):
+- `manifest.config.ts` `host_permissions`에 `https://<project>.supabase.co/*` 1개 추가.
+- Supabase 프로젝트 자체 - 2026-05-15 "인프라 분리 결정"대로 **본 확장 전용 프로젝트**를 쓴다.
+
+**되돌리지 않는 것**: `license.ts` / `supabase.ts` / `LicenseUi` / RPC `verify_access`.
+F-Brief는 라이선스와 무관하다. 사내 전용이므로 접근 제어는 토큰 화이트리스트로 끝난다.
 
 ### 6.3 프롬프트 구성
 
@@ -552,8 +566,7 @@ Chrome 확장은 자동 E2E보다 실제 페이지 수동 검증이 안정적이
 
 ## 14. 미해결
 
-- **사내 서버 인프라 미정** - Cloudflare Workers / Supabase Edge Functions / 기존 사내 서버 중
-  선택. 구현 계획 단계에서 결정. §4 모듈 경계상 규칙 엔진·표 생성은 이 결정을 기다리지 않는다.
 - **AI 모델 미정** - 문장 조립이라 최상위 모델이 필요 없을 수 있다. 실제 문구 품질로 비교 후 결정.
+  Edge Function 안에 있으므로 확장 재배포 없이 교체 가능 - 늦게 정해도 되는 결정이다.
 - **`highRoasLowRank` 저순위 임계 6위는 가설이다.** 보고 로그의 "2페이지"는 PC 기준 11위~이지만
   실제로 AE가 몇 위부터 "낮다"고 보는지 확인 필요. 첫 사용자 피드백으로 조정.
