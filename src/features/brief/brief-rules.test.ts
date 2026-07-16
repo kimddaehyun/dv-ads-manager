@@ -263,6 +263,31 @@ describe("extractCandidates - belowTargetGroup", () => {
       .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
   });
 
+  it("그룹 합산 전환 0이면 후보 아님 — zeroConvKeyword와 중복 방지", () => {
+    const allZero: KeywordGroup[] = [{
+      campaign: "C", group: "전환없는그룹",
+      keywords: [
+        { keyword: "a", metrics: m(30_000, 0, 0) },
+        { keyword: "b", metrics: m(30_000, 0, 0) },
+      ],
+    }];
+    expect(extractCandidates({ ...base, keywords: allZero })
+      .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
+  });
+
+  it("이름이 같은 그룹이 배열에 두 번 오면(파워링크/쇼핑) 지표를 합치지 않는다", () => {
+    // 각각은 green(1300%)인데 합치면 계산이 달라질 수 있다 — 항목별로 따로 판정.
+    const dup: KeywordGroup[] = [
+      { campaign: "C", group: "기본", keywords: [{ keyword: "a", metrics: m(30_000, 3, 390_000) }] },
+      { campaign: "C", group: "기본", keywords: [{ keyword: "b", metrics: m(30_000, 1, 120_000) }] }, // 400% none
+    ];
+    const c = extractCandidates({ ...base, keywords: dup })
+      .find((x) => x.kind === "belowTargetGroup");
+    // 두 번째 항목만 none → 후보 1개. 합쳐졌다면 (60_000, 510_000) = 850% green으로 사라진다.
+    expect(c).toBeDefined();
+    expect(c!.facts.count).toBe(1);
+  });
+
   it("같은 그룹명이 다른 캠페인에 있어도 따로 집계한다", () => {
     // 캠페인A의 "기본"은 none, 캠페인B의 "기본"은 green — A만 후보.
     const two: KeywordGroup[] = [
@@ -394,6 +419,15 @@ describe("extractCandidates - genderBidSkew / ageBidSkew", () => {
     expect(c!.facts.나쁜쪽).toBe("50세 ~ 54세");
     // 문턱 미만 버킷이 최저로 잡히면 안 된다.
     expect(c!.facts.나쁜쪽).not.toBe("기타");
+  });
+
+  it("양쪽 다 매출 0이면 후보 아님 — 0% vs 0%는 격차가 아니다", () => {
+    const byGender: NamedMetrics[] = [
+      { label: "남성", metrics: m(50_000, 0, 0) },
+      { label: "여성", metrics: m(50_000, 0, 0) },
+    ];
+    expect(extractCandidates({ ...base, byGender })
+      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
   it("비교 가능한 세그먼트가 2개 미만이면 후보 아님", () => {

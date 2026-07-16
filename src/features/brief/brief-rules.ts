@@ -7,7 +7,7 @@
  * 설계: docs/superpowers/specs/2026-07-16-f-brief-design.md §5
  */
 
-import { addMetrics, type ReportMetrics } from "@/features/report/report-data";
+import { addMetrics, ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
 import { type KeywordGroup } from "@/features/report/report-variable";
 import { type NamedMetrics } from "@/features/report/report-fill";
 
@@ -182,6 +182,8 @@ export function findSkew(segments: NamedMetrics[]): { best: NamedMetrics; worst:
   const byRoas = [...comparable].sort((a, b) => roasPct(b.metrics) - roasPct(a.metrics));
   const best = byRoas[0];
   const worst = byRoas[byRoas.length - 1];
+  // 전부 매출 0이면 0% vs 0% — 격차가 아니다(0 < 0x1.5가 false로 통과하는 함정).
+  if (roasPct(best.metrics) <= 0) return null;
   if (roasPct(best.metrics) < roasPct(worst.metrics) * SKEW_RATIO) return null;
   return { best, worst };
 }
@@ -333,19 +335,17 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   // ⑥ 그룹 집계 ROAS가 none — 키워드 개별(②)과 달리 그룹 단위 요약 후보.
   // 초록·노랑이 섞인 그룹은 **합산** ROAS가 기준이다 — 합산이 살아 있으면 그룹 후보를 만들지 않는다.
   if (targetRoas != null && targetRoas > 0) {
-    const byGroup = new Map<string, { campaign: string; group: string; metrics: ReportMetrics }>();
-    for (const r of rows) {
-      // 같은 그룹명이 다른 캠페인에 있을 수 있어 캠페인까지 키에 넣는다.
-      const key = `${r.campaign} ${r.group}`;
-      const agg = byGroup.get(key);
-      if (agg) {
-        agg.metrics = addMetrics(agg.metrics, r.metrics);
-      } else {
-        byGroup.set(key, { campaign: r.campaign, group: r.group, metrics: { ...r.metrics } });
-      }
-    }
-    const badGroups = [...byGroup.values()]
-      .filter((g) => g.metrics.cost >= COST_FLOOR && roasBand(roasPct(g.metrics), targetRoas) === "none")
+    // KeywordGroup 항목 하나가 이미 캠페인+그룹 단위다 — 이름으로 재집계하면 파워링크/쇼핑에
+    // 같은 이름의 캠페인·그룹이 있을 때 지표가 합쳐지므로(코덱스 리뷰 P2) 항목별로 집계한다.
+    // 합산 전환 0 그룹은 제외 — 그 키워드들은 이미 ①(zeroConvKeyword)이 다룬다.
+    const badGroups = input.keywords
+      .map((g) => ({
+        campaign: g.campaign,
+        group: g.group,
+        metrics: g.keywords.reduce((s, k) => addMetrics(s, k.metrics), ZERO_METRICS),
+      }))
+      .filter((g) => g.metrics.cost >= COST_FLOOR && g.metrics.purchaseConv > 0 &&
+        roasBand(roasPct(g.metrics), targetRoas) === "none")
       .sort(byCostDesc);
     if (badGroups.length > 0) {
       out.push({
