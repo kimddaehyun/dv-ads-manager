@@ -93,8 +93,13 @@ export function rangeForPreset(preset: ReportPreset, today: Date): DateRange {
 }
 
 // "2026.06.01~2026.06.30" — 증감표 기간 라벨용. 표지(periodText)는 " ~ "(공백 포함)라 별개.
+// 증감표 라벨("설정 기간(07.06~07.12)")용 짧은 기간 표기 — **연도는 뺀다.**
+// 연도까지 넣으면 B열이 그만큼 넓어지고, 그래프가 B~N 앵커라 그래프까지 같이 밀린다.
+// 연도는 표지(periodText)에 전체 표기로 남으므로 여기선 중복이다.
+// 해를 걸치는 기간(12.28~01.03)은 연도 없이도 읽히고, 정확한 기간은 표지에서 확인된다.
 export function rangeText(range: DateRange): string {
-  return `${range.since.replace(/-/g, ".")}~${range.until.replace(/-/g, ".")}`;
+  const monthDay = (iso: string) => iso.slice(5).replace("-", "."); // "2026-07-06" → "07.06"
+  return `${monthDay(range.since)}~${monthDay(range.until)}`;
 }
 
 // 직전 동일기간 (설정 기간 → 이전 기간). 같은 일수만큼 바로 앞으로 당긴다.

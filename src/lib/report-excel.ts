@@ -292,11 +292,15 @@ export function harvestRowStyles(xml: string, rowNum: number): Record<string, st
 }
 
 // 한 행 XML 생성. cols 순서대로, values[col]에 따라 숫자/문자/빈 셀.
+// ht: 행 높이(pt). 지정하면 `ht="N" customHeight="1"`을 붙인다. appendRows로 새로 붙는 행은
+// 양식 높이를 물려받지 못해 기본(~15pt)으로 나오므로, 주변 섹션과 맞추려면 명시해야 한다.
+// replaceRowsFrom으로 기존 행을 갈아끼우는 경우엔 원래 행 높이가 살아 있어 대개 불필요.
 export function buildRow(
   rowNum: number,
   cols: string[],
   styles: Record<string, string>,
   values: Record<string, CellValue>,
+  ht?: number,
 ): string {
   const cells = cols.map((col) => {
     const s = styles[col] ?? "";
@@ -306,7 +310,8 @@ export function buildRow(
       return `<c r="${col}${rowNum}"${s}><v>${Number.isFinite(v) ? v : 0}</v></c>`;
     return `<c r="${col}${rowNum}"${s} t="inlineStr"><is><t xml:space="preserve">${escapeXmlText(v)}</t></is></c>`;
   });
-  return `<row r="${rowNum}" spans="1:${cols.length + 1}">${cells.join("")}</row>`;
+  const htAttr = ht != null ? ` ht="${ht}" customHeight="1"` : "";
+  return `<row r="${rowNum}" spans="1:${cols.length + 1}"${htAttr}>${cells.join("")}</row>`;
 }
 
 function escapeXmlText(s: string): string {
@@ -440,6 +445,20 @@ export function insertRowsAt(xml: string, beforeRow: number, newRows: string[]):
     }
     return kept.length ? `<mergeCells count="${kept.length}">${kept.join("")}</mergeCells>` : block;
   });
+  // 조건부 서식 범위(증감 빨강/초록 등)도 같이 민다. 이걸 빼먹으면 셀만 내려가고 서식은 옛 행에
+  // 남아 "색이 사라진" 것처럼 보인다 — 실제로 검색광고/디스플레이 증감표에서 그렇게 됐다.
+  result = result.replace(/<conditionalFormatting sqref="([^"]+)"/g, (_full, sq: string) => {
+    const shifted = sq
+      .trim()
+      .split(/\s+/)
+      .map((ref) =>
+        ref.replace(/([A-Z]+)(\d+)/g, (mm: string, col: string, row: string) =>
+          Number(row) >= beforeRow ? `${col}${Number(row) + count}` : mm,
+        ),
+      )
+      .join(" ");
+    return `<conditionalFormatting sqref="${shifted}"`;
+  });
   return updateDimension(result);
 }
 
@@ -510,6 +529,94 @@ export function setRowHidden(xml: string, rowNum: number): string {
   return xml.replace(new RegExp(`<row r="${rowNum}"([^>]*?)(/?)>`), (full, a, slash) =>
     /\shidden=/.test(a) ? full : `<row r="${rowNum}"${a} hidden="1"${slash}>`,
   );
+}
+
+// 셀 → 외부 URL 하이퍼링크(상품명 클릭 → 상품 페이지).
+// 스키마 순서상 `<hyperlinks>`는 mergeCells/phoneticPr/conditionalFormatting 뒤, pageMargins 앞이다
+// — 순서를 어기면 엑셀이 '복구' 대화상자를 띄운다. URL은 시트 rels에 External 관계로 등록하며,
+// rId는 기존 관계(그림 등)와 안 겹치게 최대값 다음부터 딴다.
+export function setHyperlinks(
+  files: ZipFiles, sheetPartPath: string, links: { addr: string; url: string }[],
+): void {
+  if (links.length === 0) return;
+  const relPath = `xl/worksheets/_rels/${sheetPartPath.replace("xl/worksheets/", "")}.rels`;
+  let rels = files[relPath]
+    ? readText(files, relPath)
+    : `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
+      `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>`;
+  let next = 1 + Math.max(0, ...[...rels.matchAll(/Id="rId(\d+)"/g)].map((m) => Number(m[1])));
+
+  const tags: string[] = [];
+  const added: string[] = [];
+  for (const { addr, url } of links) {
+    const id = `rId${next++}`;
+    tags.push(`<hyperlink ref="${addr}" r:id="${id}"/>`);
+    added.push(
+      `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"` +
+        ` Target="${escapeXml(url)}" TargetMode="External"/>`,
+    );
+  }
+  writeText(files, relPath, rels.replace("</Relationships>", `${added.join("")}</Relationships>`));
+
+  let xml = readText(files, sheetPartPath);
+  xml = xml.includes("<hyperlinks>")
+    ? xml.replace("</hyperlinks>", `${tags.join("")}</hyperlinks>`)
+    : xml.replace("<pageMargins", `<hyperlinks>${tags.join("")}</hyperlinks><pageMargins`);
+  writeText(files, sheetPartPath, xml);
+}
+
+// 한 행에서 lastCol보다 오른쪽 셀을 지운다. 양식을 복제해 쓰는 시트는 원본이 더 넓어서, 좁은
+// 배치로 다시 그려도 제목행 같은 미replace 행에 스타일 칠해진 빈 셀이 남는다(표 밖 주황 칸).
+// setRowHidden과 같은 이유로 자기닫힘 행(`<row .../>`)은 건드리지 않는다 — 셀이 없으니 할 일도 없다.
+export function dropRowCellsAfter(xml: string, rowNum: number, lastCol: string): string {
+  const limit = colLetterToNum(lastCol);
+  // `(?![^>]*/>)`로 자기닫힘 행을 배제한다. `[^>]*[^/]>`처럼 "마지막 글자가 / 가 아님"으로 쓰면
+  // 속성 없는 `<row r="2">`가 `>` 앞 한 글자를 못 채워 조용히 no-op이 된다.
+  // 자기닫힘을 걸러내지 않으면 `[\s\S]*?</row>`가 뒤쪽 행의 </row>까지 삼켜 남의 셀을 지운다.
+  return xml.replace(new RegExp(`<row r="${rowNum}"(?![^>]*/>)[^>]*>[\\s\\S]*?</row>`), (rowXml) =>
+    rowXml.replace(/<c r="([A-Z]+)\d+"[^>]*(?:\/>|>[\s\S]*?<\/c>)/g, (cell, col: string) =>
+      colLetterToNum(col) > limit ? "" : cell,
+    ),
+  );
+}
+
+// 기존 셀 스타일(baseIdx)을 복제하되 글꼴만 '링크처럼'(파랑+밑줄) 바꾼 새 스타일 인덱스 반환.
+// 하이퍼링크를 걸어도 셀 모양은 그대로라 눌러야 링크인 줄 안다 → 보이게 만든다.
+// 원본 글꼴을 복제해 크기·서체는 유지하고 색과 밑줄만 덮는다(기존 <color>/<u/>는 제거 후 삽입).
+// 색은 엑셀 기본 하이퍼링크색 0563C1.
+export function addHyperlinkStyle(files: ZipFiles, baseIdx: number): number {
+  let styles = readText(files, "xl/styles.xml");
+  const fontsM = styles.match(/<fonts count="(\d+)"([^>]*)>([\s\S]*?)<\/fonts>/);
+  const cxM = styles.match(/<cellXfs count="(\d+)">([\s\S]*?)<\/cellXfs>/);
+  if (!fontsM || !cxM) return baseIdx;
+  const xfs = cxM[2].match(/<xf\b[^>]*?(?:\/>|>[\s\S]*?<\/xf>)/g) ?? [];
+  const base = xfs[baseIdx];
+  if (!base) return baseIdx;
+
+  // 원본 xf가 쓰던 글꼴을 찾아 복제 (fontId 없으면 0번)
+  const baseFontId = Number((base.match(/fontId="(\d+)"/) ?? [])[1] ?? 0);
+  const fonts = fontsM[3].match(/<font\b[^>]*?(?:\/>|>[\s\S]*?<\/font>)/g) ?? [];
+  const srcFont = fonts[baseFontId] ?? "<font/>";
+  const inner = srcFont.replace(/^<font\b[^>]*>/, "").replace(/<\/font>$/, "")
+    .replace(/<color\b[^>]*\/>/g, "").replace(/<u\b[^>]*\/>/g, "");
+  const newFont = `<font>${inner}<color rgb="FF0563C1"/><u/></font>`;
+  const fontIdx = fonts.length;
+  styles = styles.replace(
+    /<fonts count="\d+"([^>]*)>([\s\S]*?)<\/fonts>/,
+    (_m, attrs, body) => `<fonts count="${fontIdx + 1}"${attrs}>${body}${newFont}</fonts>`,
+  );
+
+  const count = Number(cxM[1]);
+  const openAttrs = (base.match(/^<xf\b([^>]*?)\/?>/) ?? ["", ""])[1]
+    .replace(/\sfontId="\d+"/g, "").replace(/\sapplyFont="[^"]*"/g, "");
+  const innerXf = base.match(/^<xf\b[^>]*[^/]>([\s\S]*)<\/xf>$/); // alignment 등 원본 자식 보존
+  const newXf = `<xf${openAttrs} fontId="${fontIdx}" applyFont="1"${innerXf ? `>${innerXf[1]}</xf>` : "/>"}`;
+  styles = styles.replace(
+    /<cellXfs count="\d+">([\s\S]*?)<\/cellXfs>/,
+    (_m, body) => `<cellXfs count="${count + 1}">${body}${newXf}</cellXfs>`,
+  );
+  writeText(files, "xl/styles.xml", styles);
+  return count;
 }
 
 // 기존 셀 스타일(cellXfs의 baseIdx)을 복제해 정렬을 추가한 새 스타일 인덱스 반환.

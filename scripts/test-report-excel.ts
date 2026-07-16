@@ -12,6 +12,8 @@ import {
   setRowHidden,
   hideRowRange,
   listSheets,
+  insertRowsAt,
+  dropRowCellsAfter,
 } from "../src/lib/report-excel.ts";
 
 const tpl = new Uint8Array(readFileSync("src/assets/report-template.xlsx"));
@@ -89,6 +91,54 @@ ok(!/Id="[^"]*"\s+Type="[^"]*worksheet"[^>]*Target="worksheets\/sheet7/.test(rea
     `hideRowRange가 자기닫힘 섞인 범위에서도 유효 XML 유지 (숨김 ${hiddenCount}/3)`);
   ok(/<row r="9"[^>]*hidden="1"\/>/.test(hiddenMixed) && /<row r="11"[^>]*hidden="1"\/>/.test(hiddenMixed),
     "hideRowRange가 자기닫힘 행의 `/>`를 보존");
+}
+
+// ── insertRowsAt이 조건부 서식(sqref)도 같이 민다 ──
+// 안 밀면 셀만 내려가고 서식은 옛 행에 남아 "증감 빨강/초록이 사라진" 것처럼 보인다.
+// 실제로 검색광고/디스플레이 증감표에서 그렇게 됐다(콤보 그래프 자리 11행 삽입 때).
+{
+  const sheet =
+    `<worksheet><sheetData>` +
+    `<row r="1"><c r="C1"><v>1</v></c></row>` +
+    `<row r="6"><c r="C6"><v>6</v></c></row>` +
+    `<row r="7"><c r="C7"><v>7</v></c></row>` +
+    `</sheetData>` +
+    `<conditionalFormatting sqref="C6:N7"><cfRule type="cellIs"/></conditionalFormatting>` +
+    `</worksheet>`;
+  const shifted = insertRowsAt(sheet, 3, [`<row r="3"/>`, `<row r="4"/>`]);
+  ok(shifted.includes(`sqref="C8:N9"`), `삽입 행 아래 조건부 서식 범위가 +2 이동 (실제 ${shifted.match(/sqref="[^"]+"/)?.[0]})`);
+  ok(!shifted.includes(`sqref="C6:N7"`), "옛 범위가 남지 않음");
+
+  // 삽입 지점보다 위(1행)는 그대로 — 위쪽 서식까지 밀면 안 된다
+  const above =
+    `<worksheet><sheetData><row r="1"><c r="C1"><v>1</v></c></row></sheetData>` +
+    `<conditionalFormatting sqref="C1:N1"><cfRule type="cellIs"/></conditionalFormatting></worksheet>`;
+  ok(insertRowsAt(above, 3, [`<row r="3"/>`]).includes(`sqref="C1:N1"`), "삽입 지점 위 조건부 서식은 그대로");
+
+  // 여러 범위(공백 구분)도 각각
+  const multi =
+    `<worksheet><sheetData><row r="6"><c r="C6"><v>6</v></c></row></sheetData>` +
+    `<conditionalFormatting sqref="C6:N6 P6:Q6"><cfRule type="cellIs"/></conditionalFormatting></worksheet>`;
+  ok(insertRowsAt(multi, 3, [`<row r="3"/>`]).includes(`sqref="C7:N7 P7:Q7"`), "공백으로 나뉜 여러 범위도 각각 이동");
+}
+
+// ── dropRowCellsAfter: 양식 복제 시트의 표 밖 잔여 셀 제거 ──
+{
+  const r = `<worksheet><sheetData><row r="2" spans="2:16">` +
+    `<c r="B2" s="47"/><c r="N2" s="47"/><c r="O2" s="47"/><c r="P2" s="47"/>` +
+    `</row><row r="3"><c r="O3" s="1"/></row></sheetData></worksheet>`;
+  const dropped = dropRowCellsAfter(r, 2, "N");
+  ok(dropped.includes(`<c r="N2"`) && !dropped.includes(`<c r="O2"`) && !dropped.includes(`<c r="P2"`),
+    "지정 열 오른쪽 셀만 제거(N은 유지, O/P 제거)");
+  ok(dropped.includes(`<c r="O3"`), "다른 행은 안 건드림");
+  // 자기닫힘 행(<row .../>)은 셀이 없으니 그대로 — setRowHidden과 같은 함정.
+  // 걸러내지 않으면 `[\s\S]*?</row>`가 뒤쪽 행의 </row>까지 삼켜 남의 셀을 지운다.
+  const selfClosing = `<worksheet><sheetData><row r="2" ht="24" customHeight="1"/><row r="3"><c r="O3"/></row></sheetData></worksheet>`;
+  ok(dropRowCellsAfter(selfClosing, 2, "N") === selfClosing, "자기닫힘 행은 그대로 — 뒤 행의 셀을 삼키지 않음");
+  // 속성 없는 행 — `[^>]*[^/]>` 식으로 쓰면 `>` 앞 한 글자를 못 채워 조용히 no-op이 된다
+  const bare = `<worksheet><sheetData><row r="2"><c r="B2"/><c r="O2"/></row></sheetData></worksheet>`;
+  const bareOut = dropRowCellsAfter(bare, 2, "N");
+  ok(bareOut.includes(`<c r="B2"`) && !bareOut.includes(`<c r="O2"`), "속성 없는 <row r=\"2\">에서도 동작");
 }
 
 console.log(fail === 0 ? "\n전체 통과 ✅" : `\n${fail}건 실패 ❌`);

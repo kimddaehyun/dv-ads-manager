@@ -357,6 +357,10 @@ function findOperationChip(): HTMLElement | null {
 
 async function openPopover() {
   closePopover();
+  // 리포트 모듈을 미리 받아둔다. "리포트 생성"은 클릭 시점에 동적 import를 하는데, 그 첫 클릭만
+  // 청크 로드를 기다리느라 아무 반응이 없어 "안 눌린다"로 보였다. popover를 여는 지금 시작해두면
+  // 메뉴를 열어 고르는 사이에 끝나 클릭이 즉시 반응한다. 실패해도 클릭 때 다시 import 하므로 무해.
+  void import("./report").catch(() => {});
   // 광고 유형 필터 로드 (메뉴 체크 표시 동기화용). 실패해도 기본값(둘 다) 유지.
   platformFilter = await loadPlatformFilter().catch(() => ({ sa: true, da: true }));
   popoverView = "list"; // 매번 list view로 시작
@@ -1335,22 +1339,35 @@ function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMe
 
 // 다중 리포트 진입 — 헤더 "설정" 메뉴와 그룹 헤더 메뉴가 공유. anchor 위치는 동적 import 전에
 // 동기 캡처(keepOpen 메뉴가 populate로 버튼을 떼어내도 rect 보존).
+// await 두 번(메타 로드 + 모듈 로드) 동안은 화면에 아무 변화가 없다 — 그 사이 또 눌러 두 번
+// 열리는 걸 막는 게이트. 모듈은 openPopover에서 미리 받아두므로 보통은 즉시 통과한다.
+let reportEntryBusy = false;
 async function openReportForEntries(
   anchor: HTMLElement,
   entries: MultiAccountDirectoryEntry[],
 ): Promise<void> {
+  if (reportEntryBusy) return;
+  reportEntryBusy = true;
   const anchorRect = anchor.getBoundingClientRect();
-  const metaMap = await loadAllUserMeta();
-  const { openReportFlowBatch } = await import("./report");
-  openReportFlowBatch(
-    anchor,
-    entries.map((e) => ({
-      adAccountNo: e.adAccountNo,
-      masterCustomerId: e.masterCustomerId,
-      name: metaMap[e.adAccountNo]?.displayName?.trim() || e.name,
-    })),
-    anchorRect,
-  );
+  try {
+    const metaMap = await loadAllUserMeta();
+    const { openReportFlowBatch } = await import("./report");
+    openReportFlowBatch(
+      anchor,
+      entries.map((e) => ({
+        adAccountNo: e.adAccountNo,
+        masterCustomerId: e.masterCustomerId,
+        name: metaMap[e.adAccountNo]?.displayName?.trim() || e.name,
+      })),
+      anchorRect,
+    );
+  } catch (e) {
+    // 여기서 던지면 호출부가 `void`로 삼켜 아무 반응 없이 사라진다 — 반드시 알린다.
+    console.warn("[dv-ads/report] 리포트 화면을 열지 못함", e);
+    showToast({ message: "리포트 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
+  } finally {
+    reportEntryBusy = false;
+  }
 }
 
 // 범용 텍스트 입력 다이얼로그 — 그룹 생성/이름 변경용. rename 다이얼로그 CSS(dvads-rename-*) 재사용.
@@ -2937,13 +2954,19 @@ function renderTableRow(
               isConnected: false,
               contains: () => false,
             } as unknown as HTMLElement;
-            void import("./report").then(({ openReportFlow }) => {
-              openReportFlow(anchorProxy, {
-                adAccountNo: entry.adAccountNo,
-                masterCustomerId: entry.masterCustomerId,
-                name: meta?.displayName?.trim() || entry.name,
+            void import("./report")
+              .then(({ openReportFlow }) => {
+                openReportFlow(anchorProxy, {
+                  adAccountNo: entry.adAccountNo,
+                  masterCustomerId: entry.masterCustomerId,
+                  name: meta?.displayName?.trim() || entry.name,
+                });
+              })
+              .catch((e) => {
+                // catch가 없으면 실패가 조용한 rejection으로 사라져 "눌러도 아무 일 없음"이 된다.
+                console.warn("[dv-ads/report] 리포트 화면을 열지 못함", e);
+                showToast({ message: "리포트 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
               });
-            });
           },
         },
         {

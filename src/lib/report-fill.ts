@@ -13,7 +13,7 @@ import {
 } from "./report-excel";
 import type { ZipFiles, CellValue } from "./report-excel";
 import {
-  metricValues, visualLen, widthFor, metricStr, METRIC_HEADERS, ZERO_METRICS, addMetrics, type ReportMetrics,
+  metricValues, visualLen, colWidthLen, widthFor, metricStr, METRIC_HEADERS, ZERO_METRICS, addMetrics, type ReportMetrics,
 } from "./report-data";
 
 // 라벨열(B) + 12지표열(C~N) 너비 계산. metricRows=표시 지표행, labels=B열 라벨 후보.
@@ -21,8 +21,8 @@ function metricColWidths(metricRows: ReportMetrics[], labels: string[]): Record<
   const w: Record<string, number> = {};
   w["B"] = widthFor(Math.max(2, ...labels.map(visualLen)));
   ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"].forEach((col, i) => {
-    let mx = visualLen(METRIC_HEADERS[i]);
-    for (const m of metricRows) mx = Math.max(mx, visualLen(metricStr(i, metricValues(m)[i])));
+    let mx = colWidthLen(METRIC_HEADERS[i]);
+    for (const m of metricRows) mx = Math.max(mx, colWidthLen(metricStr(i, metricValues(m)[i])));
     w[col] = widthFor(mx);
   });
   return w;

@@ -16,7 +16,13 @@ import { type DateRange } from "@/lib/report-period";
 import { openReportDatePicker } from "./report-datepicker";
 import { closePopover } from "./multi-account";
 
+// running = 실행 중 재진입 차단. runToken = 실행 식별자.
+// 취소해도 진행 중인 수집(fetch)은 못 멈춘다. 예전엔 취소 후에도 그게 끝날 때까지(수십 초)
+// running이 true로 남아 "리포트 생성"을 눌러도 조용히 무시됐다. 이제 취소가 running을 즉시 풀고,
+// **토큰**으로 옛 실행을 무효화한다 — 단순히 running만 풀면 늦게 끝난 옛 실행이 파일을 내려받거나
+// 새 실행의 running을 꺼버린다(reportCancelled 불리언 하나로는 새 실행이 그 값을 리셋해 못 막음).
 let running = false;
+let runToken = 0;
 
 function fmtDate(d: Date): string {
   return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
@@ -28,7 +34,13 @@ function safeFile(s: string): string {
 // ── 진행 오버레이 (setup.ts와 동일 CSS 클래스 재사용) ──
 let overlayEl: HTMLElement | null = null;
 let onProgressCancel: (() => void) | null = null;
-let reportCancelled = false;
+
+// 취소 — 지금 실행을 무효화하고 즉시 재시도 가능하게. 진행 중 fetch는 계속 돌지만 결과는 버려진다.
+function cancelRun(): void {
+  runToken++;
+  running = false;
+  hideProgress();
+}
 function showProgress(text: string, onCancel?: () => void): void {
   if (!overlayEl) {
     const el = document.createElement("div");
@@ -79,23 +91,25 @@ export function openReportFlow(anchor: HTMLElement, target: ReportTarget): void 
 async function runSingle(target: ReportTarget, range: DateRange, author: string): Promise<void> {
   if (running) return;
   running = true;
-  reportCancelled = false;
+  const token = ++runToken;
+  const stale = () => token !== runToken; // 취소됐거나 새 실행이 시작됨
   closePopover(); // 진행 오버레이가 뜨면 다계정 대시보드 팝오버는 닫는다
-  showProgress("리포트를 만드는 중...", () => { reportCancelled = true; hideProgress(); });
+  showProgress("리포트를 만드는 중...", cancelRun);
   try {
     const meta = { authorName: author, createdDate: fmtDate(new Date()) };
     const bytes = await buildReportBytes(target, range, meta);
-    if (reportCancelled) return; // 취소됨 — 결과 폐기
+    if (stale()) return; // 결과 폐기 — 오버레이·running은 취소/새 실행이 이미 처리
     const filename = `${safeFile(target.name)}_리포트_${range.since}~${range.until}.xlsx`;
     downloadBytes(bytes, filename);
     hideProgress();
     showToast({ message: "리포트를 내려받았어요", variant: "success", keyword: filename });
   } catch (e) {
-    hideProgress();
     console.warn("[dv-ads/report] 리포트 생성 실패", e);
+    if (stale()) return; // 취소한 실행의 에러로 새 실행의 오버레이를 지우면 안 된다
+    hideProgress();
     showToast({ message: friendlyApiError(String(e), "test"), variant: "error" });
   } finally {
-    running = false;
+    if (!stale()) running = false; // 새 실행이 잡은 running을 옛 실행이 풀지 않게
   }
 }
 
@@ -118,7 +132,8 @@ export function openReportFlowBatch(anchor: HTMLElement, targets: ReportTarget[]
 async function runBatch(targets: ReportTarget[], range: DateRange, author: string): Promise<void> {
   if (running) return;
   running = true;
-  reportCancelled = false;
+  const token = ++runToken;
+  const stale = () => token !== runToken;
   const meta = { authorName: author, createdDate: fmtDate(new Date()) };
   const files: Record<string, Uint8Array> = {};
   let done = 0;
@@ -128,9 +143,10 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
     // report-gfa-detail의 전역 게이트(기본 1초, 403 시 7초 복귀)가 간격을 관리한다.
     const REPORT_CONCURRENCY = 2;
     let next = 0;
-    showProgress(`리포트를 만드는 중... (완료 0/${targets.length})`, () => { reportCancelled = true; hideProgress(); });
+    showProgress(`리포트를 만드는 중... (완료 0/${targets.length})`, cancelRun);
     const worker = async () => {
-      while (next < targets.length && !reportCancelled) {
+      // 취소되면 남은 광고주는 시작도 안 한다(진행 중인 것만 흘려보냄).
+      while (next < targets.length && !stale()) {
         const t = targets[next++];
         try {
           const bytes = await buildReportBytes(t, range, meta);
@@ -139,13 +155,13 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
           console.warn(`[dv-ads/report] ${t.name} 리포트 실패`, e);
         }
         done++;
-        if (!reportCancelled) showProgress(`리포트를 만드는 중... (완료 ${done}/${targets.length})`, () => { reportCancelled = true; hideProgress(); });
+        if (!stale()) showProgress(`리포트를 만드는 중... (완료 ${done}/${targets.length})`, cancelRun);
       }
     };
     await Promise.all(
       Array.from({ length: Math.min(REPORT_CONCURRENCY, targets.length) }, worker),
     );
-    if (reportCancelled) return; // 취소됨 — zip/다운로드 생략
+    if (stale()) return; // 취소됨 — zip/다운로드 생략
     const made = Object.keys(files).length;
     if (made === 0) throw new Error("생성된 리포트가 없어요");
     showProgress("압축하는 중...");
@@ -154,9 +170,11 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
     hideProgress();
     showToast({ message: `리포트 ${made}개를 압축해 내려받았어요`, variant: "success" });
   } catch (e) {
+    console.warn("[dv-ads/report] 일괄 리포트 실패", e);
+    if (stale()) return;
     hideProgress();
     showToast({ message: friendlyApiError(String(e), "test"), variant: "error" });
   } finally {
-    running = false;
+    if (!stale()) running = false;
   }
 }

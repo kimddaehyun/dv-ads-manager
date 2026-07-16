@@ -21,11 +21,14 @@ import {
   removeChartFromDrawing,
   shiftChartRowRefs,
   shiftDrawingRowAnchors,
+  dropRowCellsAfter,
+  setHyperlinks,
+  addHyperlinkStyle,
   type ZipFiles,
   type CellValue,
 } from "./report-excel";
 import {
-  metricValues, addMetrics, ZERO_METRICS, visualLen, widthFor, metricStr, METRIC_HEADERS,
+  metricValues, addMetrics, ZERO_METRICS, colWidthLen, widthFor, metricStr, METRIC_HEADERS,
   type ReportMetrics,
 } from "./report-data";
 
@@ -81,8 +84,8 @@ export function renderKeywordSheet(
     O: "직접 전환수", P: "간접 전환수",
   };
   const wmax: Record<string, number> = {};
-  for (const c of KW_COLS) wmax[c] = visualLen(KW_HEADERS[c] ?? "");
-  const noteText = (col: string, s: string) => { wmax[col] = Math.max(wmax[col] ?? 0, visualLen(s)); };
+  for (const c of KW_COLS) wmax[c] = colWidthLen(KW_HEADERS[c] ?? "");
+  const noteText = (col: string, s: string) => { wmax[col] = Math.max(wmax[col] ?? 0, colWidthLen(s)); };
   const noteMetrics = (m: ReportMetrics) => {
     const vals = metricValues(m);
     KW_METRIC_COLS.forEach((c, i) => noteText(c, metricStr(i, vals[i])));
@@ -112,18 +115,20 @@ export function renderKeywordSheet(
     });
     const r1 = r - 1;
     if (r1 > r0) merges.push(`B${r0}:B${r1}`, `C${r0}:C${r1}`); // 캠페인/그룹 세로 병합
-    // 소계
-    noteText("C", g.group);
-    noteMetrics(groupSum);
-    rows.push(
-      buildRow(r++, KW_COLS, sSubtotal, {
-        B: null,
-        C: g.group,
-        D: "소계",
-        ...metricCells(KW_METRIC_COLS, groupSum),
-      }),
-    );
-    grand = addMetrics(grand, groupSum);
+    // 소계 — 키워드가 1개뿐이면 데이터행을 그대로 베낀 값이라 넣지 않는다.
+    if (g.keywords.length > 1) {
+      noteText("C", g.group);
+      noteMetrics(groupSum);
+      rows.push(
+        buildRow(r++, KW_COLS, sSubtotal, {
+          B: null,
+          C: g.group,
+          D: "소계",
+          ...metricCells(KW_METRIC_COLS, groupSum),
+        }),
+      );
+    }
+    grand = addMetrics(grand, groupSum); // 소계행을 건너뛰어도 전체 합계에는 항상 반영
   }
   noteMetrics(grand);
 
@@ -151,6 +156,8 @@ export function renderKeywordSheet(
 // 그래서 열 배치가 [B 상품명][C~N 12지표]로 종합/상세 표와 같다 — 키워드 시트(B~D 라벨 + E~P)와 다름.
 // 양식은 sheet6(쇼핑검색_키워드) 복제라 표본 스타일은 그 시트 것(4=데이터, B:D 병합행=전체합계)을 쓰고,
 // 지표 스타일은 E~P에 있으므로 C~N으로 옮겨 붙인다.
+// 상품명 열 상한. 기본 55보다는 넓게 두되(상품명이 잘리면 못 알아본다) 무제한은 아니다.
+const PROD_NAME_MAX_WIDTH = 90;
 const PROD_COLS = ["B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
 const PROD_METRIC_COLS = ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N"];
 const PROD_SAMPLE_METRIC_COLS = ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P"];
@@ -158,6 +165,7 @@ const PROD_SAMPLE_METRIC_COLS = ["E", "F", "G", "H", "I", "J", "K", "L", "M", "N
 export interface ProductRow {
   label: string; // 상품명 (못 얻었으면 소재ID)
   metrics: ReportMetrics;
+  url?: string; // 상품 페이지 링크 — 있으면 상품명 셀에 하이퍼링크
 }
 
 export function renderProductSheet(
@@ -168,6 +176,9 @@ export function renderProductSheet(
 ): void {
   let xml = readText(files, sheetPath);
   xml = setString(xml, "B2", title);
+  // 양식(키워드 시트 복제)의 제목행은 B~P에 주황 스타일 셀이 깔려 있다. 이 배치는 N에서 끝나므로
+  // O2/P2를 지우지 않으면 표 오른쪽에 주황 칸 2개가 떠 있는다(제목 병합이 B2:N2라 병합도 못 덮는다).
+  xml = dropRowCellsAfter(xml, 2, "N");
 
   // 표본 스타일: 3=헤더, 4=데이터, 전체합계(B:D 병합행). 지표 스타일은 E~P → C~N으로 이동.
   const shift = (st: Record<string, string>): Record<string, string> => {
@@ -180,11 +191,11 @@ export function renderProductSheet(
   const totalM = xml.match(/<mergeCell ref="B(\d+):D\1"\/>/);
   const sTotal = shift(harvestRowStyles(xml, totalM ? Number(totalM[1]) : 11));
 
-  const wmax: Record<string, number> = { B: visualLen("상품명") };
-  PROD_METRIC_COLS.forEach((c, i) => { wmax[c] = visualLen(METRIC_HEADERS[i]); });
+  const wmax: Record<string, number> = { B: colWidthLen("상품명") };
+  PROD_METRIC_COLS.forEach((c, i) => { wmax[c] = colWidthLen(METRIC_HEADERS[i]); });
   const noteMetrics = (m: ReportMetrics) => {
     const vals = metricValues(m);
-    PROD_METRIC_COLS.forEach((c, i) => { wmax[c] = Math.max(wmax[c], visualLen(metricStr(i, vals[i]))); });
+    PROD_METRIC_COLS.forEach((c, i) => { wmax[c] = Math.max(wmax[c], colWidthLen(metricStr(i, vals[i]))); });
   };
 
   const out: string[] = [];
@@ -193,13 +204,22 @@ export function renderProductSheet(
   PROD_METRIC_COLS.forEach((c, i) => { headerVals[c] = METRIC_HEADERS[i]; });
   out.push(buildRow(r++, PROD_COLS, sHeader, headerVals));
 
+  // 링크 있는 상품명 셀은 파랑+밑줄로 — 안 그러면 눌러보기 전엔 링크인 줄 모른다.
+  // 스타일은 데이터행 B 스타일에서 글꼴만 바꿔 뜬 것이라 배경·테두리는 그대로 유지된다.
+  // 링크 없는 상품(url 미수집)은 원래 스타일 그대로 — 파랗기만 하고 안 눌리면 그게 더 나쁘다.
+  const baseB = Number((sData.B?.match(/s="(\d+)"/) ?? [])[1] ?? 0);
+  const linkStyle = ` s="${addHyperlinkStyle(files, baseB)}"`;
+
   let total = ZERO_METRICS;
+  const links: { addr: string; url: string }[] = [];
   for (const row of rows) {
-    wmax.B = Math.max(wmax.B, visualLen(row.label));
+    wmax.B = Math.max(wmax.B, colWidthLen(row.label));
     noteMetrics(row.metrics);
     const v: Record<string, CellValue> = { B: row.label };
     metricValues(row.metrics).forEach((val, i) => { v[PROD_METRIC_COLS[i]] = val; });
-    out.push(buildRow(r++, PROD_COLS, sData, v));
+    const style = row.url ? { ...sData, B: linkStyle } : sData;
+    if (row.url) links.push({ addr: `B${r}`, url: row.url });
+    out.push(buildRow(r++, PROD_COLS, style, v));
     total = addMetrics(total, row.metrics);
   }
 
@@ -213,10 +233,14 @@ export function renderProductSheet(
   xml = setMergeCells(xml, ["B2:N2"]);
   const widths: Record<string, number> = {};
   for (const c of PROD_COLS) widths[c] = widthFor(wmax[c]);
-  widths.O = 0; // 양식(키워드 시트) 잔여 열 — 이 배치에선 안 쓰므로 접는다
-  widths.P = 0;
+  // 상품명은 잘리면 어느 상품인지 못 알아보니 기본 55자 상한보다는 넓게. 다만 무제한으로 두면
+  // 네이버 상품명이 워낙 길어(실측 654개, 최장은 폭 ~90) 표가 화면을 벗어난다.
+  // 90 = 사용자가 직접 맞춰 보내준 폭. 대부분의 상품명은 다 들어가고 최장급만 살짝 잘린다.
+  widths.B = widthFor(wmax.B, PROD_NAME_MAX_WIDTH);
   xml = setColumnWidths(xml, widths);
   writeText(files, sheetPath, xml);
+  // 하이퍼링크는 시트 rels를 건드리므로 시트 XML을 다 쓴 뒤에.
+  setHyperlinks(files, sheetPath, links);
 }
 
 // ── 검색광고 캠페인별 성과 (sheet3 섹션2) ──
@@ -311,9 +335,9 @@ export function renderCampaignSheet(
 
   const headerLabel: Record<string, string> = { B: "캠페인 유형", C: "캠페인", D: "그룹" };
   const wmax: Record<string, number> = {};
-  for (const c of labelCols) wmax[c] = visualLen(headerLabel[c] ?? "");
-  metricCols.forEach((mc, i) => { wmax[mc] = visualLen(METRIC_HEADERS[i]); });
-  const noteText = (col: string, s: string) => { wmax[col] = Math.max(wmax[col] ?? 0, visualLen(s)); };
+  for (const c of labelCols) wmax[c] = colWidthLen(headerLabel[c] ?? "");
+  metricCols.forEach((mc, i) => { wmax[mc] = colWidthLen(METRIC_HEADERS[i]); });
+  const noteText = (col: string, s: string) => { wmax[col] = Math.max(wmax[col] ?? 0, colWidthLen(s)); };
   const noteMetrics = (m: ReportMetrics) => {
     const vals = metricValues(m);
     metricCols.forEach((c, i) => noteText(c, metricStr(i, vals[i])));
@@ -357,14 +381,23 @@ export function renderCampaignSheet(
 
     let typeSum = ZERO_METRICS;
     for (const gr of g.rows) typeSum = addMetrics(typeSum, gr.metrics);
-    noteMetrics(typeSum);
-    const subValues: Record<string, CellValue> = {
-      B: null, C: "소계", ...dashLast(metricCells(metricCols, typeSum)),
-    };
-    if (withGroup) subValues.D = null;
-    rows.push(buildRow(r++, cols, subStyle, subValues));
-    merges.push(`B${r0}:B${r - 1}`); // 유형 데이터+소계 세로 병합
-    grand = addMetrics(grand, typeSum);
+    // 소계 — 행이 1개뿐이면 데이터행을 그대로 베낀 값이라 넣지 않는다.
+    if (g.rows.length > 1) {
+      noteMetrics(typeSum);
+      // 소계 라벨에 유형명을 붙인다("파워링크 소계") — 표가 길어지면 세로 병합된 B열 유형명이
+      // 화면 밖으로 밀려 무슨 소계인지 안 보인다.
+      const subLabel = `${g.type} 소계`;
+      noteText("C", subLabel);
+      const subValues: Record<string, CellValue> = {
+        B: null, C: subLabel, ...dashLast(metricCells(metricCols, typeSum)),
+      };
+      if (withGroup) subValues.D = null;
+      rows.push(buildRow(r++, cols, subStyle, subValues));
+    }
+    // 유형(B) 세로 병합 — 데이터행 + (있으면) 소계행. 행이 1개면 병합할 게 없다
+    // (B{r}:B{r} 같은 1칸 병합은 엑셀이 싫어한다).
+    if (r - 1 > r0) merges.push(`B${r0}:B${r - 1}`);
+    grand = addMetrics(grand, typeSum); // 소계행을 건너뛰어도 전체 합계에는 항상 반영
   }
   noteMetrics(grand);
 
@@ -512,31 +545,34 @@ export function renderDetailPlacement(
   const rows: string[] = [];
   const newMerges: string[] = [];
 
-  const wmax: Record<string, number> = { B: visualLen("광고영역") };
-  DETAIL_METRIC_COLS.forEach((c, i) => (wmax[c] = visualLen(METRIC_HEADERS[i])));
+  const wmax: Record<string, number> = { B: colWidthLen("광고영역") };
+  DETAIL_METRIC_COLS.forEach((c, i) => (wmax[c] = colWidthLen(METRIC_HEADERS[i])));
   const noteMetrics = (m: ReportMetrics) => {
     const vals = metricValues(m);
-    DETAIL_METRIC_COLS.forEach((c, i) => (wmax[c] = Math.max(wmax[c], visualLen(metricStr(i, vals[i])))));
+    DETAIL_METRIC_COLS.forEach((c, i) => (wmax[c] = Math.max(wmax[c], colWidthLen(metricStr(i, vals[i])))));
   };
 
+  // 이 섹션은 appendRows로 새로 붙는다 → 양식 행 높이(24pt)를 못 물려받아 기본(~15pt)으로 낮게
+  // 나온다(위 일자/성별/연령은 applyCells로 양식 행에 값만 채워 높이 유지). 그래서 명시적으로 맞춘다.
+  const ROW_HT = 24;
   // 지면별은 양식상 2번 섹션이지만 여기서 맨 아래(성별·연령대 3번 섹션 뒤)로 옮겨지므로
   // 최종 순서에선 4번 섹션 — 다른 섹션 제목과 번호 형식을 맞춘다("N. XXX 성과").
   const titleRow = r++;
-  rows.push(buildRow(titleRow, ["B"], { B: sTitle.B ?? "" }, { B: "4. 지면별 성과" }));
+  rows.push(buildRow(titleRow, ["B"], { B: sTitle.B ?? "" }, { B: "4. 지면별 성과" }, ROW_HT));
   newMerges.push(`B${titleRow}:N${titleRow}`);
 
   const headerVals: Record<string, CellValue> = { B: "광고영역" };
   DETAIL_METRIC_COLS.forEach((c, i) => (headerVals[c] = METRIC_HEADERS[i]));
-  rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sHeader, headerVals));
+  rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sHeader, headerVals, ROW_HT));
 
   let total = ZERO_METRICS;
   for (const p of placements) {
-    wmax.B = Math.max(wmax.B, visualLen(p.label));
+    wmax.B = Math.max(wmax.B, colWidthLen(p.label));
     noteMetrics(p.metrics);
     const v: Record<string, CellValue> = { B: p.label };
     metricValues(p.metrics).forEach((val, i) => (v[DETAIL_METRIC_COLS[i]] = val));
     if (dashConv) { v.M = "-"; v.N = "-"; }
-    rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sData, v));
+    rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sData, v, ROW_HT));
     total = addMetrics(total, p.metrics);
   }
 
@@ -544,7 +580,7 @@ export function renderDetailPlacement(
   const tv: Record<string, CellValue> = { B: "합계" };
   metricValues(total).forEach((val, i) => (tv[DETAIL_METRIC_COLS[i]] = val));
   if (dashConv) { tv.M = "-"; tv.N = "-"; }
-  rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sTotal, tv));
+  rows.push(buildRow(r++, DETAIL_PLACEMENT_COLS, sTotal, tv, ROW_HT));
 
   xml = appendRows(xml, rows);
   const existing = [...xml.matchAll(/<mergeCell ref="([^"]+)"\/>/g)].map((m) => m[1]);

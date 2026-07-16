@@ -18,12 +18,12 @@ import {
 import {
   renderKeywordSheet, renderProductSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement,
   DISPLAY_PLACEMENT, DISPLAY_CAMPAIGN_LAYOUT,
-  type KeywordGroup, type CampaignTypeGroup, type SummaryType,
+  type KeywordGroup, type CampaignTypeGroup, type SummaryType, type ProductRow,
 } from "./report-variable";
 import { authFetch, fetchAdgroupRowsByCampaign } from "./multi-account-data";
 import {
-  fetchAdvancedReport, colIndex, parseEntity, rowMetrics, addMetrics,
-  ZERO_METRICS, type ReportMetrics, type AdvReportResult,
+  fetchAdvancedReport, colIndex, parseEntity, rowMetrics, addMetrics, CAMPAIGN_TP_CODE,
+  ZERO_METRICS, type ReportMetrics, type AdvReportResult, type AdvReportFilter,
 } from "./report-data";
 import {
   rangeForPreset, previousRange, rangeText, eachDay, dayLabel, ymdToIso, proratedBrand,
@@ -317,7 +317,8 @@ function foldMinorRows(
 }
 
 // 지면별: mediaNm별 동적. 노출(impressions)>0인 지면만, 총비용 내림차순. (고정 7버킷 폐기)
-// 총비용 0.5% 미만 지면은 "기타 매체" 한 행으로 접는다.
+// 총비용 0.5% 미만 지면은 "기타 매체" 한 행으로 접는다(전환 난 지면은 남긴다 — 전환이 어느 지면에서
+// 나왔는지가 리포트의 핵심이라 소액이라고 묻으면 안 된다).
 async function fetchPlacement(customerId: number, range: DateRange): Promise<NamedMetrics[]> {
   const res = await fetchAdvancedReport({ attributes: ["mediaNm"], range, customerId });
   const idx = colIndex(res.head);
@@ -331,7 +332,7 @@ async function fetchPlacement(customerId: number, range: DateRange): Promise<Nam
     .map(([label, metrics]) => ({ label, metrics }))
     .filter((p) => p.metrics.impressions > 0)
     .sort((a, b) => b.metrics.cost - a.metrics.cost);
-  return foldMinorRows(rows, minorThreshold(rows), "기타 매체");
+  return foldMinorRows(rows, minorThreshold(rows), "기타 매체", hasConversion);
 }
 
 // ── 브랜드검색 계약금액 (일할 계산) ──
@@ -426,8 +427,12 @@ type CampGroupRow = { campaign: string; group: string; metrics: ReportMetrics };
 async function fetchCampaignGroups(
   customerId: number, range: DateRange, brandByAdgroup: Map<string, number>,
 ): Promise<CampaignTypeGroup[]> {
+  // 이 시트는 **그룹의 진짜 총계**라 지표 필터를 걸면 안 된다(키워드 시트와 달리 여기 숫자가
+  // 광고주에게 나가는 기준값이다). 대신 maxRows는 넉넉히 — 응답이 유형별로 뭉쳐 오므로 기본
+  // 상한(5000)에 걸리면 뒤쪽 유형의 그룹이 통째로 빠져 시트에서 사라지고 전체 합계도 어긋난다.
+  // 검색어 차원이 없어 행이 그룹 수만큼(수백~수천)이라, 상한을 올려도 왕복은 ceil(total/1000)뿐.
   const res = await fetchAdvancedReport({
-    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId"], range, customerId,
+    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId"], range, customerId, maxRows: 30000,
   });
   const idx = colIndex(res.head);
   const byType = new Map<string, CampGroupRow[]>();
@@ -466,13 +471,18 @@ function sortByCampaign(rows: CampGroupRow[]): CampGroupRow[] {
   return out;
 }
 
-// 키워드 시트: 파워링크(등록 키워드) / 쇼핑검색(실제 검색어)
-// 이미 받아둔 advanced-report 응답(유형x캠페인x그룹x검색어)을 유형(apiType)으로 필터해 그룹핑한다.
-// 파워링크·쇼핑검색은 attributes가 동일하므로 호출부에서 보고서를 1회만 받아 두 유형에 각각 적용.
+// 키워드 시트: 파워링크 / 쇼핑검색 — 둘 다 '검색어(expKeyword)' 기준.
+// 호출부가 **유형별로 따로** 받아 오므로(서버 필터, 위 fetchKeywordReport 참조) res에는 이미 한
+// 유형만 들어있다. 그래도 apiType 필터를 남겨둔다 — 서버 필터가 조용히 안 먹었을 때의 안전망.
 //
-// 총비용이 **시트 전체 총비용**의 0.5% 미만인 키워드는 그룹마다 "기타 키워드" 한 행으로 접는다
-// (그룹 소계 기준이 아님 — 작은 그룹의 키워드가 살아남는 걸 막는다). 예전엔 상위 N개로 잘랐는데,
-// 잘린 만큼 소계가 실제 그룹 총액과 어긋났다. 접기는 값을 버리지 않아 소계·합계가 항상 정확하다.
+// 총비용이 **그 캠페인 총비용**의 0.5% 미만인 키워드는 그룹마다 "기타 키워드" 한 행으로 접는다
+// (임계 산정 근거는 아래 본문 주석 참조). 예전엔 상위 N개로 잘랐는데, 잘린 만큼 소계가 실제 그룹
+// 총액과 어긋났다. 접기 자체는 값을 버리지 않는다.
+//
+// ⚠️ 단, 아래 **노출 0 / 광고비 0 제외는 값을 버린다** — 이 시트의 소계·합계는 "광고비가 발생한
+// 검색어"의 합이지 그룹의 진짜 총계가 아니다. 실측(계정 1993455, 2026-06): 광고비·클릭·전환은
+// 차이 0(0원 행은 클릭도 0)이지만 **노출은 15% 적고 클릭률은 2.67%→3.13%로 부풀려진다.**
+// 같은 리포트의 검색광고 시트(필터 없는 경로)와 노출·클릭률이 어긋난다는 뜻이다.
 export function buildKeywordGroups(
   res: AdvReportResult, apiType: string, keyAttr: "keyword" | "expKeyword",
 ): KeywordGroup[] {
@@ -482,11 +492,15 @@ export function buildKeywordGroups(
     if ((r[idx["nccCampaignTp"]] ?? "").trim() !== apiType) continue;
     const kw = (r[idx[keyAttr]] ?? "").trim();
     if (!kw || kw === "-") continue;
+    const metrics = rowMetrics(r, idx);
+    // 노출 0 또는 광고비 0인 검색어는 뺀다 — 표만 길어지고 볼 게 없다. 합산 **전**에 걸러야
+    // 소계·합계도 이 기준으로 맞는다(뺀 뒤의 합이 표에 적히는 값이다).
+    if (metrics.impressions === 0 || metrics.cost === 0) continue;
     items.push({
       campaign: parseEntity(r[idx["nccCampaignId"]] ?? "").name,
       group: parseEntity(r[idx["nccAdgroupId"]] ?? "").name,
       kw,
-      metrics: rowMetrics(r, idx),
+      metrics,
     });
   }
   // 접기 임계는 **캠페인마다 따로** — 그 캠페인 총비용의 0.5%. 시트 전체 기준으로 하면 비용이 큰
@@ -527,10 +541,9 @@ export function buildKeywordGroups(
 // 있으면 한 줄로 모인다(라이브에서 실제로 중복 확인). 그래서 소재ID 단위 성과를 상품명 기준으로
 // 다시 합산하는 2단계 집계가 된다.
 //
-// ⚠️ 순서: **상품명 합산이 먼저, 0.5% 접기가 나중.** 소재 단위로 먼저 접으면, 여러 그룹에 흩어져
-// 각각은 임계 미만이지만 합치면 임계를 넘는 상품이 통째로 "기타"로 사라진다. 그래서 접기 전에
-// 모든 소재의 이름이 필요하다(소재가 많으면 조회도 그만큼 — worker pool로 병렬).
-// 정찰 기록: 메모리 project_f_report_product_dimension.
+// 접기(0.5% "기타 상품")는 없앴다 — 상품 수가 계정당 수십 수준이라 접을 이유가 없고, 어떤 상품인지
+// 안 보이는 손해가 더 크다. 그래서 모든 소재의 이름이 필요하다(소재가 많으면 조회도 그만큼 —
+// worker pool로 병렬). 정찰 기록: 메모리 project_f_report_product_dimension.
 
 // 소재ID 단위 행 (상품명 조인 전). label = nccAdId.
 export function buildProductAdRows(res: AdvReportResult, apiType: string): NamedMetrics[] {
@@ -546,18 +559,24 @@ export function buildProductAdRows(res: AdvReportResult, apiType: string): Named
   return [...map.entries()].map(([label, metrics]) => ({ label, metrics }));
 }
 
-// 소재ID → 상품명 치환 후 **상품명 기준 재합산** + 0.5% 접기. 표 전체 총비용 기준(캠페인 구분 없음).
-export function buildProductRows(adRows: NamedMetrics[], titles: Map<string, string>): NamedMetrics[] {
-  const byTitle = new Map<string, ReportMetrics>();
+// 소재ID → 상품명 치환 후 **상품명 기준 재합산**. 상품 수는 계정당 수십 수준이라 접지 않는다
+// ("기타 상품"으로 묶으면 어떤 상품인지 못 보는 손해가 표 몇 줄 줄이는 이득보다 크다).
+// 같은 상품이 여러 소재로 흩어져 있으면 링크는 먼저 나온 것 하나를 쓴다(어느 소재든 같은 상품 페이지).
+export function buildProductRows(adRows: NamedMetrics[], info: Map<string, ProductInfo>): ProductRow[] {
+  const byTitle = new Map<string, { metrics: ReportMetrics; url?: string }>();
   for (const a of adRows) {
     // 이름을 못 얻은 소재는 ID를 그대로 라벨로 (빈칸보다 낫고, 다른 상품과 섞이지도 않는다)
-    const title = titles.get(a.label) ?? a.label;
-    byTitle.set(title, addMetrics(byTitle.get(title) ?? ZERO_METRICS, a.metrics));
+    const hit = info.get(a.label);
+    const title = hit?.title ?? a.label;
+    const prev = byTitle.get(title);
+    byTitle.set(title, {
+      metrics: addMetrics(prev?.metrics ?? ZERO_METRICS, a.metrics),
+      url: prev?.url ?? hit?.url,
+    });
   }
-  const rows = [...byTitle.entries()]
-    .map(([label, metrics]) => ({ label, metrics }))
+  return [...byTitle.entries()]
+    .map(([label, v]) => ({ label, metrics: v.metrics, url: v.url }))
     .sort((a, b) => b.metrics.cost - a.metrics.cost);
-  return foldMinorRows(rows, minorThreshold(rows), "기타 상품");
 }
 
 // URL 길이 여유(소재ID ~30자 x 50 = 1,500자). 계정당 소재가 1,000개대라 병렬로 훑는다.
@@ -569,14 +588,22 @@ interface RawAdRef {
   referenceData?: Record<string, unknown>;
 }
 
-// 소재ID → 상품명. 소재 type은 계정마다 다르므로(SHOPPING_PRODUCT_AD / CATALOG_AD ...)
-// **종류로 거르지 않고** referenceData.productTitle만 꺼낸다 — 거르면 카탈로그형 계정이 통째로 빈다.
+// 소재ID 뒤에 붙는 상품 정보. url은 상품 페이지 링크(없는 소재도 있어 optional).
+export interface ProductInfo {
+  title: string;
+  url?: string;
+}
+
+// 소재ID → 상품명 + 상품 페이지 링크. 소재 type은 계정마다 다르므로(SHOPPING_PRODUCT_AD /
+// CATALOG_AD ...) **종류로 거르지 않고** referenceData만 꺼낸다 — 거르면 카탈로그형 계정이 통째로 빈다.
 // productName(브랜드 없음) 말고 productTitle(브랜드 포함)이 네이버 리포트 '상품명' 칸과 같다.
-async function fetchProductTitles(customerId: number, ids: string[]): Promise<Map<string, string>> {
+// 링크(mallProductUrl)는 같은 응답에 있어 추가 조회가 없다 — F-Setup(setup-adapters)과 같은 필드.
+async function fetchProductInfo(customerId: number, ids: string[]): Promise<Map<string, ProductInfo>> {
   const chunks: string[][] = [];
   for (let i = 0; i < ids.length; i += AD_ID_CHUNK) chunks.push(ids.slice(i, i + AD_ID_CHUNK));
-  const out = new Map<string, string>();
+  const out = new Map<string, ProductInfo>();
   let next = 0;
+  const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : "");
   const worker = async () => {
     while (next < chunks.length) {
       const chunk = chunks[next++];
@@ -584,8 +611,10 @@ async function fetchProductTitles(customerId: number, ids: string[]): Promise<Ma
         `/apis/sa/api/ncc/ads?ids=${chunk.map(encodeURIComponent).join(",")}`, undefined, customerId,
       );
       for (const a of ads ?? []) {
-        const t = a.referenceData?.["productTitle"];
-        if (a.nccAdId && typeof t === "string" && t.trim()) out.set(a.nccAdId, t.trim());
+        const title = str(a.referenceData?.["productTitle"]);
+        if (!a.nccAdId || !title) continue;
+        const url = str(a.referenceData?.["mallProductUrl"]) || str(a.referenceData?.["mallProdMblUrl"]);
+        out.set(a.nccAdId, { title, url: url || undefined });
       }
     }
   };
@@ -593,12 +622,12 @@ async function fetchProductTitles(customerId: number, ids: string[]): Promise<Ma
   return out;
 }
 
-// 소재ID 목록 → 상품명 맵. 조회가 통째로 실패해도 빈 맵을 줘 시트가 성과 숫자를 살린 채 나가게 한다
-// (이름 자리에 소재ID가 찍히지만 표 자체는 유효).
-async function resolveProductTitles(customerId: number, ids: string[]): Promise<Map<string, string>> {
+// 소재ID 목록 → 상품 정보 맵. 조회가 통째로 실패해도 빈 맵을 줘 시트가 성과 숫자를 살린 채 나가게 한다
+// (이름 자리에 소재ID가 찍히고 링크가 없지만 표 자체는 유효).
+async function resolveProductInfo(customerId: number, ids: string[]): Promise<Map<string, ProductInfo>> {
   if (ids.length === 0) return new Map();
   try {
-    return await fetchProductTitles(customerId, ids);
+    return await fetchProductInfo(customerId, ids);
   } catch (e) {
     console.warn("[dv-ads/report] 상품명 조회 실패 → 소재ID로 표기", e);
     return new Map();
@@ -646,21 +675,48 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
     }
   })();
 
-  // 키워드 다차원 보고서는 파워링크·쇼핑검색이 attributes 동일 → 1회만 받아 유형별로 클라이언트 분배.
-  const keywordReportP = fetchAdvancedReport({
-    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "expKeyword"], range, customerId: cid,
+  // 키워드 다차원 보고서 — **유형별로 따로, 서버 필터로 꼬리를 잘라서** 받는다.
+  // (2026-07-16 라이브 정찰, 메모리 project_advanced_report_filters)
+  //
+  // 한 번에 받으면 안 되는 이유: 응답에 정렬이 없고 **유형별로 뭉쳐서** 온다. 한 계정 실측이
+  // 파워링크 105,540행 + 쇼핑검색 111,842행이었는데, 앞에서부터 5,000행만 받으니 전부 파워링크라
+  // 쇼핑검색이 0건 → 시트가 통째로 사라졌다. 게다가 파워링크도 4.7%만 받아 소계가 틀렸다.
+  // maxRows를 올리는 건 답이 아니다 — 1000행씩 **순차** 호출이라 218왕복이 된다.
+  //
+  // 해법은 안 쓸 행을 애초에 안 받는 것: 행의 85~97%가 광고비 0원이고 리포트에서 어차피 버린다.
+  // 유형 + 광고비>0 + 노출>0으로 거르면 같은 계정이 5,474 / 7,127행 = 14왕복에 100% 수집된다.
+  // maxRows는 상한일 뿐 왕복은 ceil(total/1000)이라, total만 줄면 넉넉히 잡아도 공짜다.
+  const KEYWORD_ATTRS = ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "expKeyword"];
+  const keywordFilters = (tpCode: string): AdvReportFilter[] => [
+    { type: "in", field: "nccCampaignTp", values: [tpCode] },
+    // 노출 0 / 광고비 0 제외를 서버에서 — 클라이언트에서 걸러도 결과는 같지만 그러려고 다 받는 게 낭비.
+    { type: "bound", field: "salesAmt", operator: "gt", value: 0 },
+    { type: "bound", field: "impCnt", operator: "gt", value: 0 },
+  ];
+  // filters는 문서에 없는 internal API 표면이라(정찰로 알아냄) 예고 없이 바뀔 수 있다.
+  // 여기서 throw하면 Promise.all이 깨져 **리포트 전체**가 실패한다 — 키워드 시트는 없으면 제거되는
+  // 시트라, 빈 결과로 떨어뜨려 "키워드 시트만 빠진 리포트"로 살려 보낸다(상품별과 동일한 처리).
+  const fetchKeywordReport = (tpCode: string) => fetchAdvancedReport({
+    attributes: KEYWORD_ATTRS, range, customerId: cid, maxRows: 30000, filters: keywordFilters(tpCode),
+  }).catch((e) => {
+    console.warn(`[dv-ads/report] 키워드 조회 실패(${tpCode}) → 해당 키워드 시트 제거`, e);
+    return { head: [], rows: [], totalResults: 0 } as AdvReportResult;
   });
+  const plReportP = fetchKeywordReport(CAMPAIGN_TP_CODE.파워링크);
+  const shReportP = fetchKeywordReport(CAMPAIGN_TP_CODE.쇼핑검색);
   // 상품별은 별도 호출 — nccAdId는 expKeyword와 조합 불가(API exclusive 제약)라 위 보고서에 못 얹는다.
-  // 소재 단위라 행이 많아(실측 1,478행) maxRows를 넉넉히. 접기는 buildProductGroups가 한다.
+  // 키워드와 **같은 필터를 반드시 걸어야 한다**: 이 응답도 정렬 없이 유형별로 뭉쳐 오므로, 필터가
+  // 없으면 앞쪽 파워링크 소재가 상한을 채워 쇼핑검색이 0건 → 시트 통째 실종(키워드에서 겪은 그 사고).
+  // 광고비>0도 같이 — 접기를 없앤 뒤로 이걸 안 걸면 클릭 한 번 없는 소재가 전부 개별 행으로 나온다.
   const productReportP = fetchAdvancedReport({
     attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "nccAdId"], range, customerId: cid,
-    maxRows: 20000,
+    maxRows: 30000, filters: keywordFilters(CAMPAIGN_TP_CODE.쇼핑검색),
   }).catch((e) => {
     console.warn("[dv-ads/report] 쇼핑검색 상품별 조회 실패 → 시트 제거", e);
     return { head: [], rows: [], totalResults: 0 } as AdvReportResult;
   });
 
-  const [model, searchTypes, displayData, campGroups, keywordRes, productRes] = await Promise.all([
+  const [model, searchTypes, displayData, campGroups, plRes, shRes, productRes] = await Promise.all([
     (async () => {
       const { brandRaw, brandCur, brandPrev } = await brandP;
       return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP, brandRaw);
@@ -674,17 +730,20 @@ export async function buildReportBytes(target: ReportTarget, range: DateRange, m
       const { brandCur } = await brandP;
       return fetchCampaignGroups(cid, range, brandCur.byAdgroup);
     })(),
-    keywordReportP,
+    plReportP,
+    shReportP,
     productReportP,
   ]);
   // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님).
-  const plKeywords = buildKeywordGroups(keywordRes, "파워링크", "expKeyword");
-  const shKeywords = buildKeywordGroups(keywordRes, "쇼핑검색", "expKeyword");
+  // 응답이 이미 유형별로 분리돼 오지만 buildKeywordGroups의 유형 필터는 그대로 둔다 — 필터가
+  // 조용히 안 먹었을 때(코드 오타 등) 남의 유형이 섞여 들어오는 걸 막는 안전망.
+  const plKeywords = buildKeywordGroups(plRes, "파워링크", "expKeyword");
+  const shKeywords = buildKeywordGroups(shRes, "쇼핑검색", "expKeyword");
   // 상품별 — 소재 성과 → 상품명 조인 → 상품명 기준 재합산 → 0.5% 접기 (순서 주의: 위 주석 참고)
   const productAdRows = buildProductAdRows(productRes, "쇼핑검색");
   const shProducts = buildProductRows(
     productAdRows,
-    await resolveProductTitles(cid, productAdRows.map((a) => a.label)),
+    await resolveProductInfo(cid, productAdRows.map((a) => a.label)),
   );
   const displayTypes = displayData.byType;
 

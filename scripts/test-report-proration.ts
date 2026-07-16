@@ -2,7 +2,7 @@
 //   node scripts/test-report-proration.ts
 // report-period.ts는 의존성 없는 순수 모듈이라 로더 없이 직접 실행 가능.
 import {
-  proratedContractAmount, proratedBrand, previousRange,
+  proratedContractAmount, proratedBrand, previousRange, rangeText,
   type ProrationContract, type DateRange,
 } from "../src/lib/report-period.ts";
 
@@ -130,6 +130,20 @@ const contracts = [
   // 기간 중 취소된 계약도 하루씩 합이 맞는지 (중단일 이후 0)
   const cancelled = [{ ...A, cancelTm: "2026-06-14T15:00:00.000Z", adgroupId: "ag" }];
   eq(dayBrandSum(cancelled, full), 1_400_000, "기간 중 취소 계약도 하루씩 합 = 140만");
+}
+
+// ── rangeText: 증감표 라벨용 짧은 기간 표기 ──
+// 연도를 넣으면 B열이 넓어지고, 그래프가 B~N 앵커라 그래프까지 같이 밀린다 → 월.일만.
+{
+  ok(rangeText({ since: "2026-07-06", until: "2026-07-12" }) === "07.06~07.12",
+    `rangeText는 연도 없이 월.일만 (실제 ${rangeText({ since: "2026-07-06", until: "2026-07-12" })})`);
+  ok(!/2026/.test(rangeText({ since: "2026-07-06", until: "2026-07-12" })), "연도가 안 들어감");
+  // 해를 걸치는 기간도 깨지지 않는다(정확한 연도는 표지 periodText에 있다)
+  ok(rangeText({ since: "2025-12-28", until: "2026-01-03" }) === "12.28~01.03",
+    "해를 걸쳐도 월.일 표기 유지");
+  // 이전 기간과 조합 — 실제 라벨이 만들어지는 경로
+  ok(`이전 기간(${rangeText(previousRange({ since: "2026-07-06", until: "2026-07-12" }))})` === "이전 기간(06.29~07.05)",
+    "이전 기간 라벨 조합");
 }
 
 console.log(fail === 0 ? "\n전체 통과 ✅" : `\n${fail}건 실패 ❌`);

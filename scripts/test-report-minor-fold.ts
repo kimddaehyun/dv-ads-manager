@@ -12,9 +12,9 @@ const ok = (c: boolean, m: string) => { console.log(`${c ? "PASS" : "FAIL"}  ${m
 // advanced-report 응답 모양: head 순서 = row 값 순서.
 const HEAD = ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "expKeyword",
   "impCnt", "clkCnt", "ctr", "cpc", "salesAmt", "ccnt", "drtCcnt", "idrtCcnt", "crto", "ror", "purchaseCcnt", "purchaseConvAmt", "convAmt"];
-// cost = salesAmt, pc = purchaseCcnt(구매완료). 나머지는 접기 판단에 안 쓰여 0.
-const row = (tp: string, camp: string, grp: string, kw: string, cost: number, pc = 0): string[] =>
-  [tp, `[${camp}](cmp-1)`, `[${grp}](grp-1)`, kw, "100", "10", "0.1", "10", String(cost),
+// cost = salesAmt, pc = purchaseCcnt(구매완료), imp = impCnt. 나머지는 접기 판단에 안 쓰여 0.
+const row = (tp: string, camp: string, grp: string, kw: string, cost: number, pc = 0, imp = 100): string[] =>
+  [tp, `[${camp}](cmp-1)`, `[${grp}](grp-1)`, kw, String(imp), "10", "0.1", "10", String(cost),
     "0", "0", "0", "0", "0", String(pc), "0", "0"];
 
 // 캠페인A 총비용 1,000,000 → 임계 5,000 / 캠페인B 총비용 98,400 → 임계 492
@@ -75,15 +75,34 @@ const clean: AdvReportResult = {
 ok(!buildKeywordGroups(clean, "파워링크", "expKeyword")[0].keywords.some((k) => k.keyword === "기타 키워드"),
   "임계 넘는 행만 있으면 기타 행 없음");
 
-// 전부 0원(집행 없는 기간)이면 임계 0 → 아무것도 안 접힌다.
+// ── 노출 0 / 광고비 0 제외 ──
+// 표만 길어지고 볼 게 없어 아예 뺀다. 접기(기타)와는 다른 단계 — 합산 전에 걸러서 소계·합계도
+// 이 기준으로 맞는다.
+const mixed: AdvReportResult = {
+  head: HEAD,
+  rows: [
+    row("파워링크", "캠페인A", "그룹A", "정상키워드", 500000),
+    row("파워링크", "캠페인A", "그룹A", "노출0키워드", 500000, 0, 0), // 노출 0 → 제외
+    row("파워링크", "캠페인A", "그룹A", "비용0키워드", 0),            // 광고비 0 → 제외
+  ],
+  totalResults: 3,
+};
+const mixedKw = buildKeywordGroups(mixed, "파워링크", "expKeyword")[0].keywords.map((k) => k.keyword);
+ok(mixedKw.join(",") === "정상키워드", `노출 0 / 광고비 0 키워드 제외 (실제 ${mixedKw.join(",")})`);
+// 제외분이 "기타"로도 안 들어와야 한다 — 빼기로 했으면 어디에도 안 남는다
+ok(!mixedKw.includes("기타 키워드"), "제외된 키워드가 '기타 키워드'로 되살아나지 않음");
+// 임계 계산도 제외 후 기준 — 제외분이 캠페인 총비용을 부풀리면 안 된다
+const kept = buildKeywordGroups(mixed, "파워링크", "expKeyword")[0].keywords;
+ok(kept.reduce((s, k) => s + k.metrics.cost, 0) === 500000, "소계는 제외 후 합계(500,000)");
+
+// 전부 0원(집행 없는 기간)이면 남는 키워드가 없어 그룹 자체가 안 생긴다 → 시트 제거로 이어짐.
 const zero: AdvReportResult = {
   head: HEAD,
   rows: [row("파워링크", "캠페인A", "그룹A", "케라셀", 0), row("파워링크", "캠페인A", "그룹A", "탈모", 0)],
   totalResults: 2,
 };
-const zeroKw = buildKeywordGroups(zero, "파워링크", "expKeyword")[0].keywords;
-ok(zeroKw.length === 2 && !zeroKw.some((k) => k.keyword === "기타 키워드"),
-  "전부 0원이면 임계 0 → 접기 없음(0원 키워드가 통째로 기타로 사라지지 않음)");
+ok(buildKeywordGroups(zero, "파워링크", "expKeyword").length === 0,
+  "전부 0원인 기간이면 그룹 0개(표가 빈 껍데기로 안 나감)");
 
 console.log(fail === 0 ? "\n전체 통과 ✅" : `\n${fail}건 실패 ❌`);
 process.exit(fail === 0 ? 0 : 1);
