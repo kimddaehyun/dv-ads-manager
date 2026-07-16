@@ -176,6 +176,11 @@ export interface MultiAccountUserMeta {
    * 광고주가 직접 운영하는 계정은 외부 수정이 정상이라 알림이 소음이 되므로 계정별 선택.
    */
   changeWatch?: boolean;
+  /**
+   * 목표 광고수익률(%). F-Brief 키워드 구간 분류(초록/노랑/무색) 기준.
+   * undefined = 미설정 - 구간 분류 후보를 만들지 않는다(자동 추정 안 함).
+   */
+  targetRoas?: number;
 }
 
 /**
