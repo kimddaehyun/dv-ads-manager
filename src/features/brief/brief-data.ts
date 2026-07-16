@@ -102,3 +102,79 @@ export function buildSummarySpec(data: BriefData): BriefTableSpec {
 
 // Task 10의 brief.ts가 totals를 만들 때 같은 형식을 써야 검산이 안 어긋난다(두 곳 포맷 금지).
 export { won, approxWon };
+
+// ── 순위 보강용 입찰가 맵 (Task 7) ─────────────────────────────────────
+//
+// 리포트의 키워드 행은 advanced-report의 **검색어**(expKeyword)라 입찰가가 없다.
+// estimateRank(userBid, ...)에 넣을 실효 입찰가는 ncc 등록 키워드에서 가져와
+// **정규화된 키워드 텍스트**로 매칭한다. 검색어가 등록 키워드와 다르면(확장 매칭 등)
+// 맵에 없어 rank가 비고, 후보에서 자연히 빠진다 — 등록 키워드의 순위만 말할 수 있다.
+
+interface RawCampaign { nccCampaignId?: string }
+interface RawAdgroup { nccAdgroupId?: string; bidAmt?: number }
+interface RawKeyword { keyword?: string; bidAmt?: number; useGroupBidAmt?: boolean }
+
+function numOr0(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/** setup-data.ts의 pool과 동일 발상 — 동시성 4 worker. */
+async function pool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return out;
+}
+
+/**
+ * 파워링크(WEB_SITE) 등록 키워드의 실효 입찰가 맵. key = normalizeKeyword(키워드).
+ * useGroupBidAmt면 그룹 bidAmt 상속(F-Setup과 동일 규칙). 쇼핑검색은 키워드 입찰이 없어 제외.
+ * 같은 키워드가 여러 그룹에 있으면 **높은 입찰가**를 쓴다 — 순위는 가장 잘 노출되는 그룹 기준.
+ */
+export async function fetchPowerlinkBidMap(customerId: number): Promise<Map<string, number>> {
+  const { authFetch } = await import("@/features/multi-account/multi-account-data");
+  const { normalizeKeyword } = await import("@/shared/storage-keys");
+
+  const campaigns = await authFetch<RawCampaign[]>(
+    "/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=WEB_SITE",
+    undefined,
+    customerId,
+  ).catch(() => [] as RawCampaign[]);
+  const campIds = (Array.isArray(campaigns) ? campaigns : [])
+    .map((c) => c.nccCampaignId).filter((x): x is string => !!x);
+
+  const groupLists = await pool(campIds, 4, (cid) =>
+    authFetch<RawAdgroup[]>(
+      `/apis/sa/api/ncc/adgroups?nccCampaignId=${encodeURIComponent(cid)}&recordSize=1001`,
+      undefined,
+      customerId,
+    ).catch(() => [] as RawAdgroup[]),
+  );
+  const groups = groupLists.flat().filter((g) => g?.nccAdgroupId);
+
+  const bidMap = new Map<string, number>();
+  await pool(groups, 4, async (g) => {
+    const keywords = await authFetch<RawKeyword[]>(
+      `/apis/sa/api/ncc/keywords?nccAdgroupId=${encodeURIComponent(g.nccAdgroupId!)}&recordSize=1001`,
+      undefined,
+      customerId,
+    ).catch(() => [] as RawKeyword[]);
+    const groupBid = numOr0(g.bidAmt);
+    for (const k of Array.isArray(keywords) ? keywords : []) {
+      const kw = k.keyword?.trim();
+      if (!kw) continue;
+      const bid = k.useGroupBidAmt ? groupBid : numOr0(k.bidAmt);
+      if (bid <= 0) continue;
+      const key = normalizeKeyword(kw);
+      const prev = bidMap.get(key);
+      if (prev == null || bid > prev) bidMap.set(key, bid);
+    }
+  });
+  return bidMap;
+}

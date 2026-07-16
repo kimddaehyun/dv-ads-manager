@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
+  pickRankTargets, LOW_RANK_FLOOR,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
 import { type KeywordGroup } from "@/features/report/report-variable";
@@ -151,5 +152,59 @@ describe("extractCandidates", () => {
 
   it("후보가 없으면 빈 배열", () => {
     expect(extractCandidates({ keywords: [], placements: [], targetRoas: 800 })).toEqual([]);
+  });
+});
+
+describe("pickRankTargets", () => {
+  it("LOW_RANK_FLOOR는 6", () => {
+    expect(LOW_RANK_FLOOR).toBe(6);
+  });
+
+  it("비용 임계 이상 + green 구간만 순위 조회 대상 — 수백 회 호출 방지", () => {
+    const targets = pickRankTargets(flattenKeywords(GROUPS), 800);
+    expect(targets.map((t) => t.keyword)).toEqual(["대나무자리"]); // ROAS 900% = green
+  });
+
+  it("목표 미설정이면 대상 없음 — green 판정이 불가능하다", () => {
+    expect(pickRankTargets(flattenKeywords(GROUPS), undefined)).toEqual([]);
+  });
+});
+
+describe("extractCandidates - highRoasLowRank", () => {
+  const withRank = (): KeywordGroup[] => [{
+    campaign: "C", group: "G",
+    keywords: [{ keyword: "고효율", metrics: m(50_000, 5, 450_000) }],
+  }];
+
+  it("green + 저순위면 후보", () => {
+    const rows = flattenKeywords(withRank());
+    rows[0].rank = 8;
+    const c = extractCandidates({ keywords: [], placements: [], targetRoas: 800, rankedRows: rows })
+      .find((x) => x.kind === "highRoasLowRank");
+    expect(c).toBeDefined();
+    expect(c!.facts.keywords).toBe("고효율");
+    // 표에 추정순위 열이 붙는다.
+    expect(c!.table.columns).toContain("추정순위");
+    expect(c!.table.rows[0].cells).toContain("8위");
+  });
+
+  it("green이어도 순위가 높으면 후보 아님", () => {
+    const rows = flattenKeywords(withRank());
+    rows[0].rank = 2;
+    expect(extractCandidates({ keywords: [], placements: [], targetRoas: 800, rankedRows: rows })
+      .find((x) => x.kind === "highRoasLowRank")).toBeUndefined();
+  });
+
+  it("순위를 못 얻었으면 후보 아님 — 자격증명 미등록 시 조용히 스킵", () => {
+    const rows = flattenKeywords(withRank());
+    expect(extractCandidates({ keywords: [], placements: [], targetRoas: 800, rankedRows: rows })
+      .find((x) => x.kind === "highRoasLowRank")).toBeUndefined();
+  });
+
+  it("목표 미설정이면 rankedRows가 있어도 후보 아님", () => {
+    const rows = flattenKeywords(withRank());
+    rows[0].rank = 8;
+    expect(extractCandidates({ keywords: [], placements: [], rankedRows: rows })
+      .find((x) => x.kind === "highRoasLowRank")).toBeUndefined();
   });
 });

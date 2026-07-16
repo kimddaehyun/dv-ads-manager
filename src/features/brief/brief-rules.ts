@@ -91,6 +91,8 @@ export interface BriefRuleInput {
   placements: NamedMetrics[];
   /** 계정별 목표 광고수익률(%). undefined면 구간 분류 후보를 만들지 않는다. */
   targetRoas?: number;
+  /** 순위가 보강된 키워드 행. brief.ts가 pickRankTargets 대상만 rank를 채워 넘긴다. */
+  rankedRows?: BriefKeywordRow[];
 }
 
 /** 그룹 계층(캠페인 > 그룹 > 키워드)을 행 목록으로 평탄화. 캠페인/그룹을 각 행에 붙인다. */
@@ -125,6 +127,20 @@ function kwRow(r: BriefKeywordRow, target?: number): BriefTableRow {
 /** 비용 많이 쓴 순. 표는 상위가 먼저 보여야 한다. */
 function byCostDesc<T extends { metrics: ReportMetrics }>(a: T, b: T): number {
   return b.metrics.cost - a.metrics.cost;
+}
+
+/** 이 순위 이상(숫자가 큼)이면 "낮다"고 본다. 로그의 "2페이지"는 PC 11위~지만 보수적으로 6위(설계 §14). */
+export const LOW_RANK_FLOOR = 6;
+
+/**
+ * 순위를 조회할 키워드만 고른다 — **전체에 걸면 수백 회 호출이다.**
+ * 비용 임계를 넘고 목표를 달성한(green) 키워드만. 실측 수십 개 수준.
+ */
+export function pickRankTargets(rows: BriefKeywordRow[], targetRoas?: number): BriefKeywordRow[] {
+  if (targetRoas == null || targetRoas <= 0) return [];
+  return rows.filter((r) =>
+    r.metrics.cost >= COST_FLOOR && roasBand(roasPct(r.metrics), targetRoas) === "green",
+  );
 }
 
 export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
@@ -174,6 +190,35 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           title: `목표 수익률 ${targetRoas}% 미달 키워드`,
           columns: KW_COLUMNS,
           rows: below.map((r) => kwRow(r, targetRoas)),
+        },
+        selected: false,
+      });
+    }
+  }
+
+  // ④ 목표를 달성했는데 순위가 낮음 → 상향 여지. **F001 순위 + F-Report 효율 결합.**
+  // 순위를 못 얻었으면(자격증명 미등록 등) rank가 undefined라 자연히 후보가 안 만들어진다.
+  if (targetRoas != null && targetRoas > 0 && input.rankedRows) {
+    const lowRank = input.rankedRows
+      .filter((r) => r.rank != null && r.rank >= LOW_RANK_FLOOR &&
+        roasBand(roasPct(r.metrics), targetRoas) === "green")
+      .sort(byCostDesc);
+    if (lowRank.length > 0) {
+      out.push({
+        kind: "highRoasLowRank",
+        facts: {
+          기준: `목표 수익률 ${targetRoas}% 달성, 추정 순위 ${LOW_RANK_FLOOR}위 이하`,
+          keywords: lowRank.map((r) => r.keyword).join(", "),
+          count: lowRank.length,
+          평균순위: Math.round(lowRank.reduce((s, r) => s + (r.rank ?? 0), 0) / lowRank.length),
+        },
+        table: {
+          title: "목표 달성 · 순위 상승 여지 키워드",
+          columns: [...KW_COLUMNS, "추정순위"],
+          rows: lowRank.map((r) => {
+            const base = kwRow(r, targetRoas);
+            return { ...base, cells: [...base.cells, `${r.rank}위`] };
+          }),
         },
         selected: false,
       });
