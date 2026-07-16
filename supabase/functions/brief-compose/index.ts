@@ -7,7 +7,9 @@
 
 const TOKENS = new Set((Deno.env.get("BRIEF_TOKENS") ?? "").split(",").map((s) => s.trim()).filter(Boolean));
 const API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
-const MODEL = "gemini-2.5-flash-lite"; // 번역 작업이라 소형 모델로 충분 + 한국어 존댓말 강점
+// 번역 작업이라 소형 모델로 충분 + 한국어 존댓말 강점. 설계는 2.5 Flash-Lite였으나
+// 2026-07 신규 키에 제공 중단("no longer available to new users")되어 후속 정식판으로 교체.
+const MODEL = "gemini-3.1-flash-lite";
 
 // 실제 AE 보고 로그. 톤을 설명하지 말고 보여준다.
 const TONE_SAMPLES = `
