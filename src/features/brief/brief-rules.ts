@@ -7,7 +7,7 @@
  * 설계: docs/superpowers/specs/2026-07-16-f-brief-design.md §5
  */
 
-import { type ReportMetrics } from "@/features/report/report-data";
+import { addMetrics, type ReportMetrics } from "@/features/report/report-data";
 import { type KeywordGroup } from "@/features/report/report-variable";
 import { type NamedMetrics } from "@/features/report/report-fill";
 
@@ -46,7 +46,9 @@ export type BriefKind =
   | "zeroConvKeyword"      // 비용 임계 이상인데 전환 0
   | "highRoasLowRank"      // 목표 달성인데 순위가 낮음 (Task 7)
   | "belowTargetKeyword"   // 전환은 있으나 none 구간
+  | "belowTargetGroup"     // 그룹 집계 ROAS가 none 구간 (Task 12)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
+  | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
   | "productConvDrop";     // 전기 대비 전환 빠진 상품 (Task 8)
 
 /** AE가 고르는 액션. AI가 창작하지 않는다 — 완전자동 모드에서도 이 목록에서만 고른다. */
@@ -154,6 +156,26 @@ export function pickRankTargets(rows: BriefKeywordRow[], targetRoas?: number): B
   );
 }
 
+/** 지면별 성과 표 — 전환 0(③)과 저수익률(⑦) 지면 후보가 같은 표를 쓴다. 전체 지면 문맥 포함. */
+function placementTable(placements: NamedMetrics[], targetRoas?: number): BriefTableSpec {
+  return {
+    title: "지면별 성과",
+    columns: ["지면", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
+    rows: [...placements].sort(byCostDesc).map((p) => ({
+      cells: [
+        p.label,
+        p.metrics.impressions.toLocaleString(),
+        p.metrics.clicks.toLocaleString(),
+        `${p.metrics.cost.toLocaleString()}원`,
+        String(p.metrics.purchaseConv),
+        `${p.metrics.revenue.toLocaleString()}원`,
+        `${roasPct(p.metrics).toFixed(0)}%`,
+      ],
+      band: targetRoas != null ? roasBand(roasPct(p.metrics), targetRoas) : undefined,
+    })),
+  };
+}
+
 export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   const { targetRoas } = input;
   const rows = flattenKeywords(input.keywords);
@@ -236,6 +258,53 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
     }
   }
 
+  // ⑥ 그룹 집계 ROAS가 none — 키워드 개별(②)과 달리 그룹 단위 요약 후보.
+  // 초록·노랑이 섞인 그룹은 **합산** ROAS가 기준이다 — 합산이 살아 있으면 그룹 후보를 만들지 않는다.
+  if (targetRoas != null && targetRoas > 0) {
+    const byGroup = new Map<string, { campaign: string; group: string; metrics: ReportMetrics }>();
+    for (const r of rows) {
+      // 같은 그룹명이 다른 캠페인에 있을 수 있어 캠페인까지 키에 넣는다.
+      const key = `${r.campaign} ${r.group}`;
+      const agg = byGroup.get(key);
+      if (agg) {
+        agg.metrics = addMetrics(agg.metrics, r.metrics);
+      } else {
+        byGroup.set(key, { campaign: r.campaign, group: r.group, metrics: { ...r.metrics } });
+      }
+    }
+    const badGroups = [...byGroup.values()]
+      .filter((g) => g.metrics.cost >= COST_FLOOR && roasBand(roasPct(g.metrics), targetRoas) === "none")
+      .sort(byCostDesc);
+    if (badGroups.length > 0) {
+      out.push({
+        kind: "belowTargetGroup",
+        facts: {
+          기준: `광고그룹 합산 수익률이 목표 ${targetRoas}%에 크게 미달`,
+          groups: badGroups.map((g) => `${g.campaign} > ${g.group}`).join(", "),
+          count: badGroups.length,
+          비용합계: badGroups.reduce((s, g) => s + g.metrics.cost, 0),
+        },
+        table: {
+          title: `목표 수익률 ${targetRoas}% 미달 광고그룹`,
+          columns: ["광고그룹", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
+          rows: badGroups.map((g) => ({
+            cells: [
+              `${g.campaign} > ${g.group}`,
+              g.metrics.impressions.toLocaleString(),
+              g.metrics.clicks.toLocaleString(),
+              `${g.metrics.cost.toLocaleString()}원`,
+              String(g.metrics.purchaseConv),
+              `${g.metrics.revenue.toLocaleString()}원`,
+              `${roasPct(g.metrics).toFixed(0)}%`,
+            ],
+            band: roasBand(roasPct(g.metrics), targetRoas),
+          })),
+        },
+        selected: false,
+      });
+    }
+  }
+
   // ③ 지면 비용 임계 이상인데 전환 0
   const zeroPlace = input.placements
     .filter((p) => p.metrics.cost >= COST_FLOOR && p.metrics.purchaseConv === 0)
@@ -249,24 +318,30 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         count: zeroPlace.length,
         비용합계: zeroPlace.reduce((s, p) => s + p.metrics.cost, 0),
       },
-      table: {
-        title: "지면별 성과",
-        columns: ["지면", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
-        rows: [...input.placements].sort(byCostDesc).map((p) => ({
-          cells: [
-            p.label,
-            p.metrics.impressions.toLocaleString(),
-            p.metrics.clicks.toLocaleString(),
-            `${p.metrics.cost.toLocaleString()}원`,
-            String(p.metrics.purchaseConv),
-            `${p.metrics.revenue.toLocaleString()}원`,
-            `${roasPct(p.metrics).toFixed(0)}%`,
-          ],
-          band: targetRoas != null ? roasBand(roasPct(p.metrics), targetRoas) : undefined,
-        })),
-      },
+      table: placementTable(input.placements, targetRoas),
       selected: false,
     });
+  }
+
+  // ⑦ 지면 전환은 있으나 none 구간 — ③(전환 0)과 겹치지 않게 purchaseConv > 0만.
+  if (targetRoas != null && targetRoas > 0) {
+    const lowPlace = input.placements
+      .filter((p) => p.metrics.cost >= COST_FLOOR && p.metrics.purchaseConv > 0 &&
+        roasBand(roasPct(p.metrics), targetRoas) === "none")
+      .sort(byCostDesc);
+    if (lowPlace.length > 0) {
+      out.push({
+        kind: "lowRoasPlacement",
+        facts: {
+          기준: `지면 수익률이 목표 ${targetRoas}%에 크게 미달`,
+          placements: lowPlace.map((p) => p.label).join(", "),
+          count: lowPlace.length,
+          비용합계: lowPlace.reduce((s, p) => s + p.metrics.cost, 0),
+        },
+        table: placementTable(input.placements, targetRoas),
+        selected: false,
+      });
+    }
   }
 
   // ⑤ 전기 대비 전환이 빠진 상품 — 보고 로그의 "객단가 높은 [온열 찜질기]에서 전환이

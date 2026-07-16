@@ -210,6 +210,111 @@ describe("extractCandidates - highRoasLowRank", () => {
   });
 });
 
+describe("extractCandidates - belowTargetGroup", () => {
+  const base = { placements: [] as NamedMetrics[], targetRoas: 800 };
+
+  it("그룹 집계 ROAS가 none이어야만 후보 — 초록·노랑·무색이 섞여도 합산이 기준", () => {
+    // 그룹 합산: 비용 10만, 매출 85만 → ROAS 850% = green → 후보 아님.
+    // 안에 none 키워드(400%)가 섞여 있어도 그룹 후보는 만들지 않는다(키워드 후보가 개별로 다룬다).
+    const mixed: KeywordGroup[] = [{
+      campaign: "C", group: "섞인그룹",
+      keywords: [
+        { keyword: "좋음", metrics: m(50_000, 6, 650_000) },   // 1300% green
+        { keyword: "나쁨", metrics: m(50_000, 2, 200_000) },   // 400% none
+      ],
+    }];
+    expect(extractCandidates({ ...base, keywords: mixed })
+      .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
+  });
+
+  it("그룹 집계 ROAS none + 비용 임계 이상 → 후보", () => {
+    // 합산: 비용 6만, 매출 24만 → 400% = none.
+    const bad: KeywordGroup[] = [{
+      campaign: "[DV] 대나무", group: "2. 세부",
+      keywords: [
+        { keyword: "a", metrics: m(30_000, 1, 120_000) },
+        { keyword: "b", metrics: m(30_000, 1, 120_000) },
+      ],
+    }];
+    const c = extractCandidates({ ...base, keywords: bad })
+      .find((x) => x.kind === "belowTargetGroup");
+    expect(c).toBeDefined();
+    expect(String(c!.facts.groups)).toContain("2. 세부");
+    expect(c!.facts.count).toBe(1);
+    // 그룹 후보는 요약 — 키워드 나열이 아니라 그룹 단위 표.
+    expect(c!.table.columns[0]).toBe("광고그룹");
+  });
+
+  it("그룹 합산 비용이 임계 미만이면 제외", () => {
+    const small: KeywordGroup[] = [{
+      campaign: "C", group: "소액그룹",
+      keywords: [{ keyword: "a", metrics: m(9_000, 1, 10_000) }],
+    }];
+    expect(extractCandidates({ ...base, keywords: small })
+      .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
+  });
+
+  it("목표 미설정이면 후보를 만들지 않는다", () => {
+    const bad: KeywordGroup[] = [{
+      campaign: "C", group: "G",
+      keywords: [{ keyword: "a", metrics: m(60_000, 2, 240_000) }],
+    }];
+    expect(extractCandidates({ keywords: bad, placements: [] })
+      .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
+  });
+
+  it("같은 그룹명이 다른 캠페인에 있어도 따로 집계한다", () => {
+    // 캠페인A의 "기본"은 none, 캠페인B의 "기본"은 green — A만 후보.
+    const two: KeywordGroup[] = [
+      { campaign: "A", group: "기본", keywords: [{ keyword: "a", metrics: m(60_000, 2, 240_000) }] },
+      { campaign: "B", group: "기본", keywords: [{ keyword: "b", metrics: m(60_000, 8, 600_000) }] },
+    ];
+    const c = extractCandidates({ ...base, keywords: two })
+      .find((x) => x.kind === "belowTargetGroup");
+    expect(c!.facts.count).toBe(1);
+    expect(String(c!.facts.groups)).toContain("A");
+    expect(String(c!.facts.groups)).not.toContain("B");
+  });
+});
+
+describe("extractCandidates - lowRoasPlacement", () => {
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
+  const placements: NamedMetrics[] = [
+    // 비용 임계 이상 + 전환>0 + ROAS 400% = none → 후보
+    { label: "쇼핑 검색탭", metrics: m(40_000, 2, 160_000) },
+    // 전환 0 → zeroConvPlacement 몫 — 여기 중복 금지
+    { label: "네이버 메인", metrics: m(31_000, 0, 0) },
+    // green → 후보 아님
+    { label: "네이버 검색", metrics: m(80_000, 10, 800_000) },
+    // yellow(700%) → 유지 대상, 후보 아님
+    { label: "파트너", metrics: m(20_000, 2, 140_000) },
+    // none이지만 비용 임계 미만 → 제외
+    { label: "기타", metrics: m(5_000, 1, 5_000) },
+  ];
+
+  it("전환은 있으나 none 구간인 지면만 후보 — 전환 0/노랑/임계 미만 제외", () => {
+    const c = extractCandidates({ ...base, placements })
+      .find((x) => x.kind === "lowRoasPlacement");
+    expect(c).toBeDefined();
+    expect(c!.facts.placements).toBe("쇼핑 검색탭");
+    expect(c!.facts.count).toBe(1);
+  });
+
+  it("zeroConvPlacement와 중복되지 않는다", () => {
+    const cands = extractCandidates({ ...base, placements });
+    const zero = cands.find((x) => x.kind === "zeroConvPlacement");
+    const low = cands.find((x) => x.kind === "lowRoasPlacement");
+    expect(zero!.facts.placements).toBe("네이버 메인");
+    expect(String(low!.facts.placements)).not.toContain("네이버 메인");
+  });
+
+  it("목표 미설정이면 후보를 만들지 않는다 — zeroConvPlacement는 그대로", () => {
+    const cands = extractCandidates({ keywords: [], placements });
+    expect(cands.find((x) => x.kind === "lowRoasPlacement")).toBeUndefined();
+    expect(cands.find((x) => x.kind === "zeroConvPlacement")).toBeDefined();
+  });
+});
+
 describe("extractCandidates - productConvDrop", () => {
   const products: BriefProductDelta[] = [
     // 전환 5 → 0, 매출 -340,000 → 후보
