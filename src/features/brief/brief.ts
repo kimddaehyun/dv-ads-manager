@@ -145,13 +145,19 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
     }
 
     hideProgress();
+    // 토스트는 금방 사라져 안내로 부적합 — 패널 상단 고정 안내줄 (설계 §5).
+    // 후보 0개도 명시한다 — 안 그러면 "비어 보이는 게 고장인지 정상인지" 구분이 안 된다.
+    const notices: string[] = [];
+    if (targetRoas == null) {
+      notices.push("목표 수익률을 설정하면 키워드 분류를 제안해요. 계정 메뉴의 \"목표 수익률\"에서 입력할 수 있어요");
+    }
+    if (candidates.length === 0) {
+      notices.push("이번 기간에는 짚어볼 특이사항(전환 없는 키워드·목표 미달 등)이 없어요. 아래 요약만 그대로 쓰시면 됩니다");
+    }
     renderBriefPanel({
       advertiserName: target.name,
       blocks,
-      // 토스트는 금방 사라져 안내로 부적합 — 패널 상단 고정 안내줄 (설계 §5).
-      notice: targetRoas == null
-        ? "목표 수익률을 설정하면 키워드 분류를 제안해요. 계정 메뉴의 \"목표 수익률\"에서 입력할 수 있어요"
-        : undefined,
+      notice: notices.length > 0 ? notices.join(" · ") : undefined,
     });
   } catch (e) {
     console.warn("[dv-ads/brief] 보고 문구 생성 실패", e);
