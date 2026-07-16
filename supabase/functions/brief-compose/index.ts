@@ -46,21 +46,31 @@ const ACTION_LABEL: Record<string, string> = {
   ask: "광고주 확인 요청",
 };
 
+// CORS — 콘텐츠 스크립트는 ads.naver.com 페이지 컨텍스트에서 fetch하므로(MV3),
+// 브라우저 preflight(OPTIONS)와 응답의 CORS 헤더가 없으면 "Failed to fetch"로 죽는다.
+// origin을 광고관리자로 좁힌다. 인증은 어차피 토큰 화이트리스트가 한다.
+const CORS_HEADERS = {
+  "access-control-allow-origin": "https://ads.naver.com",
+  "access-control-allow-methods": "POST, OPTIONS",
+  "access-control-allow-headers": "authorization, content-type",
+};
+
 Deno.serve(async (req) => {
-  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
+  if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: CORS_HEADERS });
 
   const auth = req.headers.get("authorization") ?? "";
   const token = auth.replace(/^Bearer\s+/i, "").trim();
   if (!token || !TOKENS.has(token)) {
     return new Response(JSON.stringify({ error: "unauthorized" }), {
-      status: 401, headers: { "content-type": "application/json" },
+      status: 401, headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
   }
 
   const body = await req.json();
   const facts = (body.facts ?? []) as Array<Record<string, unknown>>;
   if (facts.length === 0 && !body.memo) {
-    return new Response(JSON.stringify({ blocks: [] }), { headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ blocks: [] }), { headers: { "content-type": "application/json", ...CORS_HEADERS } });
   }
 
   const factLines = facts.map((f) => {
@@ -111,7 +121,7 @@ Deno.serve(async (req) => {
   if (!res.ok) {
     console.error("gemini error", res.status); // 상태코드만 — 본문엔 광고주 데이터가 있다
     return new Response(JSON.stringify({ error: "upstream" }), {
-      status: 502, headers: { "content-type": "application/json" },
+      status: 502, headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
   }
 
@@ -119,5 +129,5 @@ Deno.serve(async (req) => {
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   // responseMimeType로 JSON을 받지만, 방어적으로 첫 { ~ 마지막 } 만 취한다.
   const json = text.match(/\{[\s\S]*\}/)?.[0] ?? '{"blocks":[]}';
-  return new Response(json, { headers: { "content-type": "application/json" } });
+  return new Response(json, { headers: { "content-type": "application/json", ...CORS_HEADERS } });
 });
