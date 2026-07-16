@@ -41,6 +41,11 @@ export function closeBriefPanel(): void {
 export function renderBriefPanel(opts: BriefPanelOpts): void {
   closeBriefPanel();
 
+  // 미리보기 blob URL은 revoke하지 않으면 패널을 여닫을 때마다 PNG가 메모리에 쌓인다.
+  // disposed 플래그는 닫힌 뒤 늦게 도착한 렌더가 URL을 만들거나 죽은 img에 붙는 것을 막는다.
+  const objectUrls: string[] = [];
+  let disposed = false;
+
   const backdrop = document.createElement("div");
   backdrop.className = "dvads dvads-brief-backdrop";
 
@@ -118,7 +123,10 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
       // 미리보기 — 렌더 실패해도 복사 버튼은 살려둔다.
       void renderTablePng(block.spec)
         .then((blob) => {
-          img.src = URL.createObjectURL(blob);
+          if (disposed) return; // 패널이 이미 닫힘 — URL을 만들지 않는다
+          const url = URL.createObjectURL(blob);
+          objectUrls.push(url);
+          img.src = url;
         })
         .catch((e) => console.warn("[dv-ads/brief] 표 미리보기 실패", e));
     }
@@ -152,6 +160,9 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
   wireBackdropDismiss(backdrop, () => closeBriefPanel());
 
   disposePanel = () => {
+    disposed = true;
+    for (const u of objectUrls) URL.revokeObjectURL(u);
+    objectUrls.length = 0;
     backdrop.remove();
   };
 }
