@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
-  pickRankTargets, LOW_RANK_FLOOR,
+  pickRankTargets, LOW_RANK_FLOOR, SKEW_RATIO,
   type BriefProductDelta,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
@@ -312,6 +312,96 @@ describe("extractCandidates - lowRoasPlacement", () => {
     const cands = extractCandidates({ keywords: [], placements });
     expect(cands.find((x) => x.kind === "lowRoasPlacement")).toBeUndefined();
     expect(cands.find((x) => x.kind === "zeroConvPlacement")).toBeDefined();
+  });
+});
+
+describe("extractCandidates - genderBidSkew / ageBidSkew", () => {
+  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+
+  it("SKEW_RATIO는 1.5", () => {
+    expect(SKEW_RATIO).toBe(1.5);
+  });
+
+  it("성별 ROAS 격차 1.5배 이상 + 양쪽 비용 임계 이상 → genderBidSkew", () => {
+    // 남성 900% vs 여성 400% (2.25배) — 남성 상향/여성 하향 제안.
+    const byGender: NamedMetrics[] = [
+      { label: "남성", metrics: m(50_000, 5, 450_000) },
+      { label: "여성", metrics: m(50_000, 2, 200_000) },
+    ];
+    const c = extractCandidates({ ...base, byGender }).find((x) => x.kind === "genderBidSkew");
+    expect(c).toBeDefined();
+    expect(c!.facts.좋은쪽).toBe("남성");
+    expect(c!.facts.나쁜쪽).toBe("여성");
+  });
+
+  it("격차가 임계 바로 아래면 후보 아님", () => {
+    // 600% vs 449% → 449 x 1.5 = 673.5 > 600 → 미달.
+    const byGender: NamedMetrics[] = [
+      { label: "남성", metrics: m(100_000, 6, 600_000) },
+      { label: "여성", metrics: m(100_000, 4, 449_000) },
+    ];
+    expect(extractCandidates({ ...base, byGender })
+      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+  });
+
+  it("격차가 정확히 1.5배면 후보 — 경계 포함", () => {
+    const byGender: NamedMetrics[] = [
+      { label: "남성", metrics: m(100_000, 6, 600_000) },
+      { label: "여성", metrics: m(100_000, 4, 400_000) },
+    ];
+    expect(extractCandidates({ ...base, byGender })
+      .find((x) => x.kind === "genderBidSkew")).toBeDefined();
+  });
+
+  it("한쪽 비용이 문턱 미만이면 후보 아님 — 잡음 방지", () => {
+    const byGender: NamedMetrics[] = [
+      { label: "남성", metrics: m(50_000, 5, 450_000) },
+      { label: "여성", metrics: m(5_000, 0, 0) },
+    ];
+    expect(extractCandidates({ ...base, byGender })
+      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+  });
+
+  it("'알 수 없음' 세그먼트는 비교에서 제외 — 가중치를 걸 수 없는 대상", () => {
+    const byGender: NamedMetrics[] = [
+      { label: "남성", metrics: m(50_000, 5, 450_000) },
+      { label: "여성", metrics: m(50_000, 5, 440_000) },
+      { label: "알 수 없음", metrics: m(50_000, 1, 50_000) },
+    ];
+    expect(extractCandidates({ ...base, byGender })
+      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+  });
+
+  it("목표 ROAS 미설정이어도 동작 — 격차는 상대 비교라 목표가 필요 없다", () => {
+    const byGender: NamedMetrics[] = [
+      { label: "남성", metrics: m(50_000, 5, 450_000) },
+      { label: "여성", metrics: m(50_000, 2, 200_000) },
+    ];
+    expect(extractCandidates({ keywords: [], placements: [], byGender })
+      .find((x) => x.kind === "genderBidSkew")).toBeDefined();
+  });
+
+  it("연령 버킷 간 격차 → ageBidSkew (최고 vs 최저)", () => {
+    const byAge: NamedMetrics[] = [
+      { label: "25세 ~ 29세", metrics: m(30_000, 3, 270_000) }, // 900%
+      { label: "30세 ~ 34세", metrics: m(30_000, 2, 210_000) }, // 700%
+      { label: "50세 ~ 54세", metrics: m(30_000, 1, 90_000) },  // 300%
+      { label: "기타", metrics: m(2_000, 0, 0) },                // 문턱 미만 → 비교 제외
+    ];
+    const c = extractCandidates({ ...base, byAge }).find((x) => x.kind === "ageBidSkew");
+    expect(c).toBeDefined();
+    expect(c!.facts.좋은쪽).toBe("25세 ~ 29세");
+    expect(c!.facts.나쁜쪽).toBe("50세 ~ 54세");
+    // 문턱 미만 버킷이 최저로 잡히면 안 된다.
+    expect(c!.facts.나쁜쪽).not.toBe("기타");
+  });
+
+  it("비교 가능한 세그먼트가 2개 미만이면 후보 아님", () => {
+    const byAge: NamedMetrics[] = [
+      { label: "25세 ~ 29세", metrics: m(30_000, 3, 270_000) },
+    ];
+    expect(extractCandidates({ ...base, byAge })
+      .find((x) => x.kind === "ageBidSkew")).toBeUndefined();
   });
 });
 

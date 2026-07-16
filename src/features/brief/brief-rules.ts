@@ -47,6 +47,8 @@ export type BriefKind =
   | "highRoasLowRank"      // 목표 달성인데 순위가 낮음 (Task 7)
   | "belowTargetKeyword"   // 전환은 있으나 none 구간
   | "belowTargetGroup"     // 그룹 집계 ROAS가 none 구간 (Task 12)
+  | "genderBidSkew"        // 성별 간 ROAS 격차 (Task 13)
+  | "ageBidSkew"           // 연령대 간 ROAS 격차 (Task 13)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
   | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
   | "productConvDrop";     // 전기 대비 전환 빠진 상품 (Task 8)
@@ -97,6 +99,10 @@ export interface BriefRuleInput {
   rankedRows?: BriefKeywordRow[];
   /** 상품별 현재/전기 지표. 현재 기간에 존재하는 상품만(이름을 얻을 수 있는 것만). */
   products?: BriefProductDelta[];
+  /** 성별 성과(검색광고). model.byGender를 그대로 넘긴다. */
+  byGender?: NamedMetrics[];
+  /** 연령대 성과(검색광고, 8구간). model.byAge를 그대로 넘긴다. */
+  byAge?: NamedMetrics[];
 }
 
 /** 매출 낙폭이 이 값 미만이면 후보로 안 만든다 — 소음 방지. */
@@ -154,6 +160,72 @@ export function pickRankTargets(rows: BriefKeywordRow[], targetRoas?: number): B
   return rows.filter((r) =>
     r.metrics.cost >= COST_FLOOR && roasBand(roasPct(r.metrics), targetRoas) === "green",
   );
+}
+
+// ── 타게팅 격차(skew) 공통 — 성별/연령 (Task 13), 이후 기기/시간/지역도 이 판정을 쓴다 ──
+
+/** 격차 임계 — 좋은쪽 ROAS가 나쁜쪽의 이 배수 이상이어야 후보(설계 §5 "격차 판정 공통 규칙"). */
+export const SKEW_RATIO = 1.5;
+
+/** 가중치를 걸 수 없는 세그먼트(성별 "알 수 없음" 등)는 비교에서 뺀다. */
+const UNKNOWN_SEGMENT = /알\s*수\s*없음|알수없음|기타/;
+
+/**
+ * 세그먼트 간 상대 격차 판정. 절대 성과가 아니라 **구간 간 비교**다 — 모든 계정에 늘 있는
+ * 미세한 차이는 (a) 양쪽 비용 문턱 (b) 격차 임계로 거른다. 통과 못 하면 null.
+ */
+export function findSkew(segments: NamedMetrics[]): { best: NamedMetrics; worst: NamedMetrics } | null {
+  const comparable = segments.filter(
+    (s) => s.metrics.cost >= COST_FLOOR && !UNKNOWN_SEGMENT.test(s.label),
+  );
+  if (comparable.length < 2) return null;
+  const byRoas = [...comparable].sort((a, b) => roasPct(b.metrics) - roasPct(a.metrics));
+  const best = byRoas[0];
+  const worst = byRoas[byRoas.length - 1];
+  if (roasPct(best.metrics) < roasPct(worst.metrics) * SKEW_RATIO) return null;
+  return { best, worst };
+}
+
+function segmentTable(title: string, dim: string, segments: NamedMetrics[], targetRoas?: number): BriefTableSpec {
+  return {
+    title,
+    columns: [dim, "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
+    rows: segments.map((s) => ({
+      cells: [
+        s.label,
+        s.metrics.impressions.toLocaleString(),
+        s.metrics.clicks.toLocaleString(),
+        `${s.metrics.cost.toLocaleString()}원`,
+        String(s.metrics.purchaseConv),
+        `${s.metrics.revenue.toLocaleString()}원`,
+        `${roasPct(s.metrics).toFixed(0)}%`,
+      ],
+      band: targetRoas != null ? roasBand(roasPct(s.metrics), targetRoas) : undefined,
+    })),
+  };
+}
+
+function skewCandidate(
+  kind: BriefKind,
+  dim: string,
+  segments: NamedMetrics[] | undefined,
+  targetRoas?: number,
+): BriefCandidate | null {
+  if (!segments) return null;
+  const skew = findSkew(segments);
+  if (!skew) return null;
+  return {
+    kind,
+    facts: {
+      기준: `${dim} 간 수익률 격차 ${SKEW_RATIO}배 이상 — 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
+      좋은쪽: skew.best.label,
+      좋은쪽수익률: `${roasPct(skew.best.metrics).toFixed(0)}%`,
+      나쁜쪽: skew.worst.label,
+      나쁜쪽수익률: `${roasPct(skew.worst.metrics).toFixed(0)}%`,
+    },
+    table: segmentTable(`${dim} 성과`, dim, segments, targetRoas),
+    selected: false,
+  };
 }
 
 /** 지면별 성과 표 — 전환 0(③)과 저수익률(⑦) 지면 후보가 같은 표를 쓴다. 전체 지면 문맥 포함. */
@@ -343,6 +415,12 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
       });
     }
   }
+
+  // ⑧⑨ 성별/연령 가중치 — 상대 격차라 목표 ROAS 없이도 동작한다(표 색칠에만 사용).
+  const gender = skewCandidate("genderBidSkew", "성별", input.byGender, targetRoas);
+  if (gender) out.push(gender);
+  const age = skewCandidate("ageBidSkew", "연령대", input.byAge, targetRoas);
+  if (age) out.push(age);
 
   // ⑤ 전기 대비 전환이 빠진 상품 — 보고 로그의 "객단가 높은 [온열 찜질기]에서 전환이
   // 발생하지 않아"가 이것. 매출 낙폭 임계로 소음을 거른다.

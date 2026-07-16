@@ -135,6 +135,8 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
       targetRoas,
       rankedRows: plRows,
       products: data.products,
+      byGender: data.model.byGender,
+      byAge: data.model.byAge,
     });
 
     // 완전자동이 기본 — 후보 전부 선택 + 액션은 AI가 목록에서 고르게(action 비움).
