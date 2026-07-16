@@ -41,7 +41,10 @@ function cancelRun(): void {
   running = false;
   hideProgress();
 }
-function showProgress(text: string, onCancel?: () => void): void {
+// export: F-Brief(brief.ts)와 공유 — 복제하면 진행 오버레이 DOM이 두 개 생긴다.
+// cancelRun은 export하지 않는다 — 이 파일의 runToken을 올리는 함수라, brief가 가져다 쓰면
+// 자기 실행 대신 리포트 실행을 취소한다. 취소 함수는 각자 자기 토큰으로 만들 것.
+export function showProgress(text: string, onCancel?: () => void): void {
   if (!overlayEl) {
     const el = document.createElement("div");
     el.className = "dvads dvads-auto-overlay";
@@ -57,7 +60,7 @@ function showProgress(text: string, onCancel?: () => void): void {
   const t = overlayEl.querySelector<HTMLElement>(".dvads-auto-overlay-text");
   if (t) t.textContent = text;
 }
-function hideProgress(): void {
+export function hideProgress(): void {
   if (overlayEl) overlayEl.style.display = "none";
   onProgressCancel = null;
 }

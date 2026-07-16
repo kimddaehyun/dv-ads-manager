@@ -2975,6 +2975,32 @@ function renderTableRow(
           },
         },
         {
+          label: "보고 문구",
+          keepOpen: true,
+          onClick: (anchor) => {
+            // "리포트 생성"과 동일 — keepOpen 메뉴라 onClick 직후 populate()가 anchor를 떼어낸다.
+            // 동적 import resolve 시점엔 rect가 0이 되므로 지금(동기) 캡처해 프록시로 넘긴다.
+            const rect = anchor.getBoundingClientRect();
+            const anchorProxy = {
+              getBoundingClientRect: () => rect,
+              isConnected: false,
+              contains: () => false,
+            } as unknown as HTMLElement;
+            void import("@/features/brief/brief")
+              .then(({ openBriefFlow }) => {
+                openBriefFlow(anchorProxy, {
+                  adAccountNo: entry.adAccountNo,
+                  masterCustomerId: entry.masterCustomerId,
+                  name: meta?.displayName?.trim() || entry.name,
+                });
+              })
+              .catch((e) => {
+                console.warn("[dv-ads/brief] 보고 문구 화면을 열지 못함", e);
+                showToast({ message: "보고 문구 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
+              });
+          },
+        },
+        {
           label: "세팅안 생성",
           onClick: async () => {
             const { openSetupFlow } = await import("@/features/setup/setup");

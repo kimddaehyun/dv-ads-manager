@@ -4501,3 +4501,56 @@ td.dvads-period-delta-down {
   background: #D96A2E;
 }
 
+
+/* ── F-Brief 보고 문구 패널 ── */
+.dvads-brief-backdrop {
+  position: fixed; inset: 0; z-index: 2147483646;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex; align-items: center; justify-content: center;
+}
+.dvads-brief-card {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  display: flex; flex-direction: column;
+  background: #fff; border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.20), 0 2px 8px rgba(0, 0, 0, 0.10);
+}
+.dvads-brief-head {
+  padding: 20px 24px 12px; font-size: 16px; font-weight: 600; color: #171717;
+}
+.dvads-brief-notice {
+  margin: 0 24px 12px; padding: 8px 12px;
+  font-size: 12px; line-height: 1.5; color: #6b7280;
+  background: #f4f5f7; border-radius: 8px;
+}
+.dvads-brief-body {
+  flex: 1; overflow-y: auto; padding: 0 24px;
+  display: flex; flex-direction: column; gap: 20px;
+}
+.dvads-brief-block { position: relative; }
+.dvads-brief-text {
+  width: 100%; border: 0; resize: none; overflow: hidden;
+  font: 400 14px/1.7 Pretendard, -apple-system, sans-serif;
+  color: #171717; background: transparent; padding: 0;
+}
+.dvads-brief-text:focus { outline: none; }
+/* AI 판단 문단 — 좌측 3px 주황 선. DESIGN.md Threshold Alert Cue(2026-05-22)와 동일 구조.
+   배경을 칠하지 않는 이유: DV 주황 사용 면적 ~3% 규칙. 세로 선은 면적이 사실상 0. */
+.dvads-brief-block-ai {
+  padding-left: 12px;
+}
+.dvads-brief-block-ai::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 3px; background: #E6783B; border-radius: 2px;
+}
+.dvads-brief-img {
+  max-width: 100%; display: block;
+  border: 1px solid #eef0f3; border-radius: 8px;
+}
+.dvads-brief-copy {
+  margin-top: 8px;
+}
+.dvads-brief-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: 16px 24px 20px;
+}

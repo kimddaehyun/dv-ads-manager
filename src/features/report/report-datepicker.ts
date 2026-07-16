@@ -49,6 +49,8 @@ export interface OpenDatePickerOpts {
   anchorRect?: DOMRect;
   /** 상단 컨텍스트 한 줄 (예: 광고주명 / "N개 광고주"). */
   subText: string;
+  /** 담당자 입력란 표시 여부. 기본 true. F-Brief는 문구에 담당자명이 안 들어가 false. */
+  showAuthor?: boolean;
   onConfirm: (range: DateRange, author: string) => void;
 }
 
@@ -108,13 +110,18 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   const fieldEnd = el.querySelector<HTMLInputElement>('.dvads-rdp-field[data-field="end"]')!;
   const authorInput = el.querySelector<HTMLInputElement>(".dvads-rdp-author")!;
 
-  // 마지막에 입력한 담당자명 복원 — 다음 리포트 생성 때 자동으로 채워둔다.
-  chrome.storage.local.get(AUTHOR_KEY).then((r) => {
-    const saved = r[AUTHOR_KEY];
-    if (typeof saved === "string" && saved && document.activeElement !== authorInput && !authorInput.value) {
-      authorInput.value = saved;
-    }
-  });
+  if (opts.showAuthor === false) {
+    // 담당자 미사용(F-Brief) — 입력란만 숨기고 onConfirm의 author는 빈 문자열로 나간다.
+    authorInput.style.display = "none";
+  } else {
+    // 마지막에 입력한 담당자명 복원 — 다음 리포트 생성 때 자동으로 채워둔다.
+    chrome.storage.local.get(AUTHOR_KEY).then((r) => {
+      const saved = r[AUTHOR_KEY];
+      if (typeof saved === "string" && saved && document.activeElement !== authorInput && !authorInput.value) {
+        authorInput.value = saved;
+      }
+    });
+  }
 
   // ── 프리셋 버튼 ──
   for (const p of PRESETS) {
