@@ -30,6 +30,9 @@ export default defineManifest({
     // F-Setup — 쇼핑검색 소재(상품)의 이미지를 세팅안 엑셀에 삽입하기 위해 background에서
     // binary fetch. 쇼핑 상품 이미지 CDN (content script는 CORS로 차단됨).
     "https://shopping-phinf.pstatic.net/*",
+    // F-Brief — AI 문장 조립 중계 서버(Edge Function). 광고 데이터는 체크된 facts만 전송,
+    // 서버는 저장/로깅하지 않는다(설계 §3·§6). brief-compose.ts의 FN_URL과 동일 도메인 필수.
+    "https://gvyvrjncpwmcwycebrhf.supabase.co/*",
   ],
   options_ui: {
     page: "src/options/index.html",

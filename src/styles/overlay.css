@@ -4554,3 +4554,28 @@ td.dvads-period-delta-down {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 16px 24px 20px;
 }
+
+/* F-Brief 검산 경고 — 차단하지 않고 표시만(오탐 있음, 판단은 AE) */
+.dvads-brief-warn {
+  margin-top: 6px; font-size: 12px; font-weight: 500; color: #DC2626;
+}
+
+/* F-Brief 후보 선택 화면 (AE선택 모드) */
+.dvads-brief-pick-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid #eef0f3;
+  cursor: pointer;
+}
+.dvads-brief-pick-row input[type="checkbox"] {
+  width: 16px; height: 16px; accent-color: #E6783B; flex-shrink: 0;
+}
+.dvads-brief-pick-label {
+  flex: 1; min-width: 0;
+  font: 400 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+.dvads-brief-pick-memo {
+  margin-top: 16px; width: 100%; padding: 10px 12px;
+  border: 1px solid #e2e5ea; border-radius: 8px; resize: vertical;
+  font: 400 13px/1.6 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+.dvads-brief-pick-memo:focus { outline: none; border-color: #E6783B; }

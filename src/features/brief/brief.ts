@@ -21,9 +21,11 @@ import { normalizeKeyword } from "@/shared/storage-keys";
 import { estimateRank } from "@/shared/rank";
 import { type RankPosition } from "@/types/storage";
 import { type GetBidEstimateRequest, type GetBidEstimateResponse } from "@/types/messages";
-import { collectBriefData, buildSummaryText, buildSummarySpec, fetchPowerlinkBidMap } from "./brief-data";
-import { extractCandidates, flattenKeywords, pickRankTargets, type BriefKeywordRow } from "./brief-rules";
-import { renderBriefPanel, type BriefBlock } from "./brief-panel";
+import { collectBriefData, buildSummaryText, buildSummarySpec, fetchPowerlinkBidMap, won, type BriefData } from "./brief-data";
+import { rangeText } from "@/features/report/report-period";
+import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate } from "./brief-rules";
+import { composeBlocks, type ComposedBlock } from "./brief-compose";
+import { renderBriefPanel, renderBriefPickPanel, type BriefBlock } from "./brief-panel";
 
 let running = false;
 let runToken = 0;
@@ -135,30 +137,32 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
       products: data.products,
     });
 
-    // Task 10 전까지는 요약 + 후보별 표만. AI 문장은 아직 없다.
-    const blocks: BriefBlock[] = [
-      { type: "text", text: buildSummaryText(data) },
-      { type: "table", spec: buildSummarySpec(data) },
-    ];
-    for (const c of candidates) {
-      blocks.push({ type: "table", spec: c.table });
+    // 완전자동이 기본 — 후보 전부 선택 + 액션은 AI가 목록에서 고르게(action 비움).
+    // 실패해도 요약과 표는 살린다 — 가치의 8할이 규칙 엔진에 있다.
+    let aiBlocks: ComposedBlock[] = [];
+    if (candidates.length > 0) {
+      try {
+        aiBlocks = await composeBlocks({
+          advertiser: target.name,
+          periodText: rangeText(data.range),
+          totals: {
+            cost: won(data.model.totalCurrent.cost),
+            revenue: won(data.model.totalCurrent.revenue),
+            roas: roasPct(data.model.totalCurrent).toFixed(2),
+          },
+          prevTotals: { roas: roasPct(data.model.totalPrev).toFixed(2) },
+          selected: candidates.map((c) => ({ ...c, selected: true })),
+          memo: "",
+        });
+      } catch (e) {
+        console.warn("[dv-ads/brief] AI 조립 실패 — 요약과 표만 표시", e);
+        showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" });
+      }
+      if (stale()) return;
     }
 
     hideProgress();
-    // 토스트는 금방 사라져 안내로 부적합 — 패널 상단 고정 안내줄 (설계 §5).
-    // 후보 0개도 명시한다 — 안 그러면 "비어 보이는 게 고장인지 정상인지" 구분이 안 된다.
-    const notices: string[] = [];
-    if (targetRoas == null) {
-      notices.push("목표 수익률을 설정하면 키워드 분류를 제안해요. 계정 메뉴의 \"목표 수익률\"에서 입력할 수 있어요");
-    }
-    if (candidates.length === 0) {
-      notices.push("이번 기간에는 짚어볼 특이사항(전환 없는 키워드·목표 미달 등)이 없어요. 아래 요약만 그대로 쓰시면 됩니다");
-    }
-    renderBriefPanel({
-      advertiserName: target.name,
-      blocks,
-      notice: notices.length > 0 ? notices.join(" · ") : undefined,
-    });
+    showResult(target.name, data, candidates, aiBlocks, targetRoas);
   } catch (e) {
     console.warn("[dv-ads/brief] 보고 문구 생성 실패", e);
     if (stale()) return;
@@ -167,4 +171,89 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
   } finally {
     if (!stale()) running = false;
   }
+}
+
+/** 결과 패널 렌더 — 완전자동/AE선택 공용. "직접 고르기"에서 재조립할 때도 이걸 부른다. */
+function showResult(
+  advertiserName: string,
+  data: BriefData,
+  candidates: BriefCandidate[],
+  aiBlocks: ComposedBlock[],
+  targetRoas: number | undefined,
+): void {
+  // 후보별 AI 문단을 그 후보의 표 **앞**에 (보고 로그의 문단-사진 1:1 순서).
+  // aiBlocks[i]와 candidates[i]는 서버가 "말할 것 하나당 문단 하나"로 만들어 순서가
+  // 대응한다. 개수가 어긋나면(AI가 문단을 합치거나 쪼갬) 남는 문단을 뒤에 붙인다 —
+  // 표를 잃는 것보다 순서가 틀리는 게 낫다.
+  const blocks: BriefBlock[] = [
+    { type: "text", text: buildSummaryText(data) },
+    { type: "table", spec: buildSummarySpec(data) },
+  ];
+  candidates.forEach((c, i) => {
+    const ai = aiBlocks[i];
+    if (ai) {
+      blocks.push({ type: "text", text: ai.text, isAiJudgment: ai.isAiJudgment, numberWarning: ai.numberWarning });
+    }
+    blocks.push({ type: "table", spec: c.table });
+  });
+  for (const ai of aiBlocks.slice(candidates.length)) {
+    blocks.push({ type: "text", text: ai.text, isAiJudgment: ai.isAiJudgment, numberWarning: ai.numberWarning });
+  }
+
+  // 토스트는 금방 사라져 안내로 부적합 — 패널 상단 고정 안내줄 (설계 §5).
+  // 후보 0개도 명시한다 — 안 그러면 "비어 보이는 게 고장인지 정상인지" 구분이 안 된다.
+  const notices: string[] = [];
+  if (targetRoas == null) {
+    notices.push("목표 수익률을 설정하면 키워드 분류를 제안해요. 계정 메뉴의 \"목표 수익률\"에서 입력할 수 있어요");
+  }
+  if (candidates.length === 0) {
+    notices.push("이번 기간에는 짚어볼 특이사항(전환 없는 키워드·목표 미달 등)이 없어요. 아래 요약만 그대로 쓰시면 됩니다");
+  }
+
+  renderBriefPanel({
+    advertiserName,
+    blocks,
+    notice: notices.length > 0 ? notices.join(" · ") : undefined,
+    // AE선택 모드 — 체크한 후보 + 지정 액션 + 자유 메모로 재조립. 같은 엔진이다.
+    onPickManually: candidates.length > 0 ? () => openPickFlow(advertiserName, data, candidates, targetRoas) : undefined,
+  });
+}
+
+/** "직접 고르기" — 후보 선택 화면을 띄우고, 고른 것만으로 다시 문구를 만든다. */
+function openPickFlow(
+  advertiserName: string,
+  data: BriefData,
+  candidates: BriefCandidate[],
+  targetRoas: number | undefined,
+): void {
+  renderBriefPickPanel({
+    advertiserName,
+    candidates,
+    onCompose: (selected, memo) => {
+      void (async () => {
+        showProgress("보고 문구를 만드는 중...");
+        let aiBlocks: ComposedBlock[] = [];
+        try {
+          aiBlocks = await composeBlocks({
+            advertiser: advertiserName,
+            periodText: rangeText(data.range),
+            totals: {
+              cost: won(data.model.totalCurrent.cost),
+              revenue: won(data.model.totalCurrent.revenue),
+              roas: roasPct(data.model.totalCurrent).toFixed(2),
+            },
+            prevTotals: { roas: roasPct(data.model.totalPrev).toFixed(2) },
+            selected,
+            memo,
+          });
+        } catch (e) {
+          console.warn("[dv-ads/brief] AI 조립 실패 — 선택한 표만 표시", e);
+          showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" });
+        }
+        hideProgress();
+        // 체크한 후보만 문장·표에 나온다 — 안 보낸 건 지어낼 재료가 없다(설계 §3 2겹).
+        showResult(advertiserName, data, selected, aiBlocks, targetRoas);
+      })();
+    },
+  });
 }
