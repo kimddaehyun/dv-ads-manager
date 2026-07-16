@@ -52,7 +52,7 @@
 - 광고주별 일·주·월 단위 통계 요약 대시보드
 - 슬랙·이메일 알림
 - 다크 모드 / 테마 설정
-- 데이터 내보내기 (CSV/엑셀)
+- ~~데이터 내보내기 (CSV/엑셀)~~ → F-Report(리포트 엑셀)·F-Setup(세팅안 엑셀)으로 실현됨 (2026-07-16 정리)
 - 라이선스 키 검증 시스템 (MVP에서 제거, 추후 도입 재검토)
 - 자격증명 가져오기/내보내기(JSON), 팀 단위 자격증명 공유
 
@@ -138,6 +138,8 @@ Chrome 확장의 진입점 3개(콘텐츠 스크립트 / 팝업 / 옵션) 기준
 ## 🗄️ 데이터 모델
 
 본 확장은 서버 DB를 보유하지 않는다. 모든 사용자 데이터는 `chrome.storage.local`에만 보관된다.
+
+**데이터 전송 원칙 (2026-07-16 개정)**: 광고 데이터는 **네이버와 사내 서버(Supabase Edge Function) 외로 나가지 않는다.** F-Brief(보고 문구) AI 문장 생성 시 AE가 체크한 사실(facts)만 사내 Edge Function 1개를 경유해 Gemini로 전달되며, **서버는 어떤 데이터도 저장·로깅하지 않는다** (에러 로그도 상태코드만). 리포트 전체를 보내는 일은 없다.
 
 ### SearchadCredentials (chrome.storage.local 키: `searchadCredentials`)
 > 자격증명 1쌍. `src/shared/searchad.ts`의 `loadCredentials`/`saveCredentials`/`clearCredentials`로 관리.
