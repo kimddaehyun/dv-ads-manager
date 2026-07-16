@@ -19,8 +19,8 @@
  *   저장 버튼:   .ad-cms-modal-footer .ad-cms-btn-color-primary  (텍스트 "저장", disabled로 시작)
  */
 
-import { setReactInputValue, waitFor } from "@/content/dom-bid";
-import type { HeadlinePosition, PromoKind } from "@/content/asset-bulk-popup";
+import { setReactInputValue, waitFor } from "@/features/bid/dom-bid";
+import type { HeadlinePosition, PromoKind } from "@/features/asset-bulk/asset-bulk-popup";
 
 // ─── 공개 타입 ───
 

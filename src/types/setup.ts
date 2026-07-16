@@ -3,7 +3,7 @@
  *
  * 광고대행사가 선택한 캠페인의 캠페인-광고그룹-소재-키워드 계층 + 예산/타겟팅/입찰가/예상순위를
  * 단일 엑셀로 내려받기 위한 정규화 모델. 수집은 콘텐츠 스크립트에서 ads.naver.com internal API
- * 호출(`src/lib/setup-data.ts`), 유형별 schema 차이는 `src/lib/setup-adapters.ts`가 흡수.
+ * 호출(`src/features/setup/setup-data.ts`), 유형별 schema 차이는 `src/features/setup/setup-adapters.ts`가 흡수.
  *
  * endpoint schema 정찰 결과는 메모리 `project_f_setup_endpoints` 참조.
  */

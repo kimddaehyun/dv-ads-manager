@@ -4,7 +4,7 @@
 import {
   proratedContractAmount, proratedBrand, previousRange, rangeText,
   type ProrationContract, type DateRange,
-} from "../src/lib/report-period.ts";
+} from "../src/features/report/report-period.ts";
 
 let fail = 0;
 const ok = (c: boolean, m: string) => { console.log(`${c ? "PASS" : "FAIL"}  ${m}`); if (!c) fail++; };

@@ -3,7 +3,7 @@
  *
  * 본 확장은 서버 DB를 보유하지 않는다. 사용자 측 영속 저장소는 `chrome.storage.local`이다.
  *
- * 자격증명 형태(`SearchadCredentials`)는 `src/lib/searchad.ts`에서 단일 객체로 정의·관리한다.
+ * 자격증명 형태(`SearchadCredentials`)는 `src/shared/searchad.ts`에서 단일 객체로 정의·관리한다.
  * 본 파일에서는 캐시 모델만 정의한다.
  */
 

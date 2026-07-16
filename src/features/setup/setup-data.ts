@@ -12,7 +12,7 @@
  * endpoint schema: 메모리 `project_f_setup_endpoints`.
  */
 
-import { authFetch } from "./multi-account-data";
+import { authFetch } from "@/features/multi-account/multi-account-data";
 import {
   campaignTypeLabel,
   normalizeAd,

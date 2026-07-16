@@ -20,7 +20,7 @@ import {
   DISPLAY_PLACEMENT, DISPLAY_CAMPAIGN_LAYOUT,
   type KeywordGroup, type CampaignTypeGroup, type SummaryType, type ProductRow,
 } from "./report-variable";
-import { authFetch, fetchAdgroupRowsByCampaign } from "./multi-account-data";
+import { authFetch, fetchAdgroupRowsByCampaign } from "@/features/multi-account/multi-account-data";
 import {
   fetchAdvancedReport, colIndex, parseEntity, rowMetrics, addMetrics, CAMPAIGN_TP_CODE,
   ZERO_METRICS, type ReportMetrics, type AdvReportResult, type AdvReportFilter,

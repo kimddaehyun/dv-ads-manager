@@ -4,10 +4,10 @@
 // 이 시트는 캠페인/그룹을 안 나누고 **같은 상품끼리 합친다**. 라이브에서 같은 상품이 여러 그룹에
 // 등록돼 중복으로 나온 것이 계기 — 합산이 접기보다 먼저여야 한다(안 그러면 흩어진 상품이 사라짐).
 import { readFileSync, writeFileSync } from "node:fs";
-import { openXlsx, buildXlsx, readText, forceRecalc, removeSheets, listSheets } from "../src/lib/report-excel.ts";
-import { renderProductSheet } from "../src/lib/report-variable.ts";
-import { buildProductAdRows, buildProductRows } from "../src/lib/report-build.ts";
-import type { AdvReportResult } from "../src/lib/report-data.ts";
+import { openXlsx, buildXlsx, readText, forceRecalc, removeSheets, listSheets } from "../src/features/report/report-excel.ts";
+import { renderProductSheet } from "../src/features/report/report-variable.ts";
+import { buildProductAdRows, buildProductRows } from "../src/features/report/report-build.ts";
+import type { AdvReportResult } from "../src/features/report/report-data.ts";
 
 let fail = 0;
 const ok = (c: boolean, m: string) => { console.log(`${c ? "PASS" : "FAIL"}  ${m}`); if (!c) fail++; };

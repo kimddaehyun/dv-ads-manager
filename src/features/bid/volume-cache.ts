@@ -9,7 +9,7 @@
  * 각 (키워드, 디바이스)가 별도 storage 키를 점유 — 5MB quota 안에서 LRU prune은 Task 015.
  */
 
-import { keyForVolumeCache, VOLUME_CACHE_PREFIX, normalizeKeyword } from "./storage-keys";
+import { keyForVolumeCache, VOLUME_CACHE_PREFIX, normalizeKeyword } from "@/shared/storage-keys";
 import type { KeywordVolumeCache } from "@/types/storage";
 import type { AdDevice } from "@/types/device";
 

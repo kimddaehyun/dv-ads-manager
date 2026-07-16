@@ -417,7 +417,7 @@ Task 005 더미 단계에서는 클릭 → `console.log("refresh")`만.
 #### 7.4.3 CSS 주입 방식 (Phase 3 Task 010에서 활성)
 
 ```ts
-// src/content/index.ts (Phase 3에서 작성)
+// src/features/bid/index.ts (Phase 3에서 작성)
 import overlayCss from "../styles/overlay.css?inline";
 
 function injectStyles() {

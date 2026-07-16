@@ -14,7 +14,7 @@ import {
   listSheets,
   insertRowsAt,
   dropRowCellsAfter,
-} from "../src/lib/report-excel.ts";
+} from "../src/features/report/report-excel.ts";
 
 const tpl = new Uint8Array(readFileSync("src/assets/report-template.xlsx"));
 const files = openXlsx(tpl);

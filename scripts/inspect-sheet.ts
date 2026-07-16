@@ -1,7 +1,7 @@
 // 양식 시트의 셀을 사람이 읽기 좋게 덤프 (셀 매핑용).
 // 사용: node scripts/inspect-sheet.ts <sheetNumber>
 import { readFileSync } from "node:fs";
-import { openXlsx, readText } from "../src/lib/report-excel.ts";
+import { openXlsx, readText } from "../src/features/report/report-excel.ts";
 
 const n = process.argv[2] ?? "2";
 const files = openXlsx(new Uint8Array(readFileSync("src/assets/report-template.xlsx")));

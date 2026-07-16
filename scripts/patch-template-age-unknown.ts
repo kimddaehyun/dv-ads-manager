@@ -3,7 +3,7 @@
 // 합계행 수식은 런타임 setNumber가 숫자로 덮으므로(=<f> 제거) 셀 주소만 +1.
 // node --import ./scripts/ts-resolve.mjs scripts/patch-template-age-unknown.ts
 import { readFileSync, writeFileSync } from "node:fs";
-import { openXlsx, buildXlsx, readText, writeText } from "../src/lib/report-excel.ts";
+import { openXlsx, buildXlsx, readText, writeText } from "../src/features/report/report-excel.ts";
 
 const path = "src/assets/report-template.xlsx";
 const files = openXlsx(new Uint8Array(readFileSync(path)));

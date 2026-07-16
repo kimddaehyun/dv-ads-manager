@@ -56,7 +56,7 @@ import {
   CHANGE_WATCH_BOOTSTRAP_MS,
   CHANGE_WATCH_KEEP_MS,
   type PlatformFilter,
-} from "@/lib/multi-account-storage";
+} from "@/features/multi-account/multi-account-storage";
 import {
   fetchAllDirectory,
   collectAccount,
@@ -66,8 +66,8 @@ import {
   fetchYesterdayCost,
   type AgencyOperationOutcome,
   type AgencyOperationRow,
-} from "@/lib/multi-account-data";
-import { fetchChangeHistory, classifyHistory, observedActors } from "@/lib/change-watch";
+} from "@/features/multi-account/multi-account-data";
+import { fetchChangeHistory, classifyHistory, observedActors } from "@/features/change-watch/change-watch";
 import type {
   MultiAccountDirectoryCache,
   MultiAccountDirectoryEntry,
@@ -77,11 +77,11 @@ import type {
   ChangeWatchState,
   ChangeWatchEvent,
 } from "@/types/storage";
-import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "./ui-dropdown";
-import { openInputDialog } from "./input-dialog";
-import { wireBackdropDismiss } from "./dialog-dismiss";
-import { showToast } from "./toast";
-// "./setup"·"./report"은 write-excel-file/fflate(무거운 의존성)을 끌어와 콘텐츠 초기 번들을
+import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "@/shared/ui-dropdown";
+import { openInputDialog } from "@/shared/input-dialog";
+import { wireBackdropDismiss } from "@/shared/dialog-dismiss";
+import { showToast } from "@/shared/toast";
+// "@/features/setup/setup"·"@/features/report/report"은 write-excel-file/fflate(무거운 의존성)을 끌어와 콘텐츠 초기 번들을
 // 부풀린다. 호출 직전 동적 import로 분리해 별도 청크로 빠지게 한다(첫 클릭 시 1회 로드).
 
 const ADACCT_URL_PATTERN = /\/manage\/ad-accounts\//;
@@ -360,7 +360,7 @@ async function openPopover() {
   // 리포트 모듈을 미리 받아둔다. "리포트 생성"은 클릭 시점에 동적 import를 하는데, 그 첫 클릭만
   // 청크 로드를 기다리느라 아무 반응이 없어 "안 눌린다"로 보였다. popover를 여는 지금 시작해두면
   // 메뉴를 열어 고르는 사이에 끝나 클릭이 즉시 반응한다. 실패해도 클릭 때 다시 import 하므로 무해.
-  void import("./report").catch(() => {});
+  void import("@/features/report/report").catch(() => {});
   // 광고 유형 필터 로드 (메뉴 체크 표시 동기화용). 실패해도 기본값(둘 다) 유지.
   platformFilter = await loadPlatformFilter().catch(() => ({ sa: true, da: true }));
   popoverView = "list"; // 매번 list view로 시작
@@ -1351,7 +1351,7 @@ async function openReportForEntries(
   const anchorRect = anchor.getBoundingClientRect();
   try {
     const metaMap = await loadAllUserMeta();
-    const { openReportFlowBatch } = await import("./report");
+    const { openReportFlowBatch } = await import("@/features/report/report");
     openReportFlowBatch(
       anchor,
       entries.map((e) => ({
@@ -2362,7 +2362,7 @@ function openAgencyModal(
       void (async () => {
         excelBtn.disabled = true;
         try {
-          const { downloadAgencyCheckExcel } = await import("@/lib/agency-check-excel");
+          const { downloadAgencyCheckExcel } = await import("@/features/multi-account/agency-check-excel");
           await downloadAgencyCheckExcel(
             rows.map((r) => {
               const d = r.row;
@@ -2954,7 +2954,7 @@ function renderTableRow(
               isConnected: false,
               contains: () => false,
             } as unknown as HTMLElement;
-            void import("./report")
+            void import("@/features/report/report")
               .then(({ openReportFlow }) => {
                 openReportFlow(anchorProxy, {
                   adAccountNo: entry.adAccountNo,
@@ -2972,7 +2972,7 @@ function renderTableRow(
         {
           label: "세팅안 생성",
           onClick: async () => {
-            const { openSetupFlow } = await import("./setup");
+            const { openSetupFlow } = await import("@/features/setup/setup");
             void openSetupFlow({
               adAccountNo: entry.adAccountNo,
               masterCustomerId: entry.masterCustomerId,

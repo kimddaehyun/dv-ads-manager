@@ -4,7 +4,7 @@
  * 본 확장은 서버 DB 없이 chrome.storage.local에 라이선스·자격증명·캐시를 보관한다.
  * quota는 약 5MB — 키워드 누적 시 prune 필요 (MVP 이후 백로그).
  *
- * 자격증명 자체의 키(`searchadCredentials`)는 `src/lib/searchad.ts`가 직접 관리하므로
+ * 자격증명 자체의 키(`searchadCredentials`)는 `src/shared/searchad.ts`가 직접 관리하므로
  * 여기에 정의하지 않는다.
  *
  * 본 확장은 단일 자격증명 모델을 사용한다. 검색광고 API의 입찰가/볼륨 응답은 시장 단위
@@ -70,7 +70,7 @@ export const keyForPerformanceCache = (
   `${PERFORMANCE_CACHE_PREFIX}${device}:${normalizeKeyword(keyword)}:${bid}`;
 
 /**
- * 캐시 prune 구현은 `src/lib/cache-prune.ts` 참조.
+ * 캐시 prune 구현은 `src/shared/cache-prune.ts` 참조.
  *
  * VOLUME_CACHE_PREFIX·PERFORMANCE_CACHE_PREFIX·SHOPPING_CACHE_PREFIX·CURRENT_BID_PREFIX
  * 4개 prefix의 fetched_at/read_at 기준 TTL(4h) 만료 항목을 적극 삭제한다.

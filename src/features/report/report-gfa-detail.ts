@@ -14,7 +14,7 @@
 // GFA는 직접/간접 전환 split이 없어 directConv/indirectConv=0. CPC/ROAS는 양식 수식이 재계산하므로 무시.
 
 import { unzipSync, strFromU8 } from "fflate";
-import { authFetch } from "./multi-account-data";
+import { authFetch } from "@/features/multi-account/multi-account-data";
 import { type ReportMetrics } from "./report-data";
 import type { DateRange } from "./report-period";
 import type { NamedMetrics } from "./report-fill";

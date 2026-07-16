@@ -17,14 +17,14 @@
 import type {
   PeriodCompareCapture,
   PeriodCompareMedia,
-} from "@/lib/period-compare-adapters";
+} from "@/features/period-compare/period-compare-adapters";
 import {
   detectMedia,
   extractMetricsFromResponse,
   isStatsLikeCapture,
   shiftDateParams,
-} from "@/lib/period-compare-adapters";
-import { friendlyApiError } from "@/lib/friendly-error";
+} from "@/features/period-compare/period-compare-adapters";
+import { friendlyApiError } from "@/shared/friendly-error";
 
 // ─── 캡처 store ───
 // 페이지가 같은 endpoint를 여러 번 호출하거나(필터/페이지네이션) 동시에 여러 endpoint를 호출

@@ -19,7 +19,7 @@
 - **Who it's for:** 대행사 AE · 인하우스 운영자. 입찰 의사결정의 보조 데이터 도구.
 - **Space/industry:** 한국 디지털 광고 운영, 네이버 검색광고.
 - **Project type:** Chrome MV3 확장 — 세 가지 UI 컨텍스트를 동시에 가짐.
-  - **콘텐츠 오버레이** (`src/content/index.ts` + `src/styles/overlay.css`): `ads.naver.com`의
+  - **콘텐츠 오버레이** (`src/features/bid/index.ts` + `src/styles/overlay.css`): `ads.naver.com`의
     광고 테이블에 inline 주입되는 배지·펼침 행·popover. 순수 CSS, Tailwind 미사용 (호스트
     페이지와 CSS 충돌 회피용 격리 — `dvads-` prefix).
   - **팝업** (`src/popup/`): 툴바 아이콘 클릭 시 열리는 React 19 + Tailwind v4 미니 페이지.
@@ -631,7 +631,7 @@ variants: 기본(brand 톤) / `.warn` (앰버) / `.lock` (회색).
 
 ### Dropdown (오버레이 공용 — 단일 진실의 원천)
 
-콘텐츠 오버레이의 모든 단일 선택 UI는 **`src/content/ui-dropdown.ts`의 `createDropdown`**
+콘텐츠 오버레이의 모든 단일 선택 UI는 **`src/shared/ui-dropdown.ts`의 `createDropdown`**
 함수를 사용한다. 네이티브 `<select>`는 OS·브라우저별 외관이 달라 시각 통일이 불가능하므로
 **오버레이에서는 사용 금지**. 옵션/팝업(React+Tailwind 컨텍스트)은 별도 — 추후 React용
 컴포넌트 도입 시 동일 시각 토큰을 따른다.
@@ -786,7 +786,7 @@ popup 등 컨테이너가 dismiss될 때 `closeAllOpenDropdowns()`를 호출해 
 - **새 패턴이 필요하면 즉흥 도입 X** — 이 문서 먼저 갱신한 뒤 `src/styles/theme.css`와
   `src/styles/overlay.css`에 반영.
 - **오버레이 dropdown은 `createDropdown` 사용 의무** — 네이티브 `<select>`는 OS별 외관이
-  갈려 시각 통일 불가. 모든 단일 선택 UI는 `src/content/ui-dropdown.ts`의 함수를 거치고
+  갈려 시각 통일 불가. 모든 단일 선택 UI는 `src/shared/ui-dropdown.ts`의 함수를 거치고
   새 dropdown 변종이 필요하면 옵션 추가로 흡수 (별도 컴포넌트 X).
 - **숫자 입력 다이얼로그 placeholder는 "예:" prefix 없이 값만** — `"예: 7"` X, `"7"` O.
   금액은 천 단위 구분 포함 (`"100,000"`). placeholder만으로 입력 단위가 자명하니
@@ -829,7 +829,7 @@ popup 등 컨테이너가 dismiss될 때 `closeAllOpenDropdowns()`를 호출해 
 |------|----------|-----------|
 | 2026-05-18 | 자매 프로젝트(디브이 SEO 매니저)와 디자인 시스템 통일 — Card v5 flat 폐기, `rounded-2xl + shadow` 패턴 채택. 페이지 배경 `#fafafa`→`#f4f5f7`. Input bg `#fff`→`#f4f5f7`. Primary 버튼 검정→주황 통일. | 같은 셀러가 두 확장을 함께 쓰는데 시각 톤이 다르면 브랜드 분열. dvmkt가 먼저 출시되어 실사용자 학습이 있으므로 dvads를 dvmkt 톤에 맞춤. 오버레이는 dvads 고유(광고 테이블 inline)이므로 호스트 페이지와의 영역 정체성을 위해 1.5px 주황 보더 패턴(dvmkt 패널과 동일 철학)을 채택. |
 | 2026-05-18 | 로그인/회원가입/비밀번호 찾기 UI 골격을 미리 작성하되 옵션 페이지에는 마운트하지 않음 (라이선스 없이 사용 가능). | 향후 라이선스 재도입 시 곧바로 활성화 가능하도록. 핸들러는 stub. dvmkt 디자인을 1:1로 옮겨 두 확장의 인증 UX를 통일. |
-| 2026-05-18 | F001 팝오버에 행 클릭 → 입찰가 자동 변경 기능 추가. 페이지 UI 자동화(DOM 조작) 방식 — 검색광고 PUT API 미사용. 신규 컴포넌트: 확인 다이얼로그, 토스트(+Undo), 팝오버 닫기 버튼. | 사용자가 "추정 → 적용" 사이 컨텍스트 스위칭을 없애기 위함. DOM 자동화는 사용자가 직접 수정하는 것과 동일한 경로라 즉시 반영·권한 동일·`nccKeywordId` 추출 부담 회피. 깨질 위험은 `src/content/dom-bid.ts` 한 파일에 격리 — ads.naver.com이 클래스명을 갈면 여기만 수정. |
+| 2026-05-18 | F001 팝오버에 행 클릭 → 입찰가 자동 변경 기능 추가. 페이지 UI 자동화(DOM 조작) 방식 — 검색광고 PUT API 미사용. 신규 컴포넌트: 확인 다이얼로그, 토스트(+Undo), 팝오버 닫기 버튼. | 사용자가 "추정 → 적용" 사이 컨텍스트 스위칭을 없애기 위함. DOM 자동화는 사용자가 직접 수정하는 것과 동일한 경로라 즉시 반영·권한 동일·`nccKeywordId` 추출 부담 회피. 깨질 위험은 `src/features/bid/dom-bid.ts` 한 파일에 격리 — ads.naver.com이 클래스명을 갈면 여기만 수정. |
 | 2026-05-18 | Typography Scale 문서를 실제 코드 기준으로 동기화. 오버레이 입찰가 표(10→14px), 면책 푸터(10→12px) 등 outdated 값 갱신. 다이얼로그 폰트 토큰 확정 — 제목 16px/600, 본문 14px/400. 신규 다이얼로그류 팝업은 동일 토큰 적용. | 코드와 문서가 어긋나면 신규 작업 시 잘못된 사이즈로 가는 사고가 반복. 입찰가 표는 정보 밀도보다 가독성이 더 중요해 14px로 갱신된 상태였음. |
 | 2026-05-19 | F001 popover에 PC/모바일 디바이스 토글 추가 — segmented control (`.dvads-device-toggle` / `.dvads-device-seg`) 높이 28px / radius 6px. 트랙은 `#F3F4F6`, 선택 디바이스만 흰 카드(`#FFFFFF`) + weight 600 + 미세 그림자. **DV 주황 사용 X** — 보조 UI라 화면 주황 면적(≤3%) 규칙 보존. 모바일이 default eager 호출, PC는 토글 시 lazy(첫 호출만 추가, 이후 캐시). | 모바일 광고 비중이 큰 광고주에게 기존 "PC만 표시"가 실측과 동떨어진 추정치를 보여줬음. 디바이스 분리는 popover 안에서만 — 배지·"현재 N위"는 default device 기준 유지로 화면 정보량 늘리지 않음. 토글에 주황을 쓰면 popover 안에 주황 칠이 (현재 행 강조 + 푸터 차액 + 헤더 키워드 hover 밑줄에) 4번째로 들어가 brand color 인플레이션. |
 | 2026-05-22 | F-MultiAccount 임계값 알림 cue를 2단 구조로 통일 — **행 좌측 빨간 세로 선**(비즈/브랜드 둘 중 하나라도 도달, `dvads-multi-tr-threshold-alert`) + **셀 단위 디테일**(비즈머니 셀 빨강, 브랜드는 계정명 빨강). 펄스/glow 모두 폐기, 정적 빨강만. 만료(D-0 이하)는 회색 cue로 별도 처리. | 알림 계정이 여러 개 누적될 때 펄스가 동시에 깜빡여 popover가 시각 폭격기가 됨. 또 비즈머니 셀은 처음부터 정적이라 브랜드만 펄스면 톤 어긋남. 좌측 세로 선이라는 단일 "이 계정에 뭔가 알림 있다" 신호 + 어떤 임계인지는 색이 들어간 셀 위치로 자연 식별되도록 분리. |

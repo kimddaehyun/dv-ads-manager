@@ -29,16 +29,16 @@ import {
   type RankPosition,
 } from "@/types/storage";
 import { DEFAULT_DEVICE, type AdDevice } from "@/types/device";
-import { estimateRank, type EstimatedRank } from "@/lib/rank";
-import { applyBidToRow, describeFailure } from "@/content/dom-bid";
-import { openConfirmDialog } from "@/content/confirm-dialog";
-import { showToast } from "@/content/toast";
-import { invalidateBids } from "@/lib/volume-cache";
-import { invalidatePerformance } from "@/lib/performance-cache";
-import { initPeriodCompare } from "@/content/period-compare";
-import { initAssetBulk } from "@/content/asset-bulk";
-import { initShoppingImageImport } from "@/content/shopping-image-import";
-import { attachTooltip } from "@/content/tooltip";
+import { estimateRank, type EstimatedRank } from "@/shared/rank";
+import { applyBidToRow, describeFailure } from "@/features/bid/dom-bid";
+import { openConfirmDialog } from "@/shared/confirm-dialog";
+import { showToast } from "@/shared/toast";
+import { invalidateBids } from "@/features/bid/volume-cache";
+import { invalidatePerformance } from "@/features/bid/performance-cache";
+import { initPeriodCompare } from "@/features/period-compare/period-compare";
+import { initAssetBulk } from "@/features/asset-bulk/asset-bulk";
+import { initShoppingImageImport } from "@/features/asset-bulk/shopping-image-import";
+import { attachTooltip } from "@/shared/tooltip";
 
 declare const __APP_VERSION__: string;
 console.log(`[dv-ads] content script loaded · v${__APP_VERSION__}`);
@@ -1181,7 +1181,7 @@ function maybeInitMultiAccount() {
   if (window !== window.top) return;
   if (!/\/manage\/ad-accounts\//.test(location.pathname)) return;
   multiAccountLoaded = true;
-  import("@/content/multi-account")
+  import("@/features/multi-account/multi-account")
     .then((m) => m.initMultiAccount())
     .catch((e) => {
       multiAccountLoaded = false;

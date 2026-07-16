@@ -1,6 +1,6 @@
 // 키워드 시트 동적 렌더 검증. node --import ./scripts/ts-resolve.mjs scripts/test-report-variable.ts
 import { readFileSync, writeFileSync } from "node:fs";
-import { openXlsx, buildXlsx, readText } from "../src/lib/report-excel.ts";
+import { openXlsx, buildXlsx, readText } from "../src/features/report/report-excel.ts";
 import {
   renderKeywordSheet,
   renderCampaignSheet,
@@ -8,8 +8,8 @@ import {
   type KeywordGroup,
   type CampaignTypeGroup,
   type SummaryType,
-} from "../src/lib/report-variable.ts";
-import type { ReportMetrics } from "../src/lib/report-data.ts";
+} from "../src/features/report/report-variable.ts";
+import type { ReportMetrics } from "../src/features/report/report-data.ts";
 
 const M = (imp: number, clk: number, cost: number, rev: number, dir: number, indir: number): ReportMetrics => ({
   impressions: imp, clicks: clk, cost, revenue: rev, directConv: dir, indirectConv: indir,

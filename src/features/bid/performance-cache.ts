@@ -9,7 +9,7 @@
  * TTL 4시간 — `volume-cache`와 동일 (시장 변동성 보수적 가정).
  */
 
-import { keyForPerformanceCache, PERFORMANCE_CACHE_PREFIX, normalizeKeyword } from "./storage-keys";
+import { keyForPerformanceCache, PERFORMANCE_CACHE_PREFIX, normalizeKeyword } from "@/shared/storage-keys";
 import type { KeywordPerformanceCache } from "@/types/storage";
 import type { AdDevice } from "@/types/device";
 

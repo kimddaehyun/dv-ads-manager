@@ -1,10 +1,10 @@
 // 모든 시트를 채운 완전 샘플 생성(합성 데이터) → Downloads. 실데이터 연결 전 육안 검증용.
 // node --import ./scripts/ts-resolve.mjs scripts/make-full-sample.ts
 import { readFileSync, writeFileSync } from "node:fs";
-import { openXlsx, buildXlsx, forceRecalc, removeSheets, removeSheetDrawing, removeCalcChain, replaceChartColor, readText, writeText, hideRowRange } from "../src/lib/report-excel.ts";
-import { fillFixedSheets, type ReportModel } from "../src/lib/report-fill.ts";
-import { renderKeywordSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement } from "../src/lib/report-variable.ts";
-import type { ReportMetrics } from "../src/lib/report-data.ts";
+import { openXlsx, buildXlsx, forceRecalc, removeSheets, removeSheetDrawing, removeCalcChain, replaceChartColor, readText, writeText, hideRowRange } from "../src/features/report/report-excel.ts";
+import { fillFixedSheets, type ReportModel } from "../src/features/report/report-fill.ts";
+import { renderKeywordSheet, renderCampaignSheet, renderSummaryTypes, renderDetailPlacement } from "../src/features/report/report-variable.ts";
+import type { ReportMetrics } from "../src/features/report/report-data.ts";
 
 const M = (i: number, c: number, co: number, r: number, d: number, n: number): ReportMetrics =>
   ({ impressions: i, clicks: c, cost: co, revenue: r, directConv: d, indirectConv: n });

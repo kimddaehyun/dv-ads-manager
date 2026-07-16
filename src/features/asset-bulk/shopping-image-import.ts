@@ -19,12 +19,12 @@
  * 모든 internal API 호출은 콘텐츠 스크립트 컨텍스트(background는 CORS로 차단).
  */
 
-import { authFetch } from "@/lib/multi-account-data";
-import { fetchUrlAsFile } from "@/lib/image-file";
+import { authFetch } from "@/features/multi-account/multi-account-data";
+import { fetchUrlAsFile } from "@/features/asset-bulk/image-file";
 import {
   resolveAndExtract,
   clearProductPageCache,
-} from "@/lib/product-page-extract";
+} from "@/features/asset-bulk/product-page-extract";
 
 // ─── 셀렉터 (ads.naver.com 쇼핑 소재 수정 모달) ───
 // 클래스가 갈리면 이 상수들만 고치면 됨. 출처: 2026-06-17 사용자 정찰 (모달 DOM 덤프).

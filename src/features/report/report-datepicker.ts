@@ -9,8 +9,8 @@
  * 전부 native DOM (React 미사용).
  */
 
-import { rangeForPreset, PRESET_LABELS, type ReportPreset, type DateRange } from "@/lib/report-period";
-import { registerMenuSibling, closeAllOpenDropdowns } from "./ui-dropdown";
+import { rangeForPreset, PRESET_LABELS, type ReportPreset, type DateRange } from "@/features/report/report-period";
+import { registerMenuSibling, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
 
 const PRESETS = Object.keys(PRESET_LABELS) as ReportPreset[];
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];

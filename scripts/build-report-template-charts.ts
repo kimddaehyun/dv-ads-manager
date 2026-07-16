@@ -23,7 +23,7 @@
 // 그래프는 상세 시트의 일자별 표를 참조한다(새 표를 안 만든다). 디스플레이_상세가 제거되는
 // 계정에선 chart12가 끊긴 참조가 되므로 런타임(report-build)에서 sheet7 그림을 통째로 뺀다.
 import { readFileSync, writeFileSync } from "node:fs";
-import { openXlsx, buildXlsx, readText, writeText, insertRowsAt } from "../src/lib/report-excel.ts";
+import { openXlsx, buildXlsx, readText, writeText, insertRowsAt } from "../src/features/report/report-excel.ts";
 
 const TEMPLATE = "src/assets/report-template.xlsx";
 const CHART_SRC = "src/assets/charts/combo-daily-chart.xml";

@@ -42,7 +42,7 @@ export default defineManifest({
   content_scripts: [
     {
       matches: ["https://ads.naver.com/*"],
-      js: ["src/content/index.ts"],
+      js: ["src/features/bid/index.ts"],
       run_at: "document_idle",
       // 광고관리자는 본문 영역을 same-origin iframe으로 렌더할 가능성 — period-compare
       // 모듈의 fetch 캡처 listener가 iframe 안에서도 동작해야 한다. F001 키워드 배지는
@@ -52,10 +52,10 @@ export default defineManifest({
     {
       // F-PoP — MAIN world 에서 페이지의 fetch를 패치해 stats 요청을 캡처.
       // document_start로 페이지의 React 부트 전에 패치 적용 — 첫 요청부터 잡힘.
-      // ISOLATED 콘텐츠 스크립트(src/content/index.ts)와는 CustomEvent로 통신.
+      // ISOLATED 콘텐츠 스크립트(src/features/bid/index.ts)와는 CustomEvent로 통신.
       // all_frames: true — iframe 내부 React app의 fetch도 패치 (필수).
       matches: ["https://ads.naver.com/*"],
-      js: ["src/content/fetch-patch-main.ts"],
+      js: ["src/features/period-compare/fetch-patch-main.ts"],
       run_at: "document_start",
       world: "MAIN",
       all_frames: true,
@@ -69,7 +69,7 @@ export default defineManifest({
         "https://smartstore.naver.com/*/products/*",
         "https://brand.naver.com/*/products/*",
       ],
-      js: ["src/content/product-page-scrape.ts"],
+      js: ["src/features/asset-bulk/product-page-scrape.ts"],
       run_at: "document_idle",
     },
   ],

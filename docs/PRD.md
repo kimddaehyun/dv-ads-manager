@@ -41,7 +41,7 @@
 
 | ID | 기능명 | 설명 | MVP 필수 이유 | 관련 페이지 |
 |----|--------|------|---------------|-------------|
-| **F011** | 검색광고 API 자격증명 등록 | `customerId` + `accessLicense` + `secretKey` 1쌍을 등록·수정·삭제. 비밀값은 `chrome.storage.local`에만 저장되며 외부 전송 X. 검색광고 API 응답이 시장 단위 추정치라 광고주가 누구든 같은 데이터가 나오므로 자격증명은 1개면 충분 — 본 repo 어딘가에서 광고주 매칭이나 다중 자격증명 관리는 하지 않는다. 자격증명 storage 키(`searchadCredentials`)와 헬퍼는 `src/lib/searchad.ts`가 관리 | 본 확장의 모든 검색광고 API 기능(F001 및 추후 F002/F003 일부)을 활성화하는 게이트. 자격증명 미등록 시 콘텐츠 오버레이에서 "자격증명 미등록" 안내 + 옵션 페이지 바로가기로 폴백 | 옵션 페이지 |
+| **F011** | 검색광고 API 자격증명 등록 | `customerId` + `accessLicense` + `secretKey` 1쌍을 등록·수정·삭제. 비밀값은 `chrome.storage.local`에만 저장되며 외부 전송 X. 검색광고 API 응답이 시장 단위 추정치라 광고주가 누구든 같은 데이터가 나오므로 자격증명은 1개면 충분 — 본 repo 어딘가에서 광고주 매칭이나 다중 자격증명 관리는 하지 않는다. 자격증명 storage 키(`searchadCredentials`)와 헬퍼는 `src/shared/searchad.ts`가 관리 | 본 확장의 모든 검색광고 API 기능(F001 및 추후 F002/F003 일부)을 활성화하는 게이트. 자격증명 미등록 시 콘텐츠 오버레이에서 "자격증명 미등록" 안내 + 옵션 페이지 바로가기로 폴백 | 옵션 페이지 |
 | **F012** | 자격증명 상태 표시 및 캐시 강제 갱신 | 팝업에서 자격증명 등록 여부를 확인. "지금 다시 조회" 버튼은 활성 탭에 해당하는 키워드 캐시를 만료시키고 콘텐츠 스크립트에 재조회 트리거 메시지 전송 (전체 캐시 클리어 X). 활성 탭 식별은 `chrome.tabs.query({active:true, currentWindow:true})` 사용 — host_permissions만으로 충분한지 구현 첫날 1회 확인, 필요 시 `permissions`에 `"activeTab"` 추가 | 캐시가 오래된 값을 보여줄 때 사용자가 즉시 새 데이터로 갱신할 수 있어야 함 | 팝업 페이지 |
 
 ### 3. MVP 이후 기능 (제외)
@@ -140,7 +140,7 @@ Chrome 확장의 진입점 3개(콘텐츠 스크립트 / 팝업 / 옵션) 기준
 본 확장은 서버 DB를 보유하지 않는다. 모든 사용자 데이터는 `chrome.storage.local`에만 보관된다.
 
 ### SearchadCredentials (chrome.storage.local 키: `searchadCredentials`)
-> 자격증명 1쌍. `src/lib/searchad.ts`의 `loadCredentials`/`saveCredentials`/`clearCredentials`로 관리.
+> 자격증명 1쌍. `src/shared/searchad.ts`의 `loadCredentials`/`saveCredentials`/`clearCredentials`로 관리.
 
 | 필드 | 설명 | 타입 |
 |------|------|------|
@@ -158,7 +158,7 @@ Chrome 확장의 진입점 3개(콘텐츠 스크립트 / 팝업 / 옵션) 기준
 | fetched_at | 캐시 적재 시각 | ISO date string |
 
 ### ~~ShoppingRankCache~~ ⏸️ 보류 (2026-05-19)
-> F002/F003 보류로 미사용. `src/lib/cache-prune.ts`는 `shopping_cache:` prefix를 prune 대상에 유지(과거 디바이스에 남은 엔트리 정리 + 향후 재사용 대비). 모델 인터페이스 자체는 코드에 남아있음.
+> F002/F003 보류로 미사용. `src/shared/cache-prune.ts`는 `shopping_cache:` prefix를 prune 대상에 유지(과거 디바이스에 남은 엔트리 정리 + 향후 재사용 대비). 모델 인터페이스 자체는 코드에 남아있음.
 
 ### CurrentBidSnapshot (chrome.storage.local 키: `current_bid:<keyword>`)
 | 필드 | 설명 | 타입 |

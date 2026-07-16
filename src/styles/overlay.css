@@ -11,7 +11,7 @@
  * (1.5px 주황 보더 + 10px radius). 호스트 광고 테이블 안에서 "이 영역은 우리
  * 확장이 그렸다"는 시각 신호.
  *
- * 사용처: src/demo/ (시안 검증), src/content/ (Phase 3에서 inline import).
+ * 사용처: src/demo/ (시안 검증), src/features/bid/ (Phase 3에서 inline import).
  */
 
 /* ─── 격리 boundary ─── */
@@ -1574,7 +1574,7 @@ td.dvads-period-delta-down {
   display: block;
 }
 
-/* ─── 공용 dropdown — `src/content/ui-dropdown.ts` 가 그리는 단일 진실의 원천.
+/* ─── 공용 dropdown — `src/shared/ui-dropdown.ts` 가 그리는 단일 진실의 원천.
    네이티브 <select>는 OS·브라우저별 외관이 갈려 시각 통일이 불가능하므로
    콘텐츠 오버레이의 모든 dropdown은 본 클래스를 사용한다. (DESIGN.md 참조) */
 .dvads-dropdown-trigger {

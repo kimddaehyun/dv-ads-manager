@@ -14,7 +14,7 @@ import {
   openAssetBulkPopup,
   type AssetBulkInput,
   type AssetBulkImagesInput,
-} from "@/content/asset-bulk-popup";
+} from "@/features/asset-bulk/asset-bulk-popup";
 import {
   closeOpenMenu,
   describeAssetFailure,
@@ -23,9 +23,9 @@ import {
   ensurePageSizeFifty,
   type AssetItemSource,
   type AssetResult,
-} from "@/content/dom-asset";
-import { showToast } from "@/content/toast";
-import { fetchUrlAsFile } from "@/lib/image-file";
+} from "@/features/asset-bulk/dom-asset";
+import { showToast } from "@/shared/toast";
+import { fetchUrlAsFile } from "@/features/asset-bulk/image-file";
 
 const MENU_ITEM_SELECTOR = "li.ad-cms-dropdown-menu-item";
 const MENU_ITEM_LABEL_SELECTOR = "span.ad-cms-dropdown-menu-title-content";

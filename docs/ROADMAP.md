@@ -49,7 +49,7 @@
 - **Task 002: 데이터 모델 타입 + storage 헬퍼 골격** ✅ - 완료 (2026-05-14 단일 자격증명 모델로 재정리, 2026-05-15 LicenseState 제거)
   - ✅ PRD §데이터 모델의 캐시 모델(KeywordVolumeCache, ShoppingRankCache, CurrentBidSnapshot) TypeScript 인터페이스 정의 — `src/types/storage.ts`. 자격증명 자체(`SearchadCredentials`)는 `searchad.ts`가 관리하므로 별도 정의 X.
   - ✅ `src/types/messages.ts`에 콘텐츠 ↔ background 메시지 요청/응답 타입 정의 (OPEN_OPTIONS / GET_BID_ESTIMATE / GET_PRODUCT_RANK / REFRESH_ACTIVE_TAB)
-  - ✅ `src/lib/storage-keys.ts`에 chrome.storage 키 상수 + 빌더 (`keyForVolumeCache`, `keyForShoppingCache`, `keyForCurrentBid`) + `normalizeKeyword`. 캐시는 키워드 단위 스코프(검색광고 API 응답이 시장 단위 추정치).
+  - ✅ `src/shared/storage-keys.ts`에 chrome.storage 키 상수 + 빌더 (`keyForVolumeCache`, `keyForShoppingCache`, `keyForCurrentBid`) + `normalizeKeyword`. 캐시는 키워드 단위 스코프(검색광고 API 응답이 시장 단위 추정치).
   - ✅ `chrome.storage.local` quota 5MB 인지 주석 + 향후 prune 훅 자리 (`PRUNE_HOOK_PLACEHOLDER`)
 
 ### Phase 2: UI/UX 완성 (더미 데이터 활용) ✅
@@ -82,7 +82,7 @@
 ### Phase 3: 핵심 기능 구현 ✅
 
 - **Task 008: F011 단일 자격증명 옵션 폼 구현 (storage 연동)** ✅ - 완료
-  - ✅ `src/lib/searchad.ts`의 기존 `loadCredentials`/`saveCredentials`/`clearCredentials` 그대로 사용 — 단일 객체 모델 유지
+  - ✅ `src/shared/searchad.ts`의 기존 `loadCredentials`/`saveCredentials`/`clearCredentials` 그대로 사용 — 단일 객체 모델 유지
   - ✅ Task 004의 더미 자격증명 상태를 실제 storage 연동으로 교체 (`src/options/Options.tsx`)
   - ✅ 입력값 검증: customerId 숫자 문자열, accessLicense·secretKey non-empty
   - 수동 검증: 옵션 페이지에서 자격증명 등록 → 수정 → 삭제 → 빈 상태 안내까지 동작 확인
@@ -92,17 +92,17 @@
 - **Task 010: F001 파워링크 순위·입찰가 오버레이 구현** ✅ - 완료 (2026-05-19)
   - ✅ **Spike C 1차 (2026-05-15)**: 실호출로 API 제약 확인 — `POST /estimate/average-position-bid/keyword`의 `position` 필드는 **1~10만 허용** (11 이상 시 400 `position(N) must be lower than 10`). `MAX_POSITION` 15→10, `RankPosition` 1..10으로 축소
   - ✅ **Spike C 2차 (2026-05-18)**: 정상 응답 schema 확정 — `{device: "PC", estimate: [{key, position, bid}, ...]}`. 50 items/batch = 5 keywords × 10 positions. `extractItemsArray`의 `estimate` 키 매칭으로 parser 정상 동작. defensive fallback은 호환성 안전망으로 유지
-  - ✅ `src/lib/searchad.ts`에 `fetchPositionBids(keywords, cred): Promise<PositionBidsItem[]>` 추가
+  - ✅ `src/shared/searchad.ts`에 `fetchPositionBids(keywords, cred): Promise<PositionBidsItem[]>` 추가
     - 요청 body: `{device: "PC", items: [{key, position 1~10}]}` (5 키워드/배치 = 50 items)
     - 429 backoff·400 swallow 패턴 재사용. HMAC POST 서명
   - ✅ `background/index.ts` `GET_BID_ESTIMATE` 핸들러: `loadCredentials()` → 미등록이면 `has_credential: false`. 등록되어 있으면 `getCachedBids` hit/miss → miss만 `fetchPositionBids` → `putBids`로 캐시 적재. promise reject 안전망 + sendResponse 보장
   - ✅ `volume-cache.ts` 재작성: 키 스킴 `volume_cache:<normalizedKeyword>`, `KeywordVolumeCache` 모델(rank_to_bid), TTL 4시간
-  - ✅ `src/content/index.ts`: 셀렉터 `td.ad-cms-table-cell-fix-start span.keyword` + 같은 `<tr>` 내 "N원" 패턴 첫 매치로 현재 입찰가 셀 자동 식별(`findBidCellAndValue`) + 배지 mount + MutationObserver(가상화 행 재마운트·입찰가 변경 감지) + 250ms debounced batched GET_BID_ESTIMATE
+  - ✅ `src/features/bid/index.ts`: 셀렉터 `td.ad-cms-table-cell-fix-start span.keyword` + 같은 `<tr>` 내 "N원" 패턴 첫 매치로 현재 입찰가 셀 자동 식별(`findBidCellAndValue`) + 배지 mount + MutationObserver(가상화 행 재마운트·입찰가 변경 감지) + 250ms debounced batched GET_BID_ESTIMATE
   - ✅ 에러 상태 배지: `확장 응답 없음`, `백그라운드 응답 없음`, `API 키 인증 실패`, `예상 입찰가 조회 실패` 등 friendly-error 변환 메시지 노출
   - ✅ 자격증명 미등록 시 배지 "API 키 미등록" → 클릭 시 OPEN_OPTIONS
   - ✅ 가상화 테이블 대응: 행 삽입(`<tr>`) 대신 **floating popover** 사용 (`position: fixed`, 배지 아래 anchored, 화면 우측 보정, outside click·Escape로 닫힘). rAF 루프로 매 프레임 anchor 위치 재계산 → 호스트 중첩 스크롤도 자동 추적
   - ✅ **silent-empty 감지** (2026-05-18): 응답 schema mismatch 등으로 N개 요청 → 0개 응답 시 배지가 "분석 중…"에 영원히 멈추던 버그 패치. `lastError = "응답없음"`으로 가시화
-  - ✅ **현재 추정 순위 표시 구현** (2026-05-18): `src/lib/rank.ts`의 `estimateRank(userBid, rankToBid)` — max(N) where market[N] ≤ userBid. 콘텐츠 스크립트는 같은 `<tr>` 내 "N원" 패턴 셀에서 현재 입찰가 파싱 후 배지를 "현재 N위 ▾"(brand) / "순위권 밖 ▾"(warn) / "시세"(fallback)로 분기. popover 테이블의 현재 순위 행만 brand subtle 강조
+  - ✅ **현재 추정 순위 표시 구현** (2026-05-18): `src/shared/rank.ts`의 `estimateRank(userBid, rankToBid)` — max(N) where market[N] ≤ userBid. 콘텐츠 스크립트는 같은 `<tr>` 내 "N원" 패턴 셀에서 현재 입찰가 파싱 후 배지를 "현재 N위 ▾"(brand) / "순위권 밖 ▾"(warn) / "시세"(fallback)로 분기. popover 테이블의 현재 순위 행만 brand subtle 강조
   - ✅ **성과 추정 통합** (2026-05-18): `POST /estimate/performance-bulk` 호출로 노출/클릭/광고비 3지표를 받아 popover 통합 테이블의 각 순위 행에 표시. `fetchPerformance` (`searchad.ts`) + `performance-cache` 신규 + bid 추정과 병렬 호출(`Promise.all`). 캐시 키 `performance_cache:<keyword>:<bid>` (TTL 4h)
   - ✅ **팝오버 행 클릭 → 입찰가 자동 변경 통합** (2026-05-19, c028c41): 1~10위 행 클릭 시 ① `confirm-dialog.ts` 확정 다이얼로그(키워드·현재가·목표가·차액 표시) → ② `dom-bid.ts` `applyBidToRow`로 페이지 입찰가 셀 자동 조작(React-호환 input setter `setReactInputValue` + "변경" 버튼 click + 셀 갱신 polling) → ③ `toast.ts` 성공 토스트 + 5초 Undo. mount 단위 락(`inflightMounts: WeakSet`)으로 중복 클릭/Undo race 차단. 가상화로 셀이 분리되면 `relocateBidCell`로 키워드 텍스트 재탐색. 페이지가 띄우는 자체 모달("입찰가가 변경되었습니다")은 `watchPageConfirmModal` MutationObserver+rAF로 검출해 우리 팝오버 `.dvads-recede` hide, 토스트는 hide 제외(Undo UX 보존). `suppressPopoverClose` 토큰 카운터로 자동화 중 외부 클릭 리스너 race 차단. ads.naver.com DOM 셀렉터는 모두 `dom-bid.ts`에 격리(향후 클래스명 변경 시 단일 파일 수정)
   - ✅ **키워드 헤더 → 네이버 광고 검색결과 새 탭** (popover 헤더 `<a>`로 `ad.search.naver.com/search.naver?where=ad&query=…` 열기)
@@ -110,7 +110,7 @@
 - **Task 011: F012 팝업 캐시 갱신 통합** ✅ - 완료 (2026-05-19)
   - ✅ `src/types/messages.ts` `RefreshActiveTabResponse`에 `count`/`error` 필드 보강
   - ✅ `src/background/index.ts` `REFRESH_ACTIVE_TAB` 핸들러: `chrome.tabs.query({active:true, currentWindow:true})` → ads.naver.com 호스트 검증 → `chrome.tabs.sendMessage`로 활성 탭 콘텐츠 스크립트에 forward. background는 forward만, 캐시 무효화는 콘텐츠 스크립트가 자기 mount 상태 보고 결정 (책임 분리)
-  - ✅ `src/content/index.ts` `chrome.runtime.onMessage` 리스너 추가 + `handleRefreshActiveTab`: mount된 키워드 dedupe → `invalidateBids` + `invalidatePerformance` 호출(storage) → in-memory `dataCache`/`perfCache`에서 해당 키워드 제거 → `lastError = null` → 모든 배지 즉시 loading 재렌더 → pending debounce 취소 후 `poll()` 강제 호출. **전체 캐시 클리어 X** (ROADMAP 명시 원칙 유지)
+  - ✅ `src/features/bid/index.ts` `chrome.runtime.onMessage` 리스너 추가 + `handleRefreshActiveTab`: mount된 키워드 dedupe → `invalidateBids` + `invalidatePerformance` 호출(storage) → in-memory `dataCache`/`perfCache`에서 해당 키워드 제거 → `lastError = null` → 모든 배지 즉시 loading 재렌더 → pending debounce 취소 후 `poll()` 강제 호출. **전체 캐시 클리어 X** (ROADMAP 명시 원칙 유지)
   - ✅ `src/popup/App.tsx` "새로고침" 버튼이 실제 동작: `RefreshStatus` discriminated union (idle/loading/ok/error)로 4상태 관리, 결과를 버튼 아래 inline 11px 텍스트로 노출 (ok 2.5s, error 4s 자동 사라짐). 자격증명 미등록 시 버튼 자체 숨김
   - ✅ `host_permissions`만으로 충분 — `activeTab` 추가 불필요 확인
   - 수동 검증: 자격증명 등록 상태에서 ads.naver.com 키워드 페이지 열고 팝업 새로고침 시 (1) 배지가 loading으로 돌아갔다 새 데이터로 갱신 (2) 키워드 0개일 때 안내 메시지 (3) ads.naver.com 아닌 탭에서 친화적 에러
@@ -174,7 +174,7 @@
   - ✅ **직전 기간 날짜 shift** (`shiftDateParams`): 현재 기간 길이만큼 backward 이동. URL 쿼리·body JSON 안의 모든 string에서 4가지 포맷(`YYYY-MM-DD`/`.`/`/`/없음) 매칭 + 치환. 어떤 키 이름(`startDate`/`from`/`period.start` 등)을 쓰든 무관 동작
   - ✅ **UI/UX 완성**: ① popover 헤더 `데이터 비교` + 우측 X ② 기간 줄 "이전 기간 ~ 종료 → 선택 기간 ~ 종료 (N일)" 즉시 렌더(fetch 무관) ③ 8지표 통합 테이블 4컬럼(지표 / 이전 기간 / 선택 기간 / 증감) ④ 로딩 중 shimmer 스켈레톤 셀(레이아웃 점프 없음) ⑤ 빈값 통일 0/0원/0.0% ⑥ 한국 주식 컨벤션 증감 색(상승=빨강 / 하강=파랑) + 1자리 소수 ⑦ 이전 기간 0 → 선택 N(>0)은 분수 ∞라 "-" 표기 통일. popover 너비 520px로 수억 원대 숫자 cover
   - ✅ **DEBUG_CAPTURE 로그**: `STATS KEEP/skip-empty` + 추출된 metrics + 응답 sample 1500자 출력(콘솔). 매체별 응답 schema 분석/별칭 추가 시 사용
-  - ✅ **`DEBUG_CAPTURE` flag false 전환** (2026-05-20): `src/content/period-compare.ts:37` — 매체별 응답 schema 분석/별칭 추가 시 일시 true 전환 가능하도록 flag 자체는 보존 (`if (DEBUG_CAPTURE)` 가드로 console 출력 차단)
+  - ✅ **`DEBUG_CAPTURE` flag false 전환** (2026-05-20): `src/features/period-compare/period-compare.ts:37` — 매체별 응답 schema 분석/별칭 추가 시 일시 true 전환 가능하도록 flag 자체는 보존 (`if (DEBUG_CAPTURE)` 가드로 console 출력 차단)
   - 🔵 **출시 후 보강 후보 (corner case)**: ① GFA 페이지가 사용자 picker 8일 대신 weekly bucket 7일로 stats를 fetch하면 부분 매치만 되어 replay 범위 어긋남 (capture URL의 실제 날짜를 "current"로 정정하는 로직 필요) ② GFA 일부 페이지는 paginated 10개 campaign stats만 부르고 account-level 집계는 없음 → 표가 top 10 합계만 표시. 일반 사용 케이스 정상 동작 확인되어 v0.1 ship 차단 요소 아님
 
 - **Task 017: F-AssetBulk v1 — 파워링크 확장소재 일괄 등록** ✅ - 완료 (2026-05-20)
@@ -196,15 +196,15 @@
     - Stats: `POST /apis/sa/api/stats` body `{fields, timeIncrement:"allDays", timeRange, ids:"cmp-...,..."}` → data[].{impCnt,clkCnt,cpc,salesAmtMicros,purchaseConvAmtMicros,purchaseCcnt} (Micros÷1M)
   - ✅ **결정**: 비즈머니/계약이 SPA 활성 계정 의존 → 다른 계정 데이터는 **background tab 위임** (`chrome.tabs.create({active:false})` → tabs.sendMessage → tabs.remove, 동시 2개 cap). `manifest.config.ts`에 `"tabs"` permission 추가. 메모리 `project_f_multiaccount_cross_account_decision` 참조
   - ✅ **PRD §8 단일 자격증명 모델과 충돌 없음**: 본 기능은 광고관리자 로그인 쿠키 기반, SearchadCredentials와 별개 인증 채널. 계정 명단은 자동 fetch (수동 등록 불필요), 사용자는 옵션 페이지에서 별칭/즐겨찾기/숨김만 편집
-  - ✅ **Phase 1 — Storage 모델 + 옵션 UI**: `src/types/storage.ts`에 MultiAccountDirectoryEntry/MultiAccountDirectoryCache/MultiAccountUserMeta/MultiAccountSnapshot 추가. `src/lib/multi-account-storage.ts` 신설(디렉터리·사용자 메타·스냅샷 CRUD + 10분 TTL stale check). `src/options/multi-account-ui.tsx` 신설 — 행마다 ☆즐겨찾기 토글·별칭 인라인 편집·숨김 토글·마지막 접속 시각. "명단 다시 받기" 버튼이 광고관리자 탭에 sendMessage로 갱신 위임
-  - ✅ **Phase 2 — 콘텐츠 스크립트 + 데이터 수집**: `src/lib/multi-account-data.ts` 신설(`fetchAllDirectory`·`fetchBizMoney`·`fetchCampaignIds`·`fetchAdgroupIdsByCampaignTp`·`fetchYesterdayStats`·`fetchContracts`·`collectActiveAccount`·`yesterdayKST`). `src/content/multi-account.ts` 신설 — `/manage/ad-accounts/` URL에서 우상단 fixed 버튼(`dvads-multi-btn`) 주입, 클릭 시 `dvads-multi-popover` 표시. 활성 계정은 직접 fetch(background tab 우회), 다른 계정은 `MULTI_ACCOUNT_COLLECT_ACCOUNT` 메시지 → background hidden tab. `src/background/index.ts`에 핸들러 추가(`collectViaHiddenTab` + onUpdated complete 대기 + 15초 timeout + 동시 2개 cap). `src/styles/overlay.css`에 dvads-multi-* 클래스 + D-5 빨강(`text:#DC2626`) 추가
+  - ✅ **Phase 1 — Storage 모델 + 옵션 UI**: `src/types/storage.ts`에 MultiAccountDirectoryEntry/MultiAccountDirectoryCache/MultiAccountUserMeta/MultiAccountSnapshot 추가. `src/features/multi-account/multi-account-storage.ts` 신설(디렉터리·사용자 메타·스냅샷 CRUD + 10분 TTL stale check). `src/options/multi-account-ui.tsx` 신설 — 행마다 ☆즐겨찾기 토글·별칭 인라인 편집·숨김 토글·마지막 접속 시각. "명단 다시 받기" 버튼이 광고관리자 탭에 sendMessage로 갱신 위임
+  - ✅ **Phase 2 — 콘텐츠 스크립트 + 데이터 수집**: `src/features/multi-account/multi-account-data.ts` 신설(`fetchAllDirectory`·`fetchBizMoney`·`fetchCampaignIds`·`fetchAdgroupIdsByCampaignTp`·`fetchYesterdayStats`·`fetchContracts`·`collectActiveAccount`·`yesterdayKST`). `src/features/multi-account/multi-account.ts` 신설 — `/manage/ad-accounts/` URL에서 우상단 fixed 버튼(`dvads-multi-btn`) 주입, 클릭 시 `dvads-multi-popover` 표시. 활성 계정은 직접 fetch(background tab 우회), 다른 계정은 `MULTI_ACCOUNT_COLLECT_ACCOUNT` 메시지 → background hidden tab. `src/background/index.ts`에 핸들러 추가(`collectViaHiddenTab` + onUpdated complete 대기 + 15초 timeout + 동시 2개 cap). `src/styles/overlay.css`에 dvads-multi-* 클래스 + D-5 빨강(`text:#DC2626`) 추가
   - ✅ **D-5 빨강 + 만료 회색**: `computeMinDday(contracts)` 최소 D-day 계산. ≤ 0 "계약 만료" 회색, ≤ 5 "⚠ D-N 계약 종료 임박" 빨강, > 5 "D-N" 보통 색. 계약 없으면 미렌더(공간 미점유). 추가 계약 등록은 캐시 무효화(10분 후 자연 갱신 또는 옵션 페이지 "명단 다시 받기")로 빨강 해제
   - ✅ **빌드 통과** (2026-05-20): `npm run typecheck` + `npm run build` 통과. `dist/` 갱신 완료
   - 🟡 **다음 단계 (사용자 수동 QA)**: ① dist 로드 후 광고관리자 진입 시 우상단 "계정" 버튼 노출 확인 ② 버튼 클릭 시 popover에 명단·어제 데이터·비즈머니·계약 표시 확인 ③ 행 클릭으로 다른 계정 페이지 전환 확인 ④ 옵션 페이지 "광고계정 명단" 섹션에서 별칭 편집/즐겨찾기/숨김 동작 확인 ⑤ D-5 빨강 표시 확인 (브랜드검색 계약 종료 임박 계정이 있을 때)
   - 🔵 **V2 후보**: ① 행 드래그로 순서 변경 ② 검색/필터 입력 ③ 광고비 일간/주간 토글 ④ 비즈머니 잔액 임계값 알림 ⑤ 다른 광고그룹 타입(POWER_CONTENTS_BRANDING 등) 계약도 표시
 
 - **Task 015: 캐시 prune + 웹스토어 심사 준비** 🟡 - 진행 중 (캐시 prune 완료)
-  - ✅ **캐시 prune** (2026-05-19): `src/lib/cache-prune.ts` 신규 — 4개 prefix(`volume_cache:` / `performance_cache:` / `shopping_cache:` / `current_bid:`) 스캔해 TTL 4h 만료 항목 일괄 삭제. 메타 키 `__last_prune_at`로 마지막 실행 시각 기록 후 1h 간격 throttle. background `onInstalled`에서 1회 + `GET_BID_ESTIMATE` hot path에서 fire-and-forget `maybePrune()` 호출. 형식 모를 엔트리(타임스탬프 없음)는 안전 보존. `chrome.alarms` 권한 추가 없이 service worker 자연 깨어남 사이클로 처리
+  - ✅ **캐시 prune** (2026-05-19): `src/shared/cache-prune.ts` 신규 — 4개 prefix(`volume_cache:` / `performance_cache:` / `shopping_cache:` / `current_bid:`) 스캔해 TTL 4h 만료 항목 일괄 삭제. 메타 키 `__last_prune_at`로 마지막 실행 시각 기록 후 1h 간격 throttle. background `onInstalled`에서 1회 + `GET_BID_ESTIMATE` hot path에서 fire-and-forget `maybePrune()` 호출. 형식 모를 엔트리(타임스탬프 없음)는 안전 보존. `chrome.alarms` 권한 추가 없이 service worker 자연 깨어남 사이클로 처리
   - `manifest.config.ts` icons 16/48/128 크기별 분리 (현재는 동일 icon-128.png 사용)
   - 스토어 등록 자료: 스크린샷 5장, 상세 설명, 개인정보처리방침 링크, 권한 사용 사유
   - `release.yml` 워크플로우 동작 확인 (v태그 → zip 자동 생성)

@@ -3,7 +3,7 @@ import { Button } from "@/components/Button";
 import { StatusDot } from "@/components/StatusDot";
 import { RefreshIcon, ExternalIcon } from "@/icons";
 import { useEffect, useRef, useState } from "react";
-import { loadCredentials } from "@/lib/searchad";
+import { loadCredentials } from "@/shared/searchad";
 import type { RefreshActiveTabResponse } from "@/types/messages";
 
 const PRIVACY_URL = "https://kimddaehyun.github.io/dv-ads-legal/";

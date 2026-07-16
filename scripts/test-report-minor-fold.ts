@@ -3,8 +3,8 @@
 // 핵심 불변식 2가지:
 //  1) 접어도 총액이 바뀌면 안 된다 (예전 topN 컷은 잘린 만큼 소계가 어긋났다).
 //  2) 임계는 **캠페인마다** — 시트 전체 기준이면 큰 캠페인이 임계를 끌어올려 작은 캠페인이 통째로 접힌다.
-import { buildKeywordGroups } from "../src/lib/report-build.ts";
-import type { AdvReportResult } from "../src/lib/report-data.ts";
+import { buildKeywordGroups } from "../src/features/report/report-build.ts";
+import type { AdvReportResult } from "../src/features/report/report-data.ts";
 
 let fail = 0;
 const ok = (c: boolean, m: string) => { console.log(`${c ? "PASS" : "FAIL"}  ${m}`); if (!c) fail++; };

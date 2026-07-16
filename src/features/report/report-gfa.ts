@@ -10,7 +10,7 @@
 // 를 campaignId로 합쳐 유형(type)별로 그룹핑한다. 합계는 전 캠페인 합 → 디스플레이행 == 디스플레이소계 보장.
 // GFA는 직접/간접 전환 split이 없어 directConv/indirectConv=0.
 
-import { authFetch } from "./multi-account-data";
+import { authFetch } from "@/features/multi-account/multi-account-data";
 import { addMetrics, ZERO_METRICS, type ReportMetrics } from "./report-data";
 import type { DateRange } from "./report-period";
 

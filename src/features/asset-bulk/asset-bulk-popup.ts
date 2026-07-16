@@ -13,12 +13,12 @@
 import {
   closeAllOpenDropdowns,
   createDropdown,
-} from "@/content/ui-dropdown";
+} from "@/shared/ui-dropdown";
 import {
   resolveAndExtract,
   clearProductPageCache,
   type ExtractResult,
-} from "@/lib/product-page-extract";
+} from "@/features/asset-bulk/product-page-extract";
 
 /**
  * 파워링크 이미지 영역 입력값.

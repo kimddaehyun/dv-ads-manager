@@ -13,8 +13,8 @@ import { useState } from "react";
 import { Button } from "@/components/Button";
 import { Field } from "@/components/Field";
 import { Input } from "@/components/Input";
-import { fetchVolumes } from "@/lib/searchad";
-import { friendlyApiError } from "@/lib/friendly-error";
+import { fetchVolumes } from "@/shared/searchad";
+import { friendlyApiError } from "@/shared/friendly-error";
 
 export type CredentialsState = "empty" | "registered" | "error";
 

@@ -3,10 +3,10 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import {
   openXlsx, buildXlsx, readText, writeText, forceRecalc, removeSheets, removeSheetDrawing, hideRowRange,
-} from "../src/lib/report-excel.ts";
-import { fillFixedSheets, type ReportModel } from "../src/lib/report-fill.ts";
-import { renderCampaignSheet, DISPLAY_CAMPAIGN_LAYOUT, type CampaignTypeGroup } from "../src/lib/report-variable.ts";
-import type { ReportMetrics } from "../src/lib/report-data.ts";
+} from "../src/features/report/report-excel.ts";
+import { fillFixedSheets, type ReportModel } from "../src/features/report/report-fill.ts";
+import { renderCampaignSheet, DISPLAY_CAMPAIGN_LAYOUT, type CampaignTypeGroup } from "../src/features/report/report-variable.ts";
+import type { ReportMetrics } from "../src/features/report/report-data.ts";
 
 // imp, clk, cost, purchaseConv, revenue, direct, indirect
 const M = (imp: number, clk: number, cost: number, pc: number, rev: number, dir: number, indir: number): ReportMetrics => ({

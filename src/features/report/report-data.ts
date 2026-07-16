@@ -7,7 +7,7 @@
 // cross-account는 다른 sa/api 패턴과 동일하게 x-ad-customer-id(masterCustomerId) 헤더로 — 단
 // advanced-report 자체의 헤더 cross-account는 라이브 미검증이라 호출 측에서 결과 검증 필요.
 
-import { authFetch } from "./multi-account-data";
+import { authFetch } from "@/features/multi-account/multi-account-data";
 import type { DateRange } from "./report-period";
 
 // 양식이 쓰는 전체 지표. 숫자는 원 단위(salesAmt=광고비/총비용, convAmt=전체전환매출).

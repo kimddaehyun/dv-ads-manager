@@ -1,8 +1,8 @@
 // report-fill.ts 고정형 시트 채우기 검증 (합성 데이터). node scripts/test-report-fill.ts
 import { readFileSync, writeFileSync } from "node:fs";
-import { openXlsx, buildXlsx, readText, forceRecalc, removeSheets } from "../src/lib/report-excel.ts";
-import { fillFixedSheets, type ReportModel } from "../src/lib/report-fill.ts";
-import type { ReportMetrics } from "../src/lib/report-data.ts";
+import { openXlsx, buildXlsx, readText, forceRecalc, removeSheets } from "../src/features/report/report-excel.ts";
+import { fillFixedSheets, type ReportModel } from "../src/features/report/report-fill.ts";
+import type { ReportMetrics } from "../src/features/report/report-data.ts";
 
 // imp, clk, cost, purchaseConv, revenue, direct, indirect (test-report-display.ts와 동일 시그니처)
 const M = (imp: number, clk: number, cost: number, pc: number, rev: number, dir: number, indir: number): ReportMetrics => ({

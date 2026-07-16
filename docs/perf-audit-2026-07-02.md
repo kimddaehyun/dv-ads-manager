@@ -73,42 +73,42 @@
 ## ③ 발견 상세 (신규)
 
 ### N1. 세팅안 예상순위 보강이 안 쓰는 성과(performance) API까지 강제 호출 (medium, 확실)
-- **위치:** `src/content/setup.ts:324-369`(enrichRanks), `src/background/index.ts:263-324`(handleGetBidEstimate 2·3단계)
+- **위치:** `src/features/setup/setup.ts:324-369`(enrichRanks), `src/background/index.ts:263-324`(handleGetBidEstimate 2·3단계)
 - **원인:** `enrichRanks`는 background `GET_BID_ESTIMATE` 응답에서 `resp.data`(순위별 입찰가)만 사용하고 `resp.performance`는 한 번도 읽지 않는다(setup.ts 전체에 참조 0건, grep 확인). 그런데 `handleGetBidEstimate`는 분기 없이 항상 2단계로 bid 결과의 모든 순위 입찰가(키워드당 최대 10개)를 펼쳐 `fetchPerformanceWithCache`(`POST /estimate/performance-bulk`)까지 호출한다(background/index.ts:293-316). 요청 메시지에 스킵 옵션이 없다. **(직접 코드 재확인 완료.)**
 - **체감:** 키워드 1,500개 계정 세팅안 생성 시 bid 배치 300회는 필수지만 성과 배치 최대 ~75회가 전부 낭비. 검색광고 API 호출량 +20% 안팎, 동시성 2 풀이라 세팅안 완료 시간도 그만큼 늘고 429 확률 상승. 부수적으로 안 읽을 `performance_cache:*` 엔트리 수천 개가 storage(5MB quota)에 쌓임.
 - **수정안:** `GetBidEstimateRequest`에 `skipPerformance` 플래그(또는 별도 메시지 타입)를 추가해 setup 경로에선 1단계(bid)만 수행.
 - **확신도:** 확실.
 
 ### N2. 다계정 "새로고침"(전체 강제 재수집) 재진입 가드 부재 + 죽은 버튼 셀렉터 (medium, 확실)
-- **위치:** `src/content/multi-account.ts:2604-2647`(refreshAllStale), `2606`(죽은 셀렉터), 진입점 `2240` 부근(kebab 메뉴 "새로고침")
+- **위치:** `src/features/multi-account/multi-account.ts:2604-2647`(refreshAllStale), `2606`(죽은 셀렉터), 진입점 `2240` 부근(kebab 메뉴 "새로고침")
 - **원인:** `refreshAllStale`(force:true)에 in-flight 플래그가 없다. 유일한 중복 방지 장치는 `.dvads-multi-refresh-all` 버튼 disable인데, 이 클래스로 버튼을 **생성하는 코드가 없다**(코드베이스 전체에서 querySelector 1곳뿐 - 옛 "↻ 전체" 버튼이 kebab 메뉴로 흡수되면서 셀렉터만 남은 죽은 가드). **(grep으로 직접 재확인 완료.)** 비교: 자동 갱신 쪽(`backgroundRefreshStale`)은 in-flight 플래그가 있음.
 - **체감:** 계정 30개 대행사에서 "새로고침" 진행 중(계정당 ~10콜 × 30 = ~300콜, 4-worker로 30~60초) 메뉴를 다시 열어 한 번 더 누르면 워커 8개가 같은 300콜을 이중 발사 - 순간 동시 요청 ~20+개로 internal API 부담·차단 위험 2배.
 - **수정안:** `backgroundRefreshStale`과 동일한 in-flight boolean 가드 1개 추가. (죽은 셀렉터 `.dvads-multi-refresh-all`은 관련 없는 데드코드로 언급만 - 정리 여부는 별도 판단.)
 - **확신도:** 확실. 재현 검증: Network 탭에서 "새로고침" 2연타 시 `/apis/sa/api/ncc/campaigns`가 계정당 2세트 찍히는지.
 
 ### N3. 자연 캐싱(autoUpdateActiveAccount) in-flight 가드 부재 - 계정 내 연속 이동 시 동일 계정 수집 다중 실행 (low~medium, 확실)
-- **위치:** `src/content/multi-account.ts:96-104`(onTick URL 변경 트리거), `129-156`(autoUpdateActiveAccount)
+- **위치:** `src/features/multi-account/multi-account.ts:96-104`(onTick URL 변경 트리거), `129-156`(autoUpdateActiveAccount)
 - **원인:** 300ms tick에서 URL이 바뀔 때마다 호출. fresh 스냅샷(1h TTL) 체크(133-134)는 있지만 in-flight 가드가 없어, `collectAccount` 1회(캠페인 5콜+stats+bizmoney+GFA ≈ 10콜, 수 초)가 도는 동안 같은 계정 안에서 캠페인 목록→그룹 상세→키워드 탭처럼 URL이 연속으로 바뀌면 매번 fresh 체크를 통과해 동일 계정 수집이 2~3개 동시 실행된다. **(직접 코드 재확인 완료.)**
 - **체감:** 계정 상세를 빠르게 훑는 일상적 탐색 패턴에서 계정당 10콜이 20~30콜로 증폭. 상시 발생 경로라 누적 낭비 큼.
 - **수정안:** 계정번호 키 in-flight Map(또는 boolean+계정번호) 가드 추가.
 - **확신도:** 가드 부재는 확실. 증폭 실측: Network 탭에서 계정 상세 내 탭 3연속 클릭 시 `bizmoney/account` 요청 횟수 확인.
 
 ### N4. multi-account 초기화가 URL·프레임 가드 없이 전 페이지·전 iframe에서 실행 (medium, 경로 확실/배수 추정) - 기존 R19 흡수
-- **위치:** `src/content/multi-account.ts:86-123`(initMultiAccount - 119 `ensureDirectoryFresh`, 108 `setInterval 300ms`, 93 storage 리스너), 호출부 `src/content/index.ts:1150` 부근(무조건 호출), `manifest.config.ts:50`(all_frames:true)
+- **위치:** `src/features/multi-account/multi-account.ts:86-123`(initMultiAccount - 119 `ensureDirectoryFresh`, 108 `setInterval 300ms`, 93 storage 리스너), 호출부 `src/features/bid/index.ts:1150` 부근(무조건 호출), `manifest.config.ts:50`(all_frames:true)
 - **원인:** `initMultiAccount`에 top-frame 가드가 없다(`syncMount` 내부에만 `window === window.top` 체크, 211행). 그래서 (a) `ensureDirectoryFresh()`가 광고계정과 무관한 페이지(리포트·설정 등) 포함 모든 페이지·모든 same-origin iframe에서 실행 - 디렉터리 stale(24h) 시 계정 50개당 1회 페이지네이션 fetch가 프레임·탭 수만큼 중복 가능(in-flight 가드 `directoryFetchInFlight`는 프레임당 변수라 프레임 간 중복을 못 막음). (b) 300ms 인터벌·storage onChanged 리스너가 프레임마다 영구 등록(iframe에선 조기 return이라 개별 비용은 낮지만 타이머 자체는 상주). **(직접 코드 재확인 완료.)** 참고: `autoUpdateActiveAccount` 자체는 `extractActiveAdAccountNo()`가 null이면 즉시 return이라 URL 게이트가 있음 - 무가드는 디렉터리 갱신과 인터벌 쪽.
 - **체감:** 아침에 대행사 직원이 ads.naver.com 탭 여러 개를 복원하면(디렉터리 24h stale) 탭·프레임마다 광고계정 전체 명단 fetch가 동시 발화. 계정 100개면 탭당 2~3콜 × 탭/프레임 수의 불필요 호출 + storage 쓰기 경합.
 - **수정안:** `initMultiAccount` 첫 줄에서 `window !== window.top`이면 return(단 top 아닌 프레임에서 message/storage 리스너가 필요한 기능이 있는지 선확인). 디렉터리 갱신은 `ADACCT_URL_PATTERN` 페이지에서만 + 탭 간 중복은 storage에 fetch 시각 마킹으로 완화.
 - **확신도:** 코드 경로 확실. iframe 배수는 추정 - 광고관리자 페이지 DevTools에서 same-origin frame 수 확인 필요.
 
 ### N5. `multi_account_snapshot:*` storage 키가 어떤 정리 경로에도 안 잡혀 영구 잔존 (low~medium, 확실 - 관점 B·F 독립 교차 확인)
-- **위치:** `src/lib/cache-prune.ts:26-31`(CACHE_PREFIXES에 snapshot prefix 없음), `src/lib/multi-account-storage.ts:257-260`(clearSnapshot - export만 있고 **호출부 0건**), `src/content/multi-account.ts:129-156`(방문만 해도 스냅샷 생성), `2296-2299`·`2584-2588`(계정 삭제 시 스냅샷은 안 지움)
+- **위치:** `src/shared/cache-prune.ts:26-31`(CACHE_PREFIXES에 snapshot prefix 없음), `src/features/multi-account/multi-account-storage.ts:257-260`(clearSnapshot - export만 있고 **호출부 0건**), `src/features/multi-account/multi-account.ts:129-156`(방문만 해도 스냅샷 생성), `2296-2299`·`2584-2588`(계정 삭제 시 스냅샷은 안 지움)
 - **원인:** 스냅샷 TTL은 1시간인데 만료 후에도 키가 남는다. 주기 prune 미커버 + 계정 삭제 경로에서 미삭제 + 자연 캐싱이 "내 계정" 여부와 무관하게 방문한 모든 계정의 스냅샷을 생성. 삭제되는 경로는 플랫폼 필터 토글(`clearAllSnapshots`)과 옵션 "캐시 삭제" 버튼뿐 - 둘 다 명시적 사용자 액션.
 - **체감:** 수백 계정을 오가는 대행사 사용에서 계정당 0.5~5KB(contracts 배열 포함) × 방문 이력 계정 수가 만료 상태로 상주 - 300계정이면 ~0.6-1.5MB가 5MB quota를 영구 점유. quota 근접 시 F001 키워드 캐시 set 실패로 번질 수 있고, #7(get(null) 전체 역직렬화) 비용도 같이 커짐.
 - **수정안:** cache-prune 대상에 snapshot prefix를 **별도 TTL(예: 7일)**로 추가(1h를 그대로 쓰면 stale-while-revalidate 표시용 stale 스냅샷까지 지워지므로 주의) 또는 계정 삭제 흐름에 `clearSnapshot` 병행.
 - **확신도:** 확실. 실측: SW 콘솔 `chrome.storage.local.getBytesInUse(null)` + `get(null)`에서 snapshot 키 수 세기.
 
 ### N6. 콘텐츠 본체 청크 164KB로 재증가 - 원인은 multi-account 비대화 (medium, 확실) - R3 훼손 아님
-- **위치:** `dist/assets/index.ts-*.js` 168,271B(164KiB). 소스는 `src/content/index.ts:40`의 `initMultiAccount` 정적 import 체인 - `src/content/multi-account.ts`가 지난 감사 반영 커밋(ac58d6d) 이후 +1,243줄(현재 3,155줄, 대행권 UI + 그룹 탭), `multi-account-storage.ts` +143줄.
+- **위치:** `dist/assets/index.ts-*.js` 168,271B(164KiB). 소스는 `src/features/bid/index.ts:40`의 `initMultiAccount` 정적 import 체인 - `src/features/multi-account/multi-account.ts`가 지난 감사 반영 커밋(ac58d6d) 이후 +1,243줄(현재 3,155줄, 대행권 UI + 그룹 탭), `multi-account-storage.ts` +143줄.
 - **원인:** R3 코드스플릿 자체는 온전(④ 재검증 참조 - write-excel-file/fflate 흔적 본체에 0건). 하지만 `/manage/ad-accounts/` URL에서만 쓰이는 다계정 대시보드 코드(~40KB 추정, 본체의 1/4)가 정적 import라 모든 ads.naver.com 페이지·iframe에 실려온다. 반면 `report-datepicker.ts`(431줄)는 lazy report 청크로, `agency-check-excel.ts`는 동적 import(multi-account.ts:2005)로 정상 격리됨.
 - **체감:** 모든 탭·모든 iframe마다 164KB 파싱+실행. 증가폭 자체는 +14KB로 완만하지만 multi-account가 계속 커지는 추세라 방치 시 본체가 다시 200KB대로 회귀할 궤적.
 - **수정안:** URL 판별 후 `await import("./multi-account")` 지연 로드(버튼 mount 판별 최소 로직만 본체에 남김). N4의 top-frame 가드와 같이 처리하면 효과 중첩.
@@ -122,81 +122,81 @@
 - **확신도:** 크기·주입은 확실, 분리 방법은 빌드 검증 필요.
 
 ### N8. multi-account 300ms 상시 폴링 - 버튼이 살아있어도 매 tick DOM 질의 + rect 읽기 (low, 확실)
-- **위치:** `src/content/multi-account.ts:108`(setInterval), `210-267`(syncMount - `findOperationChip()`이 먼저 217, "버튼 생존 시 skip"은 그 다음 224-230), `283-285`(캐시 히트 시에도 `getBoundingClientRect`)
+- **위치:** `src/features/multi-account/multi-account.ts:108`(setInterval), `210-267`(syncMount - `findOperationChip()`이 먼저 217, "버튼 생존 시 skip"은 그 다음 224-230), `283-285`(캐시 히트 시에도 `getBoundingClientRect`)
 - **원인:** 호출 순서 때문에 steady state(버튼 정상 mount)에서도 매 300ms 칩 질의 + rect 읽기가 실행된다. #11 백오프는 "칩 미발견" 경로만 커버. F001/F-PoP은 옵저버 기반인데 이 모듈만 폴링 방식.
 - **체감:** 활성 탭에서 초당 ~3.3회 DOM 질의 + layout 읽기 상시. 개별 비용은 작지만 유휴 CPU가 0이 아니고, 무거운 페이지에서 rect 읽기가 reflow를 유발할 수 있다.
 - **수정안:** syncMount 첫 줄에서 `buttonEl?.isConnected && 컨테이너.isConnected`면 즉시 return(칩 탐색 생략). N4의 iframe 인터벌 미시작과 세트.
 - **확신도:** 확실(호출 순서 코드 확인).
 
 ### N9. 전체 갱신 중 다른 유휴 탭들의 storage 리스너 연쇄 재계산 (low, 확실)
-- **위치:** `src/content/multi-account.ts:2864-2878`(onChanged 리스너 - 프레임마다 등록), `2808-2815`(refreshBadge 250ms 디바운스), `2817-2858`(refreshBadgeImpl - storage 읽기 3회)
+- **위치:** `src/features/multi-account/multi-account.ts:2864-2878`(onChanged 리스너 - 프레임마다 등록), `2808-2815`(refreshBadge 250ms 디바운스), `2817-2858`(refreshBadgeImpl - storage 읽기 3회)
 - **원인:** 한 탭에서 전체 갱신(계정 수만큼 스냅샷 저장 연쇄)이 돌면 다른 모든 ads.naver.com 탭의 리스너가 각자 250ms 창마다 배지 재계산(loadAddedList+loadAllUserMeta+loadSnapshotMany)을 반복.
 - **체감:** 탭 20개 상태에서 계정 100개 갱신이 도는 수십 초 동안 유휴 탭 19개가 각각 초당 최대 4회 페이스로 storage 읽기+임계값 계산.
 - **수정안:** 디바운스를 1~2초로 상향하거나, 배지 버튼이 실제 마운트된(top frame) 문서에서만 리스너 등록.
 - **확신도:** 경로 확실, 부하 크기는 계정·탭 수 비례(라이브 프로파일로 정량화 가능).
 
 ### N10. F001 in-memory 캐시(dataCache/perfCache) 무한 성장 + TTL 미적용 (low, 성장 확실/규모 추정)
-- **위치:** `src/content/index.ts:97-99`(모듈 전역 Map, eviction 없음), `208`(조회 시 `fetched_at` 미확인), `1163`(SPA 전환에도 의도적 유지)
+- **위치:** `src/features/bid/index.ts:97-99`(모듈 전역 Map, eviction 없음), `208`(조회 시 `fetched_at` 미확인), `1163`(SPA 전환에도 의도적 유지)
 - **원인:** storage 캐시는 4h TTL을 검사하지만 in-memory 캐시는 무기한 fresh 취급. 부분 삭제는 F012 새로고침의 화면 내 키워드뿐.
 - **체감:** 탭을 하루 종일 켜두고 수십 그룹(그룹당 키워드 수백)을 순회하면 perfCache가 키워드×입찰가(최대 10)×디바이스로 증가 - 키워드 5,000개 열람 시 ~5만 엔트리, 수 MB 수준 단조 증가. 부수 효과로 오래 켜둔 탭은 4시간 넘은 낡은 입찰가를 계속 표시(신선도 버그 겸함).
 - **수정안:** in-memory 조회 시에도 `fetched_at` TTL 체크(만료 시 delete + miss 처리) - 상한과 신선도 동시 해결.
 - **확신도:** 성장 확실 / 규모 추정(장시간 사용 후 DevTools heap snapshot으로 Map retained size 확인).
 
 ### N11. 대행권 점검 결과 검색 - 디바운스 없이 매 키 입력 전체 테이블 재빌드 (low, 300계정+면 medium, 패턴 확실)
-- **위치:** `src/content/multi-account.ts:1997`(input 리스너 - 디바운스 없음, 직접 재확인), `1879-1995`(paintList - innerHTML 초기화 후 행마다 innerHTML+리스너 2개+attachActionMenu 재생성)
+- **위치:** `src/features/multi-account/multi-account.ts:1997`(input 리스너 - 디바운스 없음, 직접 재확인), `1879-1995`(paintList - innerHTML 초기화 후 행마다 innerHTML+리스너 2개+attachActionMenu 재생성)
 - **원인:** R8(전체계정 검색 140ms 디바운스)과 동일 패턴인데 2026-06-26 신규 대행권 모달만 미적용. 점검 대상 기본값이 디렉터리 전 계정이라 300행 시나리오가 현실적.
 - **체감:** 300행 기준 키 입력당 innerHTML 파싱+리스너 부착 ~5-10ms + 레이아웃 ~10-20ms 추정 - 빠른 타이핑에서 프레임 드랍 체감 가능. 50계정이면 미미.
 - **수정안:** `renderSearchView`와 동일한 140ms 디바운스 한 줄.
 - **확신도:** 패턴 확실, ms 수치 추정(Performance에서 input 핸들러 self-time).
 
 ### N12. F001 팝오버 rAF 루프에 매 프레임 document 전체 querySelectorAll 잔존 (#5 부분 수정 잔여) (low, 실행 확실/비용 추정)
-- **위치:** `src/content/index.ts:343-348`(reposition 안 잔존 popover 안전망)
+- **위치:** `src/features/bid/index.ts:343-348`(reposition 안 잔존 popover 안전망)
 - **원인:** #5 수정(transform skip)은 유지됐지만 "querySelectorAll을 루프 밖으로" 부분이 index.ts에는 미반영 - popover 열린 동안 매 프레임 `.dvads-popover` 전체 문서 스캔.
 - **체감:** 키워드 200행 페이지에서 프레임당 ~0.1-0.5ms 추정 - popover 열린 동안 프레임 예산의 ~2%를 안전망에 소모.
 - **수정안:** 안전망 검사를 오픈 직후 1회 + 저빈도(500ms 간격)로 강등.
 - **확신도:** 매 프레임 실행 확실, 비용 추정.
 
 ### N13. F001 scan()의 셀×td textContent 파싱 - 가상화 스크롤 중 프레임마다 반복 (low, 추정)
-- **위치:** `src/content/index.ts:133-149, 151-193`(ensureBadge가 기존 mount 확인 전에 매번 `findBidCellAndValue`), `82-93`(행의 모든 td textContent 파싱)
+- **위치:** `src/features/bid/index.ts:133-149, 151-193`(ensureBadge가 기존 mount 확인 전에 매번 `findBidCellAndValue`), `82-93`(행의 모든 td textContent 파싱)
 - **원인:** R1이 끊은 건 "우리 재렌더→옵저버 재발화" 루프이고, 호스트 React 변이(가상화 스크롤)마다 scan이 도는 것 자체는 정상 - 다만 그 안에서 기존 mount 셀도 매번 전체 td 파싱을 다시 한다. 200행 × ~10td ≈ 프레임당 2,000회 textContent 직렬화 + 정규식.
 - **체감:** 스크롤 중 프레임당 ~1-3ms 추정 - layout 읽기가 아니라 thrashing은 아니고 순수 CPU. 스크롤 마이크로 버벅임 기여 가능.
 - **수정안:** bidCell의 직전 textContent를 mount에 캐시해 동일하면 파싱 skip.
 - **확신도:** 추정 - 키워드 200행 페이지 스크롤 중 Performance로 scan self-time 확인.
 
 ### N14. "↻ 전체" 루프 안 단건 storage get 2종 - 배치 인자가 있는데 안 씀 (low, 확실)
-- **위치:** (a) `src/content/multi-account.ts:2671`·`139`의 `collectAccount` 호출부가 `platformsArg` 미전달 → `src/lib/multi-account-data.ts:596`에서 계정마다 `loadPlatformFilter()` 1회. 이 인자는 지난 감사 R24에서 정확히 이 용도로 추가됐는데 호출부 전체 미사용(당시 "옵션 페이지 필터 staleness 위험으로 미연결" 보류가 그대로). (b) `2684`·`149` - refreshRow 성공마다 `loadAllUserMeta()` 전체 맵 재읽기.
+- **위치:** (a) `src/features/multi-account/multi-account.ts:2671`·`139`의 `collectAccount` 호출부가 `platformsArg` 미전달 → `src/features/multi-account/multi-account-data.ts:596`에서 계정마다 `loadPlatformFilter()` 1회. 이 인자는 지난 감사 R24에서 정확히 이 용도로 추가됐는데 호출부 전체 미사용(당시 "옵션 페이지 필터 staleness 위험으로 미연결" 보류가 그대로). (b) `2684`·`149` - refreshRow 성공마다 `loadAllUserMeta()` 전체 맵 재읽기.
 - **체감:** 계정 50개 "↻ 전체" 1회당 불필요 get ~100회(회당 수 KB). 네트워크가 지배적이라 체감 지연은 미미 - IPC 낭비·위생 수준.
 - **수정안:** refreshAllStale 시작 시 filter·meta 1회 로드 후 인자로 전달(R24 연결 완료 겸).
 - **확신도:** 확실(호출부 전수 확인).
 
 ### N15. 그룹 탭 전환·정렬 클릭마다 storage 전량 재읽기 (low - 정보성, 확실)
-- **위치:** `src/content/multi-account.ts:892-897`(그룹 칩 클릭)·`644-654`(정렬 클릭) → `renderListView`(552-569)가 매번 directory+userMeta+addedList+groups+snapshotMany 5회 읽기
+- **위치:** `src/features/multi-account/multi-account.ts:892-897`(그룹 칩 클릭)·`644-654`(정렬 클릭) → `renderListView`(552-569)가 매번 directory+userMeta+addedList+groups+snapshotMany 5회 읽기
 - **원인:** 데이터는 안 변했고 필터/정렬만 바뀌는데 전량 재조회. 단 `loadSnapshotMany` 배치 + token guard가 있어 클릭당 수 ms~수십 ms 수준.
 - **수정안:** popover 열린 동안 로드 결과를 메모리에 들고 필터/정렬만 재적용.
 - **확신도:** 확실.
 
 ### N16. 대행권 점검이 fresh 스냅샷을 무시하고 비즈머니·어제 광고비 재조회 (low, 코드 확실/의도 추정)
-- **위치:** `src/content/multi-account.ts:1790-1824`(점검 워커 - 계정마다 fetchAgencyOperation+fetchBizMoney+fetchYesterdayCost 3콜 병렬)
+- **위치:** `src/features/multi-account/multi-account.ts:1790-1824`(점검 워커 - 계정마다 fetchAgencyOperation+fetchBizMoney+fetchYesterdayCost 3콜 병렬)
 - **원인:** 방금 새로고침으로 받은 1h TTL 스냅샷에 비즈머니·어제 지표가 있어도 재조회. 대행권 자체는 캐시가 없어 필수, 나머지 2콜이 잠재 중복.
 - **체감:** 30계정 점검 = 90콜 중 60콜 잠재 중복, 소요 ~10-20초.
 - **수정안:** fresh 스냅샷 있으면 재사용 - 단 "점검은 최신값이어야 한다"는 제품 의도면 현행 유지가 맞음(의도 확인 선행).
 - **확신도:** 코드 확실 / 제품 의도 추정.
 
 ### N18. 디스플레이 상세 폴링 상한 15초 고정 - 월간·장기간에서 28초 게이트 통째 낭비 위험 (low, 추정)
-- **위치:** `src/lib/report-gfa-detail.ts:23-24`(POLL_MAX 15×1초), `90-114`
+- **위치:** `src/features/report/report-gfa-detail.ts:23-24`(POLL_MAX 15×1초), `90-114`
 - **원인:** 날짜선택기로 월간·커스텀 장기간을 고르면 서버 보고서 생성이 15초를 넘길 수 있고, 초과 시 throw → 디스플레이_상세 시트 누락 + 이미 발사한 gated POST(계정당 4회×7초)와 폴링 GET이 결과 없이 소모. 재시도 폭주는 없음(무재시도).
 - **체감:** 월간 일괄 30계정에서 일부 계정만 시트가 무작위로 빠지고 계정당 ~28초 허비.
 - **수정안:** 기간 일수 비례로 POLL_MAX 상향(월간 30회) 또는 지수 백오프.
 - **확신도:** 추정 - 월간 기간에서 15초 초과 여부 라이브 확인 필요(콘솔 "디스플레이 상세 수집 실패" 경고 + downloads 폴링 횟수).
 
 ### E-3. renderListView paint 단계·체크박스 동기화의 O(n²) 셀렉터 패턴 (low~negligible, 패턴 확실/비용 추정)
-- **위치:** `src/content/multi-account.ts:685-687`(entry마다 findRows), `3074-3081`(findRows - popover 서브트리 attribute 셀렉터 전체 스캔), `2886-2945`(paintRowEl 셀마다 querySelector ~10회), `2126-2134`·`2072-2081`(select-all/행 체크박스)
+- **위치:** `src/features/multi-account/multi-account.ts:685-687`(entry마다 findRows), `3074-3081`(findRows - popover 서브트리 attribute 셀렉터 전체 스캔), `2886-2945`(paintRowEl 셀마다 querySelector ~10회), `2126-2134`·`2072-2081`(select-all/행 체크박스)
 - **원인:** render 2단계에서 이미 tr 핸들을 갖고 있는데 4단계에서 셀렉터로 다시 찾는다. 50계정 × ~1,000노드 ≈ render당 1-3ms - 체감 없음. 그룹 다중 소속으로 행 2~3배 중복 + 계정 200-300이면 ~10ms까지.
 - **수정안:** paint 단계에서 `paintRowEl(tr, ...)` 직접 호출 또는 `Map<accountNo, tr[]>` 1회 구축.
 - **확신도:** 패턴 확실, 비용 추정.
 
 ### N19. 다이얼로그 "강제 닫기" 경로가 keydown capture 리스너를 안 뗌 (negligible - 현재 도달 불가, 함정 성격)
-- **위치:** `src/content/multi-account.ts:1585-1587`(closeRenameDialog)·`1623-1625`(closeAgencyModal) - `remove()`만 수행, 리스너 해제는 각 다이얼로그 클로저의 cleanup에만 존재
+- **위치:** `src/features/multi-account/multi-account.ts:1585-1587`(closeRenameDialog)·`1623-1625`(closeAgencyModal) - `remove()`만 수행, 리스너 해제는 각 다이얼로그 클로저의 cleanup에만 존재
 - **원인:** open 함수들이 진입 시 방어용으로 부르는 강제 닫기가 실제로 타면 이전 다이얼로그의 keydown capture + backdrop DOM(클로저 retain)이 고아가 됨. 현재는 backdrop이 화면을 덮어 중첩 오픈이 사실상 불가 + 고아 리스너도 다음 Escape에서 자가 정리(대신 그 Escape 1회가 먹통으로 느껴질 수 있음).
 - **수정안:** popover `__cleanup` 패턴처럼 backdrop element에 cleanup을 매달아 close 함수가 호출하게 통일. 앞으로 코드에서 다이얼로그를 강제로 닫는 경로가 생기면 즉시 실누수로 승격되는 함정이라 기록.
 - **확신도:** 코드 구조 확실 / 도달 불가 판단은 UI 흐름 추적 기반.
@@ -208,7 +208,7 @@
 - **확신도:** 추정 - `getEventListeners(document)`로 열닫기 반복 후 리스너 수 비교.
 
 ### 부수 메모 (성능 무관, 언급만)
-- `fetchRelatedKeywords`(`src/lib/searchad.ts:76`)는 호출자 없는 데드코드.
+- `fetchRelatedKeywords`(`src/shared/searchad.ts:76`)는 호출자 없는 데드코드.
 - CLAUDE.md가 언급하는 `src/options/multi-account-ui.tsx`는 현재 존재하지 않음(문서 stale).
 - N2의 `.dvads-multi-refresh-all` 죽은 셀렉터(생성부 없음).
 

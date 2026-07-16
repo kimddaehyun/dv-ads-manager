@@ -9,18 +9,18 @@
  * 사용자 데이터 외부 전송 0건.
  */
 
-import { showToast } from "./toast";
-import { closeAllOpenDropdowns, createDropdown } from "./ui-dropdown";
-import { friendlyApiError } from "@/lib/friendly-error";
-import { estimateRank } from "@/lib/rank";
-import { normalizeKeyword } from "@/lib/storage-keys";
+import { showToast } from "@/shared/toast";
+import { closeAllOpenDropdowns, createDropdown } from "@/shared/ui-dropdown";
+import { friendlyApiError } from "@/shared/friendly-error";
+import { estimateRank } from "@/shared/rank";
+import { normalizeKeyword } from "@/shared/storage-keys";
 import {
   collectKeywordBidPairs,
   collectSetupData,
   fetchSetupCampaignChoices,
-} from "@/lib/setup-data";
-import { generateSetupWorkbook } from "@/lib/setup-excel";
-import { CAMPAIGN_TYPE_LABELS } from "@/lib/setup-adapters";
+} from "@/features/setup/setup-data";
+import { generateSetupWorkbook } from "@/features/setup/setup-excel";
+import { CAMPAIGN_TYPE_LABELS } from "@/features/setup/setup-adapters";
 import type { CampaignTypeCode, SetupCampaign, SetupCampaignChoice } from "@/types/setup";
 import type { RankPosition } from "@/types/storage";
 import type {

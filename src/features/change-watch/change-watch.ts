@@ -10,7 +10,7 @@
  */
 
 import type { ChangeWatchEvent } from "@/types/storage";
-import { authFetch } from "./multi-account-data";
+import { authFetch } from "@/features/multi-account/multi-account-data";
 
 // 앱이 박아 쓰는 고정 상수 — 계정과 무관 (정찰에서 3개 계정 동일 확인).
 const SERVICE_ID = "james-rhodes";

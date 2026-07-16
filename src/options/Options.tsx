@@ -4,8 +4,8 @@ import { CredentialsUi, type CredentialsState, type CredentialsValue } from "./c
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { useEffect, useState } from "react";
-import { loadCredentials, saveCredentials, clearCredentials } from "@/lib/searchad";
-import { clearAllCaches } from "@/lib/cache-prune";
+import { loadCredentials, saveCredentials, clearCredentials } from "@/shared/searchad";
+import { clearAllCaches } from "@/shared/cache-prune";
 
 const APP_VERSION = "v" + (chrome?.runtime?.getManifest?.()?.version ?? "0.0.0");
 const SUGGEST_MAILTO = "mailto:dvcompany.dev@gmail.com?subject=%5B%EB%94%94%EB%B8%8C%EC%9D%B4%20%EC%95%A0%EB%93%9C%20%EB%A7%A4%EB%8B%88%EC%A0%80%5D%20%EA%B8%B0%EB%8A%A5%20%EC%A0%9C%EC%95%88";

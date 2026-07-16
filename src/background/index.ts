@@ -27,15 +27,15 @@ import {
   loadCredentials,
   fetchPositionBids,
   fetchPerformance,
-} from "@/lib/searchad";
-import { getCachedBids, putBids } from "@/lib/volume-cache";
+} from "@/shared/searchad";
+import { getCachedBids, putBids } from "@/features/bid/volume-cache";
 import {
   cacheKey as perfCacheKey,
   getCachedPerformance,
   putPerformance,
-} from "@/lib/performance-cache";
-import { friendlyApiError } from "@/lib/friendly-error";
-import { maybePrune, pruneExpiredCache } from "@/lib/cache-prune";
+} from "@/features/bid/performance-cache";
+import { friendlyApiError } from "@/shared/friendly-error";
+import { maybePrune, pruneExpiredCache } from "@/shared/cache-prune";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("[dv-ads] service worker installed");
