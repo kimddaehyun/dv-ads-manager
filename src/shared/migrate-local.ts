@@ -1,14 +1,18 @@
 /**
  * F-Accounts — 첫 로그인 시 로컬 캐시(chrome.storage.local) ↔ 서버(Supabase) 1회성 이관.
  *
- * 규칙: 서버에 데이터가 하나라도 있으면 "서버가 이긴다" (로컬을 덮어씀 — 다른 프로필/PC에서
- * 이미 이관된 사용자가 재로그인할 때 로컬의 낡은 캐시로 서버를 되돌리지 않기 위함).
- * 서버가 비어 있으면 이번이 첫 이관이므로 로컬 것을 올린다.
+ * 방향 규칙: 서버 프로필의 `migrated_at`(이관 완료 마커)이 기록돼 있으면 download(서버→로컬),
+ * 아니면 upload(로컬→서버). "서버에 데이터가 있는지"로 판단하면 부분 업로드 후 재시도가
+ * download로 뒤집혀 로컬을 지워버린다 — 마커 기준이면 부분 업로드 상태에서 재시도해도
+ * upload가 재개된다. 마커는 업로드가 전부 성공한 뒤에만 RPC `mark_migrated`로 기록.
  *
- * `migrated_v1` 플래그로 idempotent — 실패 시 플래그를 남기지 않아 다음 로그인 때 재시도.
- * vault(Edge Function `credentials-vault`)는 별도 클라이언트 모듈이 아직 없어 여기서 직접 fetch.
+ * 로컬 플래그는 사용자별(`migrated_v1:<userId>`)로 idempotent — 실패 시 플래그를 남기지 않아
+ * 다음 로그인 때 재시도. 다른 사용자로 전환하면 그 사용자 기준으로 다시 이관한다.
  */
-import { pullAll, pushMeta, pushGroups } from "@/shared/server-store";
+import { getSupabase } from "@/shared/supabase";
+import { fetchAuthContext } from "@/shared/auth-state";
+import { pullAll, pushMetaMany, pushGroups } from "@/shared/server-store";
+import { currentMigratedFlagKey } from "@/shared/migration-flag";
 import {
   loadAllUserMeta,
   saveAllUserMeta,
@@ -20,25 +24,40 @@ import {
 import { loadCredentials, saveCredentials } from "@/shared/searchad";
 import { vaultLoad, vaultSave } from "@/shared/vault";
 
-const MIGRATED_FLAG_KEY = "migrated_v1";
-
-/** 서버 우선 규칙: 서버에 데이터가 있으면 download(서버→로컬), 없으면 upload(로컬→서버). */
-export function decideMigration(serverHasData: boolean): "upload" | "download" {
-  return serverHasData ? "download" : "upload";
+/** 서버가 이관 완료를 기록했으면 download(서버→로컬), 아니면 upload(로컬→서버). */
+export function decideMigration(serverMigrated: boolean): "upload" | "download" {
+  return serverMigrated ? "download" : "upload";
 }
 
 /** 로그인 직후 1회 호출. 이미 이관됐으면(플래그 있음) 즉시 skip. */
 export async function runMigrationOnce(): Promise<void> {
-  const flagRes = await chrome.storage.local.get(MIGRATED_FLAG_KEY);
+  // 승인 상태를 가장 먼저 확인 — vault 401에 안전성을 기대지 않는다.
+  const { state } = await fetchAuthContext();
+  if (state !== "approved") return;
+
+  const flagKey = await currentMigratedFlagKey();
+  if (!flagKey) return; // 세션 없음
   // 알려진 경쟁: 여러 탭이 동시에 이 함수를 돌 수 있다(탭마다 컨텍스트 분리라 락 없음).
-  // pushMeta는 upsert, pushGroups는 전체 교체라 중복 실행은 중복 쓰기일 뿐 데이터가 깨지지 않는다.
-  if (flagRes[MIGRATED_FLAG_KEY]) return;
+  // pushMetaMany는 upsert, pushGroups는 전체 교체라 중복 실행은 중복 쓰기일 뿐 데이터가 깨지지 않는다.
+  const flagRes = await chrome.storage.local.get(flagKey);
+  if (flagRes[flagKey]) return;
 
-  const [server, vaultCred] = await Promise.all([pullAll(), vaultLoad()]);
-  const serverHasData =
-    Object.keys(server.metaMap).length > 0 || server.groups.length > 0 || vaultCred !== null;
+  const supabase = getSupabase();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const uid = session?.user?.id;
+  if (!uid) return;
 
-  const direction = decideMigration(serverHasData);
+  // 방향 판단은 본인 프로필의 migrated_at(서버측 이관 완료 마커) 기준.
+  const { data: profileRow, error: profileErr } = await supabase
+    .from("profiles")
+    .select("migrated_at")
+    .eq("id", uid)
+    .maybeSingle();
+  if (profileErr) throw profileErr;
+
+  const direction = decideMigration(Boolean(profileRow?.migrated_at));
 
   if (direction === "upload") {
     const [localMetaMap, localGroups, localAddedList, localCred] = await Promise.all([
@@ -48,20 +67,30 @@ export async function runMigrationOnce(): Promise<void> {
       loadCredentials(),
     ]);
 
+    // meta 전체를 배열 upsert 1회로 밀어 partial 창을 최소화.
     const addedOrder = new Map(localAddedList.map((no, i) => [no, i]));
-    for (const meta of Object.values(localMetaMap)) {
-      const added = addedOrder.has(meta.adAccountNo);
-      await pushMeta(meta, added, addedOrder.get(meta.adAccountNo) ?? 0);
-    }
+    await pushMetaMany(
+      Object.values(localMetaMap).map((meta) => ({
+        meta,
+        added: addedOrder.has(meta.adAccountNo),
+        order: addedOrder.get(meta.adAccountNo) ?? 0,
+      })),
+    );
     await pushGroups(localGroups);
     if (localCred) await vaultSave(localCred);
+
+    // 전부 성공한 뒤에만 서버측 완료 마커 기록 — 이후 다른 기기는 download.
+    const { error: rpcErr } = await supabase.rpc("mark_migrated");
+    if (rpcErr) throw rpcErr;
   } else {
+    // 서버가 이미 이관 완료 — 서버가 이긴다(다른 프로필/PC의 낡은 로컬로 되돌리지 않음).
+    const [server, vaultCred] = await Promise.all([pullAll(), vaultLoad()]);
     await saveAllUserMeta(server.metaMap);
     await saveGroups(server.groups);
     await saveAddedList(server.addedList);
     if (vaultCred) await saveCredentials(vaultCred);
   }
 
-  await chrome.storage.local.set({ [MIGRATED_FLAG_KEY]: true });
+  await chrome.storage.local.set({ [flagKey]: true });
   await chrome.storage.local.remove("brief_token");
 }

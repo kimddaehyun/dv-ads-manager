@@ -127,6 +127,23 @@ export async function pushMeta(
   if (error) throw error;
 }
 
+/**
+ * account_meta 여러 행을 배열 upsert 1회로 반영 — 이관(migrate-local) 등 대량 쓰기에서
+ * 행별 왕복 대신 단일 요청으로 partial 실패 창을 줄인다.
+ */
+export async function pushMetaMany(
+  entries: { meta: MultiAccountUserMeta; added: boolean; order: number }[],
+): Promise<void> {
+  if (entries.length === 0) return;
+  const supabase = getSupabase();
+  const userId = await currentUserId();
+  const rows = entries.map((e) => metaToRow(userId, e.meta, e.added, e.order));
+  const { error } = await supabase
+    .from("account_meta")
+    .upsert(rows, { onConflict: "user_id,ad_account_no" });
+  if (error) throw error;
+}
+
 /** account_meta 한 행 삭제 */
 export async function deleteMeta(adAccountNo: number): Promise<void> {
   const supabase = getSupabase();

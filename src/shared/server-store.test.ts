@@ -1,5 +1,17 @@
-import { describe, it, expect } from "vitest";
-import { rowToMeta, metaToRow, rowToGroup, groupToRow } from "./server-store";
+import { describe, it, expect, vi } from "vitest";
+import { rowToMeta, metaToRow, rowToGroup, groupToRow, pushMetaMany } from "./server-store";
+
+const mocks = vi.hoisted(() => ({
+  upsert: vi.fn(async () => ({ error: null })),
+}));
+vi.mock("@/shared/supabase", () => ({
+  getSupabase: () => ({
+    from: () => ({ upsert: mocks.upsert }),
+    auth: {
+      getSession: async () => ({ data: { session: { user: { id: "uid" } } } }),
+    },
+  }),
+}));
 
 describe("row 변환", () => {
   it("meta 왕복 - 모든 필드 보존", () => {
@@ -38,5 +50,27 @@ describe("row 변환", () => {
     const result = rowToGroup(row);
     expect(result.accountNos).toEqual([1, 2]);
     expect(result.accountNos.every((n) => typeof n === "number")).toBe(true);
+  });
+});
+
+describe("pushMetaMany", () => {
+  it("여러 meta를 배열 upsert 1회로 보낸다 (metaToRow 변환 재사용)", async () => {
+    mocks.upsert.mockClear();
+    await pushMetaMany([
+      { meta: { adAccountNo: 1, displayName: "A" }, added: true, order: 0 },
+      { meta: { adAccountNo: 2 }, added: false, order: 0 },
+    ]);
+    expect(mocks.upsert).toHaveBeenCalledTimes(1);
+    const [rows, opts] = mocks.upsert.mock.calls[0] as unknown as [unknown[], { onConflict: string }];
+    expect(rows).toEqual([
+      metaToRow("uid", { adAccountNo: 1, displayName: "A" }, true, 0),
+      metaToRow("uid", { adAccountNo: 2 }, false, 0),
+    ]);
+    expect(opts.onConflict).toBe("user_id,ad_account_no");
+  });
+  it("빈 목록이면 요청을 보내지 않는다", async () => {
+    mocks.upsert.mockClear();
+    await pushMetaMany([]);
+    expect(mocks.upsert).not.toHaveBeenCalled();
   });
 });

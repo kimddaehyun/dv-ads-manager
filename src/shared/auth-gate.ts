@@ -16,8 +16,9 @@ export async function requireApproved(): Promise<boolean> {
     cached = fetchAuthContext()
       .then(({ state }) => {
         const approved = state === "approved";
-        // 기존(이미 승인된) 세션도 이관 대상 — migrate-local의 migrated_v1 플래그로 idempotent,
-        // 재실행돼도 즉시 skip된다.
+        // 기존(이미 승인된) 세션도 이관 대상 — migrate-local의 사용자별 migrated_v1:<uid>
+        // 플래그로 idempotent, 재실행돼도 즉시 skip된다. runMigrationOnce가 승인 상태를
+        // 자체 확인하지만 여기서도 approved일 때만 불러 불필요한 호출을 줄인다.
         if (approved) {
           runMigrationOnce().catch((e) => {
             console.warn("[auth-gate] 이관 실패", e);
