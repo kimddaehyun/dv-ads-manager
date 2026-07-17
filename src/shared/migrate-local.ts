@@ -29,6 +29,30 @@ export function decideMigration(serverMigrated: boolean): "upload" | "download" 
   return serverMigrated ? "download" : "upload";
 }
 
+/** 이관 전 로컬 원본 백업 키. 어떤 경로로든 사고가 나도 복구할 사본을 남긴다 — 지우지 않는다. */
+export const PREMIGRATION_BACKUP_KEY = "premigration_backup_v1";
+
+const BACKUP_SOURCE_KEYS = [
+  "multi_account_user_meta",
+  "multi_account_groups",
+  "multi_account_added_list",
+  "searchadCredentials",
+] as const;
+
+/**
+ * 로컬 사용자 데이터(별칭·그룹·추가목록·자격증명)를 통째로 백업 키에 1회 복사.
+ * 이미 백업이 있으면 덮지 않는다 — 최초 상태가 가장 가치 있는 원본이다.
+ */
+async function backupLocalOnce(): Promise<void> {
+  const existing = await chrome.storage.local.get(PREMIGRATION_BACKUP_KEY);
+  if (existing[PREMIGRATION_BACKUP_KEY]) return;
+  const data = await chrome.storage.local.get([...BACKUP_SOURCE_KEYS]);
+  if (Object.keys(data).length === 0) return; // 백업할 게 없음(신규 설치)
+  await chrome.storage.local.set({
+    [PREMIGRATION_BACKUP_KEY]: { savedAt: new Date().toISOString(), data },
+  });
+}
+
 /** 로그인 직후 1회 호출. 이미 이관됐으면(플래그 있음) 즉시 skip. */
 export async function runMigrationOnce(): Promise<void> {
   // 승인 상태를 가장 먼저 확인 — vault 401에 안전성을 기대지 않는다.
@@ -58,6 +82,10 @@ export async function runMigrationOnce(): Promise<void> {
   if (profileErr) throw profileErr;
 
   const direction = decideMigration(Boolean(profileRow?.migrated_at));
+
+  // 어느 방향이든 로컬을 건드리기 전에 원본을 백업 — download는 로컬을 덮고,
+  // upload도 이후 로그아웃 정리 등과 얽힐 수 있어 복구 사본을 남긴다.
+  await backupLocalOnce();
 
   if (direction === "upload") {
     const [localMetaMap, localGroups, localAddedList, localCred] = await Promise.all([
