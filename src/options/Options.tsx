@@ -66,31 +66,6 @@ export default function Options() {
     }
   }
 
-  // F-Brief 이용 코드 — 사내 발급 코드를 chrome.storage.local(brief_token)에 저장.
-  // "토큰"/"API 키" 같은 영문 기술용어는 사용자 노출 텍스트에 쓰지 않는다.
-  const [briefCode, setBriefCode] = useState("");
-  const [briefCodeSaved, setBriefCodeSaved] = useState(false);
-
-  useEffect(() => {
-    chrome.storage.local.get("brief_token").then((r) => {
-      if (typeof r.brief_token === "string" && r.brief_token) {
-        setBriefCode(r.brief_token);
-        setBriefCodeSaved(true);
-      }
-    });
-  }, []);
-
-  async function handleSaveBriefCode() {
-    const v = briefCode.trim();
-    if (!v) {
-      await chrome.storage.local.remove("brief_token");
-      setBriefCodeSaved(false);
-      return;
-    }
-    await chrome.storage.local.set({ brief_token: v });
-    setBriefCodeSaved(true);
-  }
-
   const [clearingCache, setClearingCache] = useState(false);
   const [cacheCleared, setCacheCleared] = useState<number | null>(null);
 
@@ -164,33 +139,6 @@ export default function Options() {
                 onDelete={handleDelete}
               />
             )}
-          </Card>
-
-          <Card className="mb-6">
-            <div className="flex items-start justify-between gap-6">
-              <div className="min-w-0 flex-1">
-                <h2 className="text-base font-semibold text-gray-900">보고 문구 이용 코드</h2>
-                <p className="mt-1.5 text-sm text-gray-600 leading-relaxed">
-                  사내에서 발급받은 코드를 입력하면 보고 문구를 만들 수 있어요.
-                </p>
-                <input
-                  type="password"
-                  value={briefCode}
-                  onChange={(e) => {
-                    setBriefCode(e.target.value);
-                    setBriefCodeSaved(false);
-                  }}
-                  placeholder="발급받은 코드 붙여넣기"
-                  className="mt-3 w-full max-w-md h-9 px-3 rounded-lg border border-gray-300 text-sm focus:outline-none focus:border-brand"
-                />
-                {briefCodeSaved && (
-                  <p className="mt-2 text-sm text-brand font-medium">등록되어 있어요.</p>
-                )}
-              </div>
-              <Button variant="secondary" onClick={handleSaveBriefCode}>
-                저장
-              </Button>
-            </div>
           </Card>
 
           <Card className="mb-6">

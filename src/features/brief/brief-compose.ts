@@ -7,6 +7,7 @@
 
 import { extractNumbers, verifyBlock } from "./brief-verify";
 import { type BriefCandidate } from "./brief-rules";
+import { getSupabase } from "@/shared/supabase";
 
 // manifest.config.ts의 host_permissions와 동일 도메인이어야 한다 — 다르면 요청이 차단된다.
 const FN_URL = "https://gvyvrjncpwmcwycebrhf.supabase.co/functions/v1/brief-compose";
@@ -28,9 +29,10 @@ export interface ComposedBlock {
 }
 
 async function loadToken(): Promise<string> {
-  const { brief_token } = await chrome.storage.local.get("brief_token");
-  if (!brief_token) throw new Error("보고 문구 이용 코드가 등록되어 있지 않아요. 확장 프로그램 설정에서 등록해 주세요");
-  return brief_token as string;
+  const { data } = await getSupabase().auth.getSession();
+  const accessToken = data.session?.access_token;
+  if (!accessToken) throw new Error("로그인이 필요해요. 설정에서 로그인해 주세요");
+  return accessToken;
 }
 
 export async function composeBlocks(req: ComposeRequest): Promise<ComposedBlock[]> {

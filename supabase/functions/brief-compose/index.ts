@@ -5,7 +5,11 @@
 //
 // 저장하지 않는다. 로그에 남기지 않는다 (광고주 데이터).
 
-const TOKENS = new Set((Deno.env.get("BRIEF_TOKENS") ?? "").split(",").map((s) => s.trim()).filter(Boolean));
+import { createClient } from "npm:@supabase/supabase-js@2";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
+const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const API_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
 // 번역 작업이라 소형 모델로 충분 + 한국어 존댓말 강점. 설계는 2.5 Flash-Lite였으나
 // 2026-07 신규 키에 제공 중단("no longer available to new users")되어 후속 정식판으로 교체.
@@ -59,9 +63,33 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
   if (req.method !== "POST") return new Response("Method Not Allowed", { status: 405, headers: CORS_HEADERS });
 
-  const auth = req.headers.get("authorization") ?? "";
-  const token = auth.replace(/^Bearer\s+/i, "").trim();
-  if (!token || !TOKENS.has(token)) {
+  const authHeader = req.headers.get("authorization") ?? "";
+  if (!authHeader) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401, headers: { "content-type": "application/json", ...CORS_HEADERS },
+    });
+  }
+
+  // 유저 컨텍스트 클라이언트로 JWT 검증 (credentials-vault와 동일 패턴)
+  const userClient = createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: authHeader } },
+  });
+  const { data: userData, error: userErr } = await userClient.auth.getUser();
+  if (userErr || !userData?.user) {
+    return new Response(JSON.stringify({ error: "unauthorized" }), {
+      status: 401, headers: { "content-type": "application/json", ...CORS_HEADERS },
+    });
+  }
+  const userId = userData.user.id;
+
+  // service role 클라이언트로 승인 상태 확인 (RLS 우회는 검증 후에만)
+  const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const { data: profile, error: profileErr } = await admin
+    .from("profiles")
+    .select("status")
+    .eq("id", userId)
+    .maybeSingle();
+  if (profileErr || profile?.status !== "approved") {
     return new Response(JSON.stringify({ error: "unauthorized" }), {
       status: 401, headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
