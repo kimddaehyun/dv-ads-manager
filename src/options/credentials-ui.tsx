@@ -225,7 +225,7 @@ type={showSecret ? "text" : "password"}
           <li>[네이버 검색광고 API 서비스 신청] 클릭</li>
         </ol>
         <p className="text-xs text-gray-500 pt-1">
-          API키는 브라우저에만 저장되며 외부로 전송되지 않습니다.
+          자격증명은 회사 서버에 암호화되어 안전하게 보관되고, 로그인한 본인만 사용할 수 있습니다.
         </p>
       </div>
     </div>
