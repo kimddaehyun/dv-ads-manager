@@ -112,11 +112,16 @@ function AuthForm({ onDone }: { onDone: () => void }) {
     try {
       const supabase = getSupabase();
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({
+        const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
         });
         if (error) throw error;
+        // 이메일 확인 대기 중인 경우 (data.session이 null)
+        if (!data.session) {
+          setErr("가입 처리 중이에요. 잠시 후 다시 로그인해 주세요.");
+          return;
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({
           email: email.trim(),
