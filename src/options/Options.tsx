@@ -1,5 +1,6 @@
 import iconUrl from "@/assets/icon-128.png";
 import DataDisclosure from "./data-disclosure";
+import { AccountCard } from "./account-ui";
 import { CredentialsUi, type CredentialsState, type CredentialsValue } from "./credentials-ui";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
@@ -138,6 +139,8 @@ export default function Options() {
         </a>
         에 로그인된 상태에서만 사용 가능하며, 검색광고 API 키가 등록된 경우에만 입찰가/순위 오버레이가 활성화됩니다.
       </p>
+
+      <AccountCard onAuthChange={() => {}} />
 
       <Card className="mb-6">
         {loaded && (
