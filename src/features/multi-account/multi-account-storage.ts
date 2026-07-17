@@ -43,13 +43,18 @@ export async function saveAddedList(list: number[]): Promise<void> {
   await chrome.storage.local.set({ [ADDED_LIST_KEY]: list });
 }
 
-// added 상태가 바뀐 계정들의 meta 행을 서버에 push. 실패 시 throw(호출부가 토스트로 안내).
-async function pushAddedState(nos: number[], list: number[]): Promise<void> {
-  if (nos.length === 0) return;
+// 추가 목록이 바뀔 때마다 "이전 목록 ∪ 새 목록"에 속한 모든 계정의 meta 행을 서버에 전체 재동기화.
+// 부분(touched 계정만) push로는 로컬 index로 계산한 added_order가 건드리지 않은 계정에서는
+// 서버에 stale 값으로 남아, remove→add 반복 시 서버 순서가 로컬과 어긋난다(리뷰 지적) —
+// pullAll()이 added_order로 정렬해 다른 기기에서 순서가 조용히 뒤바뀌는 원인이었다.
+// 그룹(pushAndSaveGroups)처럼 전체 교체 방식으로 통일한다. 실패 시 throw(호출부가 토스트로 안내),
+// 로컬 저장은 전체 push 성공 후에만 실행(서버 우선 원칙).
+async function pushAddedState(prevList: number[], nextList: number[]): Promise<void> {
   const allMeta = await loadAllUserMeta();
-  const order = new Map(list.map((no, i) => [no, i]));
-  const added = new Set(list);
-  for (const no of nos) {
+  const order = new Map(nextList.map((no, i) => [no, i]));
+  const added = new Set(nextList);
+  const affected = new Set([...prevList, ...nextList]);
+  for (const no of affected) {
     const meta = allMeta[no] ?? { adAccountNo: no };
     await pushMeta(meta, added.has(no), order.get(no) ?? 0);
   }
@@ -58,16 +63,16 @@ async function pushAddedState(nos: number[], list: number[]): Promise<void> {
 export async function addAccountToList(adAccountNo: number): Promise<number[]> {
   const list = await loadAddedList();
   if (list.includes(adAccountNo)) return list;
-  list.push(adAccountNo);
-  await pushAddedState([adAccountNo], list);
-  await saveAddedList(list);
-  return list;
+  const next = [...list, adAccountNo];
+  await pushAddedState(list, next);
+  await saveAddedList(next);
+  return next;
 }
 
 export async function removeAccountFromList(adAccountNo: number): Promise<number[]> {
   const list = await loadAddedList();
   const next = list.filter((n) => n !== adAccountNo);
-  await pushAddedState([adAccountNo], next);
+  await pushAddedState(list, next);
   await saveAddedList(next);
   return next;
 }
@@ -75,18 +80,19 @@ export async function removeAccountFromList(adAccountNo: number): Promise<number
 // 여러 계정을 한 번에 추가 — load 1회 + save 1회. 직렬 루프(계정마다 save) 대비 onChanged 1회만 발화.
 export async function addAccountsToList(adAccountNos: number[]): Promise<number[]> {
   const list = await loadAddedList();
-  const newlyAdded: number[] = [];
+  const next = [...list];
+  let changed = false;
   for (const no of adAccountNos) {
-    if (!list.includes(no)) {
-      list.push(no);
-      newlyAdded.push(no);
+    if (!next.includes(no)) {
+      next.push(no);
+      changed = true;
     }
   }
-  if (newlyAdded.length > 0) {
-    await pushAddedState(newlyAdded, list);
-    await saveAddedList(list);
+  if (changed) {
+    await pushAddedState(list, next);
+    await saveAddedList(next);
   }
-  return list;
+  return next;
 }
 
 // 여러 계정을 한 번에 제거 — load 1회 + save 1회. 변경 없으면 save 생략.
@@ -95,7 +101,7 @@ export async function removeAccountsFromList(adAccountNos: number[]): Promise<nu
   const toRemove = new Set(adAccountNos);
   const next = list.filter((n) => !toRemove.has(n));
   if (next.length !== list.length) {
-    await pushAddedState(adAccountNos, next);
+    await pushAddedState(list, next);
     await saveAddedList(next);
   }
   return next;
@@ -107,10 +113,11 @@ export async function moveAccountInList(adAccountNo: number, direction: -1 | 1):
   if (idx < 0) return list;
   const next = idx + direction;
   if (next < 0 || next >= list.length) return list;
-  [list[idx], list[next]] = [list[next], list[idx]];
-  await pushAddedState([list[idx], list[next]], list);
-  await saveAddedList(list);
-  return list;
+  const nextList = [...list];
+  [nextList[idx], nextList[next]] = [nextList[next], nextList[idx]];
+  await pushAddedState(list, nextList);
+  await saveAddedList(nextList);
+  return nextList;
 }
 
 export async function loadAllUserMeta(): Promise<UserMetaMap> {
