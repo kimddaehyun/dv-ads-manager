@@ -22,27 +22,32 @@ export function deriveAuthState(hasSession: boolean, status?: string): AuthState
 }
 
 export async function fetchAuthContext(): Promise<{ state: AuthState; profile: ProfileRow | null }> {
-  const supabase = getSupabase();
-  const { data: session } = await supabase.auth.getSession();
+  try {
+    const supabase = getSupabase();
+    const { data: session } = await supabase.auth.getSession();
 
-  if (!session?.session) {
-    return { state: "signedOut", profile: null };
+    if (!session?.session) {
+      return { state: "signedOut", profile: null };
+    }
+
+    const uid = session.session.user.id;
+
+    // Try to fetch the user's profile
+    const { data: profile, error } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", uid)
+      .single();
+
+    if (error || !profile) {
+      // Treat as null on error
+      return { state: deriveAuthState(true, undefined), profile: null };
+    }
+
+    const state = deriveAuthState(true, profile.status);
+    return { state, profile: profile as ProfileRow };
+  } catch {
+    // 잠금이 안전 기본값 — 네트워크 실패가 승인으로 이어지면 안 됨
+    return { state: "pending", profile: null };
   }
-
-  const uid = session.session.user.id;
-
-  // Try to fetch the user's profile
-  const { data: profile, error } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", uid)
-    .single();
-
-  if (error || !profile) {
-    // Treat as null on error
-    return { state: deriveAuthState(true, undefined), profile: null };
-  }
-
-  const state = deriveAuthState(true, profile.status);
-  return { state, profile: profile as ProfileRow };
 }
