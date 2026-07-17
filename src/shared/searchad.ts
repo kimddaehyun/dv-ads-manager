@@ -618,12 +618,31 @@ function numField(v: unknown): number | null {
 
 const CRED_KEY = "searchadCredentials";
 
+// F-Accounts(Task 9) — 로컬 캐시 우선, 없으면 vault(서버) 1회 조회 후 캐시.
+// `loadCredentials`는 background 서비스 워커(x-ad-customer-id 등과 무관하게 API 호출 전 자격증명
+// 확인용)에서도 호출된다. 서비스 워커에는 `window`가 없고 supabase-js를 그 번들에 태우면
+// 안전성을 보장할 수 없어, window가 있는 컨텍스트(확장 페이지·콘텐츠 스크립트)에서만 vault로
+// 폴백한다 — background에서는 로컬 캐시가 비어 있으면 그냥 null(로그인 세션도 background엔 없음).
+// 동적 import로 vault 모듈(및 그 안의 supabase-js)이 background 번들에 정적으로 묶이지 않게 한다.
 export async function loadCredentials(): Promise<SearchadCredentials | null> {
   const r = await chrome.storage.local.get(CRED_KEY);
-  return (r[CRED_KEY] as SearchadCredentials) ?? null;
+  const cached = (r[CRED_KEY] as SearchadCredentials) ?? null;
+  if (cached) return cached;
+  if (typeof window === "undefined") return null;
+  try {
+    const { vaultLoad } = await import("@/shared/vault");
+    const cred = await vaultLoad();
+    if (cred) await chrome.storage.local.set({ [CRED_KEY]: cred });
+    return cred;
+  } catch (e) {
+    console.warn("[searchad] vault 자격증명 조회 실패", e);
+    return null;
+  }
 }
 
 export async function saveCredentials(c: SearchadCredentials): Promise<void> {
+  const { vaultSave } = await import("@/shared/vault");
+  await vaultSave(c);
   await chrome.storage.local.set({ [CRED_KEY]: c });
 }
 

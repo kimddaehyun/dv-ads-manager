@@ -15,6 +15,7 @@ import type {
   ChangeWatchState,
   ChangeWatchEvent,
 } from "@/types/storage";
+import { pullAll, pushMeta, pushGroups, deleteMeta } from "@/shared/server-store";
 
 const USER_META_KEY = "multi_account_user_meta";
 const ADDED_LIST_KEY = "multi_account_added_list";
@@ -35,14 +36,30 @@ export async function loadAddedList(): Promise<number[]> {
   return raw.filter((x): x is number => typeof x === "number");
 }
 
+// 순수 로컬 캐시 쓰기 — migrate-local.ts의 download(서버→로컬) 경로가 그대로 재사용하므로
+// 여기서 서버 push를 하면 그 경로가 서버 데이터를 서버로 되쏘는 낭비/경합이 생긴다.
+// 서버 반영은 아래 add/remove/move 계열(호출부)이 각자 담당한다.
 export async function saveAddedList(list: number[]): Promise<void> {
   await chrome.storage.local.set({ [ADDED_LIST_KEY]: list });
+}
+
+// added 상태가 바뀐 계정들의 meta 행을 서버에 push. 실패 시 throw(호출부가 토스트로 안내).
+async function pushAddedState(nos: number[], list: number[]): Promise<void> {
+  if (nos.length === 0) return;
+  const allMeta = await loadAllUserMeta();
+  const order = new Map(list.map((no, i) => [no, i]));
+  const added = new Set(list);
+  for (const no of nos) {
+    const meta = allMeta[no] ?? { adAccountNo: no };
+    await pushMeta(meta, added.has(no), order.get(no) ?? 0);
+  }
 }
 
 export async function addAccountToList(adAccountNo: number): Promise<number[]> {
   const list = await loadAddedList();
   if (list.includes(adAccountNo)) return list;
   list.push(adAccountNo);
+  await pushAddedState([adAccountNo], list);
   await saveAddedList(list);
   return list;
 }
@@ -50,6 +67,7 @@ export async function addAccountToList(adAccountNo: number): Promise<number[]> {
 export async function removeAccountFromList(adAccountNo: number): Promise<number[]> {
   const list = await loadAddedList();
   const next = list.filter((n) => n !== adAccountNo);
+  await pushAddedState([adAccountNo], next);
   await saveAddedList(next);
   return next;
 }
@@ -57,14 +75,17 @@ export async function removeAccountFromList(adAccountNo: number): Promise<number
 // 여러 계정을 한 번에 추가 — load 1회 + save 1회. 직렬 루프(계정마다 save) 대비 onChanged 1회만 발화.
 export async function addAccountsToList(adAccountNos: number[]): Promise<number[]> {
   const list = await loadAddedList();
-  let changed = false;
+  const newlyAdded: number[] = [];
   for (const no of adAccountNos) {
     if (!list.includes(no)) {
       list.push(no);
-      changed = true;
+      newlyAdded.push(no);
     }
   }
-  if (changed) await saveAddedList(list);
+  if (newlyAdded.length > 0) {
+    await pushAddedState(newlyAdded, list);
+    await saveAddedList(list);
+  }
   return list;
 }
 
@@ -73,7 +94,10 @@ export async function removeAccountsFromList(adAccountNos: number[]): Promise<nu
   const list = await loadAddedList();
   const toRemove = new Set(adAccountNos);
   const next = list.filter((n) => !toRemove.has(n));
-  if (next.length !== list.length) await saveAddedList(next);
+  if (next.length !== list.length) {
+    await pushAddedState(adAccountNos, next);
+    await saveAddedList(next);
+  }
   return next;
 }
 
@@ -84,6 +108,7 @@ export async function moveAccountInList(adAccountNo: number, direction: -1 | 1):
   const next = idx + direction;
   if (next < 0 || next >= list.length) return list;
   [list[idx], list[next]] = [list[next], list[idx]];
+  await pushAddedState([list[idx], list[next]], list);
   await saveAddedList(list);
   return list;
 }
@@ -115,6 +140,10 @@ export async function updateUserMeta(
   // 끄기 = 키 제거 (false를 남겨두면 저장소에 의미 없는 값만 쌓인다)
   if ("changeWatch" in patch && !patch.changeWatch) delete next.changeWatch;
   all[adAccountNo] = next;
+  // 이 계정 한 행만 push — 전체 맵을 매번 올리는 건 낭비.
+  const addedList = await loadAddedList();
+  const added = addedList.includes(adAccountNo);
+  await pushMeta(next, added, added ? addedList.indexOf(adAccountNo) : 0);
   await saveAllUserMeta(all);
   return all;
 }
@@ -137,11 +166,21 @@ export async function updateUserMetaMany(
   if ("changeWatch" in patch && !patch.changeWatch) delete next.changeWatch;
     all[adAccountNo] = next;
   }
+  const addedList = await loadAddedList();
+  for (const adAccountNo of adAccountNos) {
+    const added = addedList.includes(adAccountNo);
+    await pushMeta(all[adAccountNo], added, added ? addedList.indexOf(adAccountNo) : 0);
+  }
   await saveAllUserMeta(all);
   return all;
 }
 
 export async function clearAllUserMeta(): Promise<void> {
+  const all = await loadAllUserMeta();
+  const nos = Object.keys(all).map(Number);
+  for (const no of nos) {
+    await deleteMeta(no);
+  }
   await chrome.storage.local.remove(USER_META_KEY);
 }
 
@@ -178,8 +217,18 @@ export async function loadGroups(): Promise<MultiAccountGroup[]> {
   return dedupeMembership(list.sort((a, b) => a.order - b.order));
 }
 
+// 순수 로컬 캐시 쓰기 — migrate-local.ts의 download(서버→로컬) 경로가 그대로 재사용하므로
+// 여기서 서버 push를 하면 그 경로가 서버 데이터를 서버로 되쏘는 낭비/경합이 생긴다.
+// 서버 반영은 아래 그룹 뮤테이터들이 pushGroups로 각자 담당한다.
 export async function saveGroups(list: MultiAccountGroup[]): Promise<void> {
   await chrome.storage.local.set({ [GROUPS_KEY]: dedupeMembership(list) });
+}
+
+// 서버 push(전체 교체) 후 로컬 캐시 갱신 — 그룹을 실제로 바꾸는 호출부 전용.
+// (migrate-local.ts의 download 경로는 saveGroups를 직접 써서 이 함수를 거치지 않는다.)
+export async function pushAndSaveGroups(list: MultiAccountGroup[]): Promise<void> {
+  await pushGroups(list);
+  await saveGroups(list);
 }
 
 export async function createGroup(name: string): Promise<MultiAccountGroup[]> {
@@ -188,7 +237,7 @@ export async function createGroup(name: string): Promise<MultiAccountGroup[]> {
   const list = await loadGroups();
   const order = list.length > 0 ? Math.max(...list.map((g) => g.order)) + 1 : 0;
   list.push({ id: crypto.randomUUID(), name: trimmed, order, accountNos: [] });
-  await saveGroups(list);
+  await pushAndSaveGroups(list);
   return list;
 }
 
@@ -199,7 +248,7 @@ export async function renameGroup(id: string, name: string): Promise<MultiAccoun
   const g = list.find((x) => x.id === id);
   if (g) {
     g.name = trimmed;
-    await saveGroups(list);
+    await pushAndSaveGroups(list);
   }
   return list;
 }
@@ -216,7 +265,7 @@ export async function reorderGroups(
   const [moved] = list.splice(from, 1);
   list.splice(to, 0, moved);
   list.forEach((g, i) => (g.order = i));
-  await saveGroups(list);
+  await pushAndSaveGroups(list);
   return list;
 }
 
@@ -225,14 +274,14 @@ export async function restoreGroup(group: MultiAccountGroup): Promise<MultiAccou
   const list = await loadGroups();
   if (list.some((g) => g.id === group.id)) return list;
   list.push(group);
-  await saveGroups(list);
+  await pushAndSaveGroups(list);
   return list;
 }
 
 export async function deleteGroup(id: string): Promise<MultiAccountGroup[]> {
   const list = await loadGroups();
   const next = list.filter((g) => g.id !== id);
-  if (next.length !== list.length) await saveGroups(next);
+  if (next.length !== list.length) await pushAndSaveGroups(next);
   return next;
 }
 
@@ -248,7 +297,7 @@ export async function removeAccountsFromAllGroups(
     g.accountNos = g.accountNos.filter((n) => !remove.has(n));
     if (g.accountNos.length !== before) changed = true;
   }
-  if (changed) await saveGroups(list);
+  if (changed) await pushAndSaveGroups(list);
   return list;
 }
 
@@ -457,4 +506,14 @@ export function unreadChangeWatchEvents(
   return state.events.filter(
     (e) => (!kind || e.kind === kind) && e.ts > readUpToFor(state, e.kind),
   );
+}
+
+// ─── F-Accounts: 서버 → 로컬 캐시 새로고침 ───
+// 대시보드(popover)를 열 때 1회 fire-and-forget으로 호출 — 다른 기기/프로필에서 바뀐
+// 별칭·그룹·추가목록을 반영한다. 실패해도 로컬 캐시로 그대로 렌더되므로 호출부는 catch만 하면 된다.
+export async function refreshFromServer(): Promise<void> {
+  const server = await pullAll();
+  await saveAllUserMeta(server.metaMap);
+  await saveGroups(server.groups);
+  await saveAddedList(server.addedList);
 }

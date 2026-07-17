@@ -8,7 +8,6 @@
  * `migrated_v1` 플래그로 idempotent — 실패 시 플래그를 남기지 않아 다음 로그인 때 재시도.
  * vault(Edge Function `credentials-vault`)는 별도 클라이언트 모듈이 아직 없어 여기서 직접 fetch.
  */
-import { getSupabase } from "@/shared/supabase";
 import { pullAll, pushMeta, pushGroups } from "@/shared/server-store";
 import {
   loadAllUserMeta,
@@ -18,51 +17,14 @@ import {
   loadAddedList,
   saveAddedList,
 } from "@/features/multi-account/multi-account-storage";
-import { loadCredentials, saveCredentials, type SearchadCredentials } from "@/shared/searchad";
+import { loadCredentials, saveCredentials } from "@/shared/searchad";
+import { vaultLoad, vaultSave } from "@/shared/vault";
 
-const VAULT_URL = "https://gvyvrjncpwmcwycebrhf.supabase.co/functions/v1/credentials-vault";
 const MIGRATED_FLAG_KEY = "migrated_v1";
 
 /** 서버 우선 규칙: 서버에 데이터가 있으면 download(서버→로컬), 없으면 upload(로컬→서버). */
 export function decideMigration(serverHasData: boolean): "upload" | "download" {
   return serverHasData ? "download" : "upload";
-}
-
-async function vaultCall(
-  body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const supabase = getSupabase();
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
-  const token = session?.access_token;
-  if (!token) throw new Error("로그인 세션이 없습니다");
-
-  const res = await fetch(VAULT_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) throw new Error(`vault 호출 실패 (${res.status})`);
-  return res.json();
-}
-
-async function vaultLoad(): Promise<SearchadCredentials | null> {
-  const result = await vaultCall({ action: "load" });
-  const credentials = result.credentials as SearchadCredentials | null | undefined;
-  return credentials ?? null;
-}
-
-async function vaultSave(cred: SearchadCredentials): Promise<void> {
-  await vaultCall({
-    action: "save",
-    customerId: cred.customerId,
-    accessLicense: cred.accessLicense,
-    secretKey: cred.secretKey,
-  });
 }
 
 /** 로그인 직후 1회 호출. 이미 이관됐으면(플래그 있음) 즉시 skip. */

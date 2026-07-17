@@ -18,6 +18,7 @@ import {
   saveDirectory,
   isDirectoryStale,
   loadAllUserMeta,
+  refreshFromServer,
   updateUserMeta,
   updateUserMetaMany,
   loadAddedList,
@@ -36,7 +37,7 @@ import {
   loadAgencyIdentity,
   saveAgencyIdentity,
   loadGroups,
-  saveGroups,
+  pushAndSaveGroups,
   createGroup,
   renameGroup,
   deleteGroup,
@@ -101,6 +102,22 @@ let directoryFetchInFlight: Promise<void> | null = null;
 // 광고 유형 필터 — 검색광고(SA)/디스플레이(GFA) 표시 토글. popover 열 때 storage에서 로드.
 // collectAccount는 storage를 직접 읽으므로 이건 메뉴 체크 표시용 미러.
 let platformFilter: PlatformFilter = { sa: true, da: true };
+// popover를 열 때마다 서버 최신 상태로 로컬 캐시를 새로고침 — 중복 실행 방지용 in-flight 플래그.
+let serverRefreshInFlight = false;
+
+// F-Accounts(Task 9) — 별칭/그룹/추가목록 저장은 이제 서버 push가 먼저 일어나고 실패 시 throw한다.
+// 기존엔 chrome.storage.local만 썼기 때문에 거의 실패하지 않아 대부분의 호출부가 에러를 다루지
+// 않았다(그대로 두면 unhandled rejection으로 조용히 사라진다). 서버 저장류 호출을 이 헬퍼로
+// 감싸 실패 시 토스트로 알리고, 이어지는 로컬 상태 갱신/렌더는 건너뛴다(undefined 반환으로 신호).
+async function withServerSave<T>(fn: () => Promise<T>): Promise<T | undefined> {
+  try {
+    return await fn();
+  } catch (e) {
+    console.warn("[multi-account] 서버 저장 실패", e);
+    showToast({ message: "저장하지 못했어요. 잠시 후 다시 시도해 주세요", variant: "error" });
+    return undefined;
+  }
+}
 
 export function initMultiAccount() {
   // 동일 origin에서 두 번 초기화되면 listener 중복 등록 방지
@@ -361,6 +378,16 @@ async function openPopover() {
   // 청크 로드를 기다리느라 아무 반응이 없어 "안 눌린다"로 보였다. popover를 여는 지금 시작해두면
   // 메뉴를 열어 고르는 사이에 끝나 클릭이 즉시 반응한다. 실패해도 클릭 때 다시 import 하므로 무해.
   void import("@/features/report/report").catch(() => {});
+  // 서버 최신 상태로 로컬 캐시 새로고침 — 다른 기기/프로필에서 바뀐 별칭·그룹·추가목록 반영.
+  // fire-and-forget: 실패해도 로컬 캐시로 그대로 렌더되고, 다음에 열 때 다시 시도된다.
+  if (!serverRefreshInFlight) {
+    serverRefreshInFlight = true;
+    void refreshFromServer()
+      .catch((e) => console.warn("[multi-account] 서버 새로고침 실패", e))
+      .finally(() => {
+        serverRefreshInFlight = false;
+      });
+  }
   // 광고 유형 필터 로드 (메뉴 체크 표시 동기화용). 실패해도 기본값(둘 다) 유지.
   platformFilter = await loadPlatformFilter().catch(() => ({ sa: true, da: true }));
   popoverView = "list"; // 매번 list view로 시작
@@ -1067,7 +1094,8 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
         const from = dragId;
         btn.classList.remove("is-drop-target");
         void (async () => {
-          await reorderGroups(from, group.id);
+          const result = await withServerSave(() => reorderGroups(from, group.id));
+          if (result === undefined) return;
           if (popoverEl) await renderListView(popoverEl);
         })();
       });
@@ -1123,7 +1151,8 @@ function buildGroupChips(groups: MultiAccountGroup[], wrap: HTMLElement): HTMLEl
       initialValue: "",
       confirmLabel: "만들기",
       onSave: async (name) => {
-        const list = await createGroup(name);
+        const list = await withServerSave(() => createGroup(name));
+        if (list === undefined) return;
         // 방금 만든 그룹으로 필터 이동 — 바로 계정을 배정하기 편하게.
         const created = list[list.length - 1];
         if (created) activeGroupFilter = created.id;
@@ -1264,9 +1293,11 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
 // 계정을 복원한다(스냅샷은 복원 대상 아님 — 새로고침 시 다시 불러옴).
 async function deleteGroupAndAccounts(group: MultiAccountGroup): Promise<void> {
   const nos = [...group.accountNos];
-  await deleteGroup(group.id);
+  const deleted = await withServerSave(() => deleteGroup(group.id));
+  if (deleted === undefined) return;
   if (nos.length > 0) {
-    await removeAccountsFromList(nos);
+    const removed = await withServerSave(() => removeAccountsFromList(nos));
+    if (removed === undefined) return;
     await clearSnapshots(nos);
   }
   if (activeGroupFilter === group.id) activeGroupFilter = "all";
@@ -1283,8 +1314,12 @@ async function deleteGroupAndAccounts(group: MultiAccountGroup): Promise<void> {
       label: "되돌리기",
       onClick: () => {
         void (async () => {
-          await restoreGroup(group);
-          if (nos.length > 0) await addAccountsToList(nos);
+          const restored = await withServerSave(() => restoreGroup(group));
+          if (restored === undefined) return;
+          if (nos.length > 0) {
+            const added = await withServerSave(() => addAccountsToList(nos));
+            if (added === undefined) return;
+          }
           if (popoverEl) await renderListView(popoverEl);
         })();
       },
@@ -1314,7 +1349,8 @@ function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMe
           title: "그룹 이름 변경",
           initialValue: g.name,
           onSave: async (name) => {
-            await renameGroup(g.id, name);
+            const result = await withServerSave(() => renameGroup(g.id, name));
+            if (result === undefined) return;
             if (popoverEl) await renderListView(popoverEl);
           },
         }),
@@ -1550,7 +1586,8 @@ async function openGroupAssignDialog(nos: number[]): Promise<void> {
       const name = inp.value.trim().slice(0, 24);
       editRow.remove();
       if (!name) return;
-      const list = await createGroup(name);
+      const list = await withServerSave(() => createGroup(name));
+      if (list === undefined) return;
       const created = list[list.length - 1];
       if (created) { addGroupRow(created); selectGid(created.id); }
     };
@@ -1590,7 +1627,13 @@ async function openGroupAssignDialog(nos: number[]): Promise<void> {
       const target = fresh.find((g) => g.id === selectedGid);
       if (target) for (const n of nos) if (!target.accountNos.includes(n)) target.accountNos.push(n);
     }
-    await saveGroups(fresh);
+    try {
+      await pushAndSaveGroups(fresh);
+    } catch (e) {
+      console.warn("[multi-account] group assign save failed", e);
+      showToast({ message: "저장하지 못했어요. 잠시 후 다시 시도해 주세요", variant: "error" });
+      return;
+    }
     cleanup();
     if (popoverEl) await renderListView(popoverEl);
   };
@@ -1818,7 +1861,8 @@ function searchRowActionItems(
       label: "계정 추가",
       onClick: () => {
         void (async () => {
-          const next = await addAccountToList(entry.adAccountNo);
+          const next = await withServerSave(() => addAccountToList(entry.adAccountNo));
+          if (next === undefined) return;
           addedSet.clear();
           next.forEach((n) => addedSet.add(n));
           await replaceSearchRow(tr, entry, addedSet);
@@ -1835,8 +1879,10 @@ function searchRowActionItems(
           title: "계정 삭제",
           message: "이 계정을 '내 계정'에서 삭제할까요?",
           onConfirm: async () => {
-            const next = await removeAccountFromList(entry.adAccountNo);
-            await removeAccountsFromAllGroups([entry.adAccountNo]);
+            const next = await withServerSave(() => removeAccountFromList(entry.adAccountNo));
+            if (next === undefined) return;
+            const groupsOk = await withServerSave(() => removeAccountsFromAllGroups([entry.adAccountNo]));
+            if (groupsOk === undefined) return;
             await clearSnapshots([entry.adAccountNo]);
             await clearChangeWatchStates([entry.adAccountNo]);
             addedSet.clear();
@@ -1914,7 +1960,10 @@ function openRenameDialog(
     document.removeEventListener("keydown", onKey, true);
   };
   const save = async () => {
-    await updateUserMeta(entry.adAccountNo, { displayName: input.value.trim().slice(0, 24) });
+    const result = await withServerSave(() =>
+      updateUserMeta(entry.adAccountNo, { displayName: input.value.trim().slice(0, 24) }),
+    );
+    if (result === undefined) return;
     cleanup();
     await replaceRow();
   };
@@ -2678,8 +2727,10 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
           title: "계정 삭제",
           message: `선택한 계정 ${nos.length}개를 '내 계정'에서 삭제할까요?`,
           onConfirm: async () => {
-            await removeAccountsFromList(nos);
-            await removeAccountsFromAllGroups(nos);
+            const removed = await withServerSave(() => removeAccountsFromList(nos));
+            if (removed === undefined) return;
+            const groupsOk = await withServerSave(() => removeAccountsFromAllGroups(nos));
+            if (groupsOk === undefined) return;
             await clearSnapshots(nos);
             await clearChangeWatchStates(nos);
             selectedAccountNos.clear();
@@ -2707,7 +2758,8 @@ function searchKebabItems(): ActionMenuItem[] {
         const nos = Array.from(selectedAccountNos);
         if (nos.length === 0) return;
         void (async () => {
-          await addAccountsToList(nos);
+          const added = await withServerSave(() => addAccountsToList(nos));
+          if (added === undefined) return;
           selectedAccountNos.clear();
           if (popoverEl) await renderSearchView(popoverEl);
         })();
@@ -2724,8 +2776,10 @@ function searchKebabItems(): ActionMenuItem[] {
           title: "계정 삭제",
           message: `선택한 계정 ${nos.length}개를 '내 계정'에서 삭제할까요?`,
           onConfirm: async () => {
-            await removeAccountsFromList(nos);
-            await removeAccountsFromAllGroups(nos);
+            const removed = await withServerSave(() => removeAccountsFromList(nos));
+            if (removed === undefined) return;
+            const groupsOk = await withServerSave(() => removeAccountsFromAllGroups(nos));
+            if (groupsOk === undefined) return;
             await clearSnapshots(nos);
             await clearChangeWatchStates(nos);
             selectedAccountNos.clear();
@@ -3042,8 +3096,12 @@ function renderTableRow(
               title: "계정 삭제",
               message: "이 계정을 '내 계정'에서 삭제할까요?",
               onConfirm: async () => {
-                await removeAccountFromList(entry.adAccountNo);
-                await removeAccountsFromAllGroups([entry.adAccountNo]);
+                const removed = await withServerSave(() => removeAccountFromList(entry.adAccountNo));
+                if (removed === undefined) return;
+                const groupsOk = await withServerSave(() =>
+                  removeAccountsFromAllGroups([entry.adAccountNo]),
+                );
+                if (groupsOk === undefined) return;
                 await clearSnapshots([entry.adAccountNo]);
                 await clearChangeWatchStates([entry.adAccountNo]);
                 if (popoverEl) await renderListView(popoverEl);
@@ -3414,12 +3472,16 @@ async function openBizMoneyDialogFor(nos: number[]) {
     suffix: "원",
     placeholder: "100,000",
     onConfirm: async (value) => {
-      await updateUserMetaMany(nos, { bizMoneyThreshold: value });
+      const result = await withServerSave(() => updateUserMetaMany(nos, { bizMoneyThreshold: value }));
+      if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     },
     onClear: showClear ? async () => {
-      await updateUserMetaMany(nos, { bizMoneyThreshold: undefined });
+      const result = await withServerSave(() =>
+        updateUserMetaMany(nos, { bizMoneyThreshold: undefined }),
+      );
+      if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     } : undefined,
@@ -3446,11 +3508,13 @@ async function openTargetRoasDialogFor(nos: number[]) {
     suffix: "%",
     placeholder: "800",
     onConfirm: async (value) => {
-      await updateUserMetaMany(nos, { targetRoas: value });
+      const result = await withServerSave(() => updateUserMetaMany(nos, { targetRoas: value }));
+      if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
     },
     onClear: showClear ? async () => {
-      await updateUserMetaMany(nos, { targetRoas: undefined });
+      const result = await withServerSave(() => updateUserMetaMany(nos, { targetRoas: undefined }));
+      if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
     } : undefined,
   });
@@ -3563,7 +3627,8 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
    */
   const apply = async (turnOn: boolean) => {
     await saveChangeWatchIdentity([...chosen]);
-    await updateUserMetaMany(nos, { changeWatch: turnOn });
+    const result = await withServerSave(() => updateUserMetaMany(nos, { changeWatch: turnOn }));
+    if (result === undefined) return;
     // 제외 목록이 바뀌었을 수 있어 기존 판정은 무효 — 비우고 처음부터 다시 훑는다.
     await clearChangeWatchStates(nos);
     if (popoverEl) await renderListView(popoverEl);
@@ -3649,12 +3714,18 @@ async function openBrandSearchDialogFor(nos: number[]) {
     suffix: "일",
     placeholder: "7",
     onConfirm: async (value) => {
-      await updateUserMetaMany(nos, { brandSearchDaysThreshold: value });
+      const result = await withServerSave(() =>
+        updateUserMetaMany(nos, { brandSearchDaysThreshold: value }),
+      );
+      if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     },
     onClear: showClear ? async () => {
-      await updateUserMetaMany(nos, { brandSearchDaysThreshold: undefined });
+      const result = await withServerSave(() =>
+        updateUserMetaMany(nos, { brandSearchDaysThreshold: undefined }),
+      );
+      if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     } : undefined,

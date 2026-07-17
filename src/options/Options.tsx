@@ -48,8 +48,8 @@ export default function Options() {
       setCredError(undefined);
       setCredState("registered");
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setCredError(`저장에 실패했어요: ${msg}`);
+      console.warn("[options] saveCredentials failed", e);
+      setCredError("저장하지 못했어요. 잠시 후 다시 시도해 주세요.");
       setCredState("error");
     }
   }
