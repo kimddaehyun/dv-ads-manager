@@ -385,6 +385,13 @@ export async function clearAllSnapshots(): Promise<void> {
   if (keys.length > 0) await chrome.storage.local.remove(keys);
 }
 
+// 로그아웃 시 사용자 종속 로컬 상태 일괄 제거 — 같은 크롬 프로필에서 계정을 전환하면
+// 이전 사용자의 별칭/그룹/추가목록/계정 스냅샷이 남아 새 사용자 화면을 오염시킨다.
+export async function clearLocalAccountState(): Promise<void> {
+  await chrome.storage.local.remove([USER_META_KEY, GROUPS_KEY, ADDED_LIST_KEY]);
+  await clearAllSnapshots();
+}
+
 // ─── 광고 유형(플랫폼) 필터 ───
 // 검색광고(SA) / 디스플레이광고(DA=GFA) 표시 토글. 둘 다 켜지면 합산, 하나면 해당 유형만.
 // 어제 데이터 수집 시점에 collectAccount가 읽어 SA/GFA 파이프라인을 선택 실행한다.

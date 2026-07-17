@@ -62,6 +62,18 @@ export function AccountCard({ onAuthChange }: AccountCardProps) {
     } catch (e) {
       console.warn("[account-ui] signOut failed", e);
     }
+    // 같은 크롬 프로필에서 계정을 전환하면 이전 사용자의 자격증명/설정이 남아 오염된다 —
+    // 로그아웃 시 사용자 종속 로컬 캐시(자격증명·별칭·그룹·추가목록·스냅샷)를 지운다.
+    try {
+      const [{ clearLocalCredentials }, { clearLocalAccountState }] = await Promise.all([
+        import("@/shared/searchad"),
+        import("@/features/multi-account/multi-account-storage"),
+      ]);
+      await clearLocalCredentials();
+      await clearLocalAccountState();
+    } catch (e) {
+      console.warn("[account-ui] 로그아웃 로컬 정리 실패", e);
+    }
     applyState("signedOut", null);
   }
 
