@@ -29,6 +29,8 @@ async function vaultCall(
     },
     body: JSON.stringify(body),
   });
+  // 401 = 세션 만료(또는 미승인) — 사용자에게 보이는 메시지는 일상 한글로.
+  if (res.status === 401) throw new Error("로그인이 만료됐어요. 다시 로그인해 주세요");
   if (!res.ok) throw new Error(`vault 호출 실패 (${res.status})`);
   return res.json();
 }
