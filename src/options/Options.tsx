@@ -1,19 +1,21 @@
 import iconUrl from "@/assets/icon-128.png";
 import DataDisclosure from "./data-disclosure";
 import { AccountCard } from "./account-ui";
+import { AdminCard } from "./admin-ui";
 import { CredentialsUi, type CredentialsState, type CredentialsValue } from "./credentials-ui";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { useEffect, useState } from "react";
 import { loadCredentials, saveCredentials, clearCredentials } from "@/shared/searchad";
 import { clearAllCaches } from "@/shared/cache-prune";
-import type { AuthState } from "@/shared/auth-state";
+import type { AuthState, ProfileRow } from "@/shared/auth-state";
 
 const APP_VERSION = "v" + (chrome?.runtime?.getManifest?.()?.version ?? "0.0.0");
 const SUGGEST_MAILTO = "mailto:dvcompany.dev@gmail.com?subject=%5B%EB%94%94%EB%B8%8C%EC%9D%B4%20%EC%95%A0%EB%93%9C%20%EB%A7%A4%EB%8B%88%EC%A0%80%5D%20%EA%B8%B0%EB%8A%A5%20%EC%A0%9C%EC%95%88";
 
 export default function Options() {
   const [authState, setAuthState] = useState<AuthState | null>(null);
+  const [profile, setProfile] = useState<ProfileRow | null>(null);
   const approved = authState === "approved";
   const [credState, setCredState] = useState<CredentialsState>("empty");
   const [creds, setCreds] = useState<CredentialsValue | undefined>(undefined);
@@ -120,7 +122,14 @@ export default function Options() {
         </p>
       )}
 
-      <AccountCard onAuthChange={setAuthState} />
+      <AccountCard
+        onAuthChange={(state, p) => {
+          setAuthState(state);
+          setProfile(p);
+        }}
+      />
+
+      {approved && profile?.is_admin && <AdminCard currentUserId={profile.id} />}
 
       {approved && (
         <>

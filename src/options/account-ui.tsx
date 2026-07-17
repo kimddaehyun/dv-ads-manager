@@ -22,7 +22,7 @@ function friendlyAuthError(raw: string): string {
 }
 
 interface AccountCardProps {
-  onAuthChange?: (state: AuthState) => void;
+  onAuthChange?: (state: AuthState, profile: ProfileRow | null) => void;
 }
 
 export function AccountCard({ onAuthChange }: AccountCardProps) {
@@ -33,7 +33,7 @@ export function AccountCard({ onAuthChange }: AccountCardProps) {
   function applyState(next: AuthState, nextProfile: ProfileRow | null) {
     setState(next);
     setProfile(nextProfile);
-    onAuthChange?.(next);
+    onAuthChange?.(next, nextProfile);
   }
 
   useEffect(() => {
