@@ -20,4 +20,23 @@ describe("row 변환", () => {
     const g = { id: "g1", name: "팀A", order: 1, accountNos: [1, 2] };
     expect(rowToGroup(groupToRow("uid", g))).toEqual(g);
   });
+  it("meta 왕복 - undefined 필드만", () => {
+    const m = { adAccountNo: 5 };
+    const row = metaToRow("uid", m, false, 0);
+    const restored = rowToMeta(row);
+    expect(restored).toEqual({ adAccountNo: 5 });
+    expect(Object.keys(restored)).toEqual(["adAccountNo"]);
+  });
+  it("rowToMeta - string 컬럼을 숫자로 강제 변환", () => {
+    const row = { user_id: "uid", ad_account_no: "77" as unknown as number, meta: {}, added: false, added_order: 0 };
+    const result = rowToMeta(row);
+    expect(result.adAccountNo).toBe(77);
+    expect(typeof result.adAccountNo).toBe("number");
+  });
+  it("rowToGroup - account_nos string 배열을 숫자로 강제 변환", () => {
+    const row = { id: "g1", user_id: "uid", name: "팀A", ord: 1, account_nos: ["1", "2"] as unknown as number[] };
+    const result = rowToGroup(row);
+    expect(result.accountNos).toEqual([1, 2]);
+    expect(result.accountNos.every((n) => typeof n === "number")).toBe(true);
+  });
 });

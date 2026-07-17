@@ -42,7 +42,8 @@ export function metaToRow(
 
 /** account_meta 행 → MultiAccountUserMeta (ad_account_no를 adAccountNo로 되붙임) */
 export function rowToMeta(row: AccountMetaRow): MultiAccountUserMeta {
-  return { ...row.meta, adAccountNo: row.ad_account_no };
+  // bigint 컬럼은 문자열로 올 수 있어 숫자로 강제
+  return { ...row.meta, adAccountNo: Number(row.ad_account_no) };
 }
 
 /** MultiAccountGroup → account_groups 행 */
@@ -58,11 +59,12 @@ export function groupToRow(userId: string, g: MultiAccountGroup): AccountGroupRo
 
 /** account_groups 행 → MultiAccountGroup */
 export function rowToGroup(row: AccountGroupRow): MultiAccountGroup {
+  // bigint 컬럼은 문자열로 올 수 있어 숫자로 강제
   return {
     id: row.id,
     name: row.name,
     order: row.ord,
-    accountNos: row.account_nos,
+    accountNos: row.account_nos.map(Number),
   };
 }
 
@@ -96,7 +98,8 @@ export async function pullAll(): Promise<{
 
   const metaMap: UserMetaMap = {};
   for (const row of metaRows) {
-    metaMap[row.ad_account_no] = rowToMeta(row);
+    // bigint 컬럼은 문자열로 올 수 있어 숫자로 강제
+    metaMap[Number(row.ad_account_no)] = rowToMeta(row);
   }
 
   const groups = groupRows.map(rowToGroup);
@@ -104,7 +107,7 @@ export async function pullAll(): Promise<{
   const addedList = metaRows
     .filter((row) => row.added)
     .sort((a, b) => a.added_order - b.added_order)
-    .map((row) => row.ad_account_no);
+    .map((row) => Number(row.ad_account_no));
 
   return { metaMap, groups, addedList };
 }
