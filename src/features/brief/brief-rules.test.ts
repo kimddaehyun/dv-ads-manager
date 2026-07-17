@@ -587,6 +587,20 @@ describe("extractCandidates - lowCtrAd", () => {
   it("소재 데이터가 없으면 후보 없음", () => {
     expect(extractCandidates(base).find((x) => x.kind === "lowCtrAd")).toBeUndefined();
   });
+
+  it("같은 문구가 여러 소재로 흩어져 있으면 합산해서 판정 — 문구 교체 후보의 단위는 문구다", () => {
+    // 각각 노출 600(임계 미만)이지만 합치면 1,200 + CTR 0.17% → 후보.
+    const plAds = [ad("같은문구", 600, 1), ad("같은문구", 600, 1)];
+    const c = extractCandidates({ ...base, plAds }).find((x) => x.kind === "lowCtrAd");
+    expect(c).toBeDefined();
+    expect(c!.facts.count).toBe(1); // 중복 표기 없이 1건
+  });
+
+  it("문구 합산 CTR이 건강하면 후보 아님 — 한쪽 소재만 낮아도 문구 탓이 아니다", () => {
+    const plAds = [ad("건강문구", 5_000, 10), ad("건강문구", 5_000, 200)]; // 합산 2.1%
+    expect(extractCandidates({ ...base, plAds })
+      .find((x) => x.kind === "lowCtrAd")).toBeUndefined();
+  });
 });
 
 describe("extractCandidates - productConvDrop", () => {

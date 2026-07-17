@@ -478,8 +478,14 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   if (region) out.push(region);
 
   // ⑩ 노출은 충분한데 클릭률이 낮은 파워링크 소재 — 입찰이 아니라 **문구 교체** 후보.
+  // 판정 단위는 소재ID가 아니라 **문구(제목)** — 같은 문구가 여러 소재로 흩어져 있으면 합산.
+  // 소재ID 단위로 두면 같은 문구가 중복 표기되고, 합산 CTR이 건강한 문구를 오탐한다(코덱스 리뷰 P2).
   if (input.plAds) {
-    const lowCtr = input.plAds
+    const byLabel = new Map<string, ReportMetrics>();
+    for (const a of input.plAds) {
+      byLabel.set(a.label, addMetrics(byLabel.get(a.label) ?? ZERO_METRICS, a.metrics));
+    }
+    const lowCtr = [...byLabel.entries()].map(([label, metrics]) => ({ label, metrics }))
       .filter((a) => a.metrics.impressions >= AD_IMP_FLOOR && ctrPct(a.metrics) < LOW_CTR_PCT)
       .sort((a, b) => b.metrics.impressions - a.metrics.impressions);
     if (lowCtr.length > 0) {
