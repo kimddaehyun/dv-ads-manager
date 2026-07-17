@@ -163,7 +163,7 @@ function AuthForm({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col gap-3 max-w-md">
+    <form onSubmit={handleSubmit} className="flex flex-col gap-3">
       {isSignUp && (
         <Input
           type="text"

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Card } from "@/components/Card";
 
 const PRIVACY_URL = "https://kimddaehyun.github.io/dv-ads-legal/";
@@ -38,12 +39,33 @@ const NOT_COLLECTED = [
 ];
 
 export default function DataDisclosure() {
+  // 기본은 접힘 - 매번 볼 내용이 아니라서 자리만 차지하지 않게 하고, 필요할 때 펼쳐 본다.
+  const [open, setOpen] = useState(false);
   return (
     <Card>
-      <div className="flex items-center justify-between mb-3">
-        <h2 className="text-base font-semibold text-gray-900">
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex items-center gap-2 text-base font-semibold text-gray-900"
+        >
           데이터 처리 요약
-        </h2>
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 20 20"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            className={`text-gray-400 transition-transform ${open ? "rotate-180" : ""}`}
+          >
+            <polyline points="5 8 10 13 15 8" />
+          </svg>
+        </button>
         <a
           href={PRIVACY_URL}
           target="_blank"
@@ -54,6 +76,7 @@ export default function DataDisclosure() {
         </a>
       </div>
 
+      {open && (
       <div className="overflow-hidden rounded-lg bg-input mt-4">
         <table className="w-full text-xs">
           <thead className="text-gray-700">
@@ -74,15 +97,18 @@ export default function DataDisclosure() {
           </tbody>
         </table>
       </div>
+      )}
 
-      <div className="mt-4 text-xs text-gray-600">
-        <p className="font-medium text-gray-800 mb-1">수집하지 않는 정보</p>
-        <ul className="list-disc pl-5 space-y-0.5">
-          {NOT_COLLECTED.map((s) => (
-            <li key={s}>{s}</li>
-          ))}
-        </ul>
-      </div>
+      {open && (
+        <div className="mt-4 text-xs text-gray-600">
+          <p className="font-medium text-gray-800 mb-1">수집하지 않는 정보</p>
+          <ul className="list-disc pl-5 space-y-0.5">
+            {NOT_COLLECTED.map((s) => (
+              <li key={s}>{s}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </Card>
   );
 }

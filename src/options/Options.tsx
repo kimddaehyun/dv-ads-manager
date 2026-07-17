@@ -99,6 +99,30 @@ export default function Options() {
     }
   }
 
+  // 미로그인/미승인: 넓은 화면에 폼이 왼쪽으로 쏠려 보이지 않게, 좁은 카드를 가운데 배치.
+  if (!approved) {
+    return (
+      <div className="max-w-md mx-auto px-6 pt-24 pb-16">
+        <header className="flex flex-col items-center gap-3 mb-8 text-center">
+          <img
+            src={iconUrl}
+            alt="디브이 애드 매니저"
+            className="w-12 h-12 rounded-xl"
+          />
+          <h1 className="text-xl font-bold text-gray-900">
+            디브이 애드 매니저 {APP_VERSION}
+          </h1>
+        </header>
+        <AccountCard
+          onAuthChange={(state, p) => {
+            setAuthState(state);
+            setProfile(p);
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-6xl mx-auto p-10">
       <header className="flex items-center gap-3 pt-6 mb-3">
