@@ -68,6 +68,8 @@ async function vaultSave(cred: SearchadCredentials): Promise<void> {
 /** 로그인 직후 1회 호출. 이미 이관됐으면(플래그 있음) 즉시 skip. */
 export async function runMigrationOnce(): Promise<void> {
   const flagRes = await chrome.storage.local.get(MIGRATED_FLAG_KEY);
+  // 알려진 경쟁: 여러 탭이 동시에 이 함수를 돌 수 있다(탭마다 컨텍스트 분리라 락 없음).
+  // pushMeta는 upsert, pushGroups는 전체 교체라 중복 실행은 중복 쓰기일 뿐 데이터가 깨지지 않는다.
   if (flagRes[MIGRATED_FLAG_KEY]) return;
 
   const [server, vaultCred] = await Promise.all([pullAll(), vaultLoad()]);
