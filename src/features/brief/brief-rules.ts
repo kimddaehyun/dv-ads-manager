@@ -50,6 +50,7 @@ export type BriefKind =
   | "genderBidSkew"        // 성별 간 ROAS 격차 (Task 13)
   | "ageBidSkew"           // 연령대 간 ROAS 격차 (Task 13)
   | "deviceBidSkew"        // PC/모바일 간 ROAS 격차 (Task 14)
+  | "lowCtrAd"             // 노출은 충분한데 클릭률 낮은 파워링크 소재 (Task 15)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
   | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
   | "productConvDrop";     // 전기 대비 전환 빠진 상품 (Task 8)
@@ -106,6 +107,8 @@ export interface BriefRuleInput {
   byAge?: NamedMetrics[];
   /** 기기(PC/모바일) 성과. brief-data가 pcMblTp 차원으로 수집(F-Brief 전용). */
   byDevice?: NamedMetrics[];
+  /** 파워링크 소재별 성과. label은 소재 제목(headline) — 이름 못 얻은 소재는 이미 걸러져 온다. */
+  plAds?: NamedMetrics[];
 }
 
 /** 매출 낙폭이 이 값 미만이면 후보로 안 만든다 — 소음 방지. */
@@ -163,6 +166,19 @@ export function pickRankTargets(rows: BriefKeywordRow[], targetRoas?: number): B
   return rows.filter((r) =>
     r.metrics.cost >= COST_FLOOR && roasBand(roasPct(r.metrics), targetRoas) === "green",
   );
+}
+
+// ── 소재 클릭률 (Task 15) ──
+
+/** 소재 후보의 노출 임계 — 이만큼 보여지고도 클릭이 안 나와야 "문구 문제"라 말할 수 있다. */
+export const AD_IMP_FLOOR = 1_000;
+/** 클릭률(%) 하한 — 이 미만이면 소재 문구 교체 후보. */
+export const LOW_CTR_PCT = 0.5;
+
+/** 클릭률(%) = 클릭 / 노출 x 100. 노출 0이면 0. */
+export function ctrPct(m: ReportMetrics): number {
+  if (m.impressions <= 0) return 0;
+  return (m.clicks / m.impressions) * 100;
 }
 
 // ── 타게팅 격차(skew) 공통 — 성별/연령 (Task 13), 이후 기기/시간/지역도 이 판정을 쓴다 ──
@@ -426,6 +442,39 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   if (age) out.push(age);
   const device = skewCandidate("deviceBidSkew", "기기", input.byDevice, targetRoas);
   if (device) out.push(device);
+
+  // ⑩ 노출은 충분한데 클릭률이 낮은 파워링크 소재 — 입찰이 아니라 **문구 교체** 후보.
+  if (input.plAds) {
+    const lowCtr = input.plAds
+      .filter((a) => a.metrics.impressions >= AD_IMP_FLOOR && ctrPct(a.metrics) < LOW_CTR_PCT)
+      .sort((a, b) => b.metrics.impressions - a.metrics.impressions);
+    if (lowCtr.length > 0) {
+      out.push({
+        kind: "lowCtrAd",
+        facts: {
+          기준: `노출 ${AD_IMP_FLOOR.toLocaleString()}회 이상, 클릭률 ${LOW_CTR_PCT}% 미만 — 소재 문구 교체 검토`,
+          ads: lowCtr.map((a) => a.label).join(", "),
+          count: lowCtr.length,
+        },
+        table: {
+          title: "클릭률 낮은 파워링크 소재",
+          columns: ["소재", "노출", "클릭", "클릭률", "총비용", "구매완료", "매출액"],
+          rows: lowCtr.map((a) => ({
+            cells: [
+              a.label,
+              a.metrics.impressions.toLocaleString(),
+              a.metrics.clicks.toLocaleString(),
+              `${ctrPct(a.metrics).toFixed(2)}%`,
+              `${a.metrics.cost.toLocaleString()}원`,
+              String(a.metrics.purchaseConv),
+              `${a.metrics.revenue.toLocaleString()}원`,
+            ],
+          })),
+        },
+        selected: false,
+      });
+    }
+  }
 
   // ⑤ 전기 대비 전환이 빠진 상품 — 보고 로그의 "객단가 높은 [온열 찜질기]에서 전환이
   // 발생하지 않아"가 이것. 매출 낙폭 임계로 소음을 거른다.

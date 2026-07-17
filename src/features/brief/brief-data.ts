@@ -22,6 +22,8 @@ export interface BriefData extends ReportData {
   products: BriefProductDelta[];
   /** 기기(PC/모바일)별 검색광고 성과. 실패 시 빈 배열 — 기기 후보만 생략. */
   byDevice: NamedMetrics[];
+  /** 파워링크 소재별 성과(label=제목). 실패 시 빈 배열 — 소재 후보만 생략. */
+  plAds: NamedMetrics[];
 }
 
 /**
@@ -54,13 +56,55 @@ async function fetchPrevProducts(customerId: number, range: DateRange): Promise<
   return buildProductAdRows(res, "쇼핑검색");
 }
 
+interface RawTextAd { nccAdId?: string; ad?: { headline?: string } }
+
+/**
+ * 파워링크 소재별 성과 + 제목(headline) 조인 (2026-07-17 라이브 정찰: TEXT_45의 `ad.headline`,
+ * `ncc/ads?ids=` 벌크 조회 동작 확인). label은 headline — 제목 못 얻은 소재는 광고주에게
+ * `nad-...`를 보여줄 수 없어 제외한다(상품 후보와 동일 규칙).
+ */
+async function fetchPlAds(customerId: number, range: DateRange): Promise<NamedMetrics[]> {
+  const res = await fetchAdvancedReport({
+    attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "nccAdId"],
+    range,
+    customerId,
+    maxRows: 30000,
+    filters: [
+      { type: "in", field: "nccCampaignTp", values: [CAMPAIGN_TP_CODE.파워링크] },
+      { type: "bound", field: "impCnt", operator: "gt", value: 0 },
+    ],
+  });
+  const adRows = buildProductAdRows(res, "파워링크"); // label = 소재ID
+  if (adRows.length === 0) return [];
+
+  const { authFetch } = await import("@/features/multi-account/multi-account-data");
+  const ids = adRows.map((r) => r.label);
+  const chunks: string[][] = [];
+  for (let i = 0; i < ids.length; i += 80) chunks.push(ids.slice(i, i + 80));
+  const titleById = new Map<string, string>();
+  await pool(chunks, 4, async (chunk) => {
+    const ads = await authFetch<RawTextAd[]>(
+      `/apis/sa/api/ncc/ads?ids=${chunk.map(encodeURIComponent).join(",")}`,
+      undefined,
+      customerId,
+    ).catch(() => [] as RawTextAd[]);
+    for (const a of Array.isArray(ads) ? ads : []) {
+      const title = a.ad?.headline?.trim();
+      if (a.nccAdId && title) titleById.set(a.nccAdId, title);
+    }
+  });
+  return adRows
+    .map((r) => ({ label: titleById.get(r.label) ?? "", metrics: r.metrics }))
+    .filter((r) => r.label !== "");
+}
+
 export async function collectBriefData(target: ReportTarget, range: DateRange): Promise<BriefData> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
   // 담당자/작성일은 엑셀 표지 전용이라 문구엔 안 쓰인다. 빈 값으로 넘긴다.
   // 전기 상품은 F-Brief만 필요하다 — collectReportData를 건드리지 않고 여기서 1회 더 부른다.
   // 두 수집을 동시에 출발시켜 왕복을 더하지 않는다. 실패해도 상품 후보만 생략.
-  const [data, prevAdRows, byDevice] = await Promise.all([
+  const [data, prevAdRows, byDevice, plAds] = await Promise.all([
     collectReportData(target, range, { authorName: "", createdDate: "" }),
     fetchPrevProducts(cid, previousRange(range)).catch((e) => {
       console.warn("[dv-ads/brief] 전기 상품 조회 실패 — 상품 후보만 생략", e);
@@ -68,6 +112,10 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
     }),
     fetchByDevice(cid, range).catch((e) => {
       console.warn("[dv-ads/brief] 기기별 조회 실패 — 기기 후보만 생략", e);
+      return [] as NamedMetrics[];
+    }),
+    fetchPlAds(cid, range).catch((e) => {
+      console.warn("[dv-ads/brief] 파워링크 소재 조회 실패 — 소재 후보만 생략", e);
       return [] as NamedMetrics[];
     }),
   ]);
@@ -83,7 +131,7 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
     }))
     .filter((p) => p.label !== "");
 
-  return { ...data, range, advertiserName: target.name, products, byDevice };
+  return { ...data, range, advertiserName: target.name, products, byDevice, plAds };
 }
 
 /** 기간 일수. "지난 30일 동안" 같은 표현에 쓴다. */

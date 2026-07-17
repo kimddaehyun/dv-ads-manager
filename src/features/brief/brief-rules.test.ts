@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
-  pickRankTargets, LOW_RANK_FLOOR, SKEW_RATIO,
+  pickRankTargets, LOW_RANK_FLOOR, SKEW_RATIO, AD_IMP_FLOOR, LOW_CTR_PCT,
   type BriefProductDelta,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
@@ -470,6 +470,46 @@ describe("extractCandidates - deviceBidSkew", () => {
     ];
     expect(extractCandidates({ ...base, byDevice })
       .find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+  });
+});
+
+describe("extractCandidates - lowCtrAd", () => {
+  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+  // 노출/클릭 지정 헬퍼
+  const ad = (label: string, impressions: number, clicks: number): NamedMetrics =>
+    ({ label, metrics: { ...ZERO_METRICS, impressions, clicks, cost: 20_000 } });
+
+  it("AD_IMP_FLOOR는 1000, LOW_CTR_PCT는 0.5", () => {
+    expect(AD_IMP_FLOOR).toBe(1_000);
+    expect(LOW_CTR_PCT).toBe(0.5);
+  });
+
+  it("노출 임계 이상 + 클릭률 0.5% 미만 소재만 후보", () => {
+    const plAds = [
+      ad("문구A", 5_000, 10),  // 0.2% → 후보
+      ad("문구B", 5_000, 100), // 2.0% → 제외
+      ad("문구C", 500, 0),     // 노출 미달 → 제외
+    ];
+    const c = extractCandidates({ ...base, plAds }).find((x) => x.kind === "lowCtrAd");
+    expect(c).toBeDefined();
+    expect(c!.facts.ads).toBe("문구A");
+    expect(c!.facts.count).toBe(1);
+  });
+
+  it("클릭률이 정확히 0.5%면 후보 아님 — 미만만", () => {
+    const plAds = [ad("경계", 10_000, 50)]; // 0.5%
+    expect(extractCandidates({ ...base, plAds })
+      .find((x) => x.kind === "lowCtrAd")).toBeUndefined();
+  });
+
+  it("표에 클릭률 열이 있다 — 낮다는 근거가 표에 보여야 한다", () => {
+    const plAds = [ad("문구A", 5_000, 10)];
+    const c = extractCandidates({ ...base, plAds }).find((x) => x.kind === "lowCtrAd");
+    expect(c!.table.columns).toContain("클릭률");
+  });
+
+  it("소재 데이터가 없으면 후보 없음", () => {
+    expect(extractCandidates(base).find((x) => x.kind === "lowCtrAd")).toBeUndefined();
   });
 });
 
