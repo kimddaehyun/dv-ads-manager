@@ -18,3 +18,4 @@ dist-*.xlsx
 ads-naver-home.png
 dashboard.png
 .claude/.md-cleanup-stamp
+supabase/.temp/
