@@ -4,6 +4,7 @@ import { StatusDot } from "@/components/StatusDot";
 import { RefreshIcon, ExternalIcon } from "@/icons";
 import { useEffect, useRef, useState } from "react";
 import { loadCredentials } from "@/shared/searchad";
+import { fetchAuthContext, type AuthState } from "@/shared/auth-state";
 import type { RefreshActiveTabResponse } from "@/types/messages";
 
 const PRIVACY_URL = "https://kimddaehyun.github.io/dv-ads-legal/";
@@ -12,28 +13,82 @@ const ADS_URL = "https://ads.naver.com/";
 export type PopupState = "ok" | "no-cred";
 
 export default function App() {
+  const [authState, setAuthState] = useState<AuthState | null>(null);
   const [state, setState] = useState<PopupState>("no-cred");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    loadCredentials()
-      .then((c) => {
+    fetchAuthContext()
+      .then(({ state: s }) => {
         if (cancelled) return;
-        setState(c ? "ok" : "no-cred");
+        setAuthState(s);
+        if (s !== "approved") {
+          setLoading(false);
+          return;
+        }
+        return loadCredentials()
+          .then((c) => {
+            if (cancelled) return;
+            setState(c ? "ok" : "no-cred");
+          })
+          .catch((e) => {
+            console.warn("[popup] loadCredentials failed", e);
+          })
+          .finally(() => {
+            if (!cancelled) setLoading(false);
+          });
       })
       .catch((e) => {
-        console.warn("[popup] loadCredentials failed", e);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        console.warn("[popup] fetchAuthContext failed", e);
+        if (!cancelled) {
+          setAuthState("pending");
+          setLoading(false);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  if (loading) {
+    return (
+      <div className="w-[320px] p-6 text-center">
+        <p className="text-sm text-gray-500">확인 중...</p>
+      </div>
+    );
+  }
+
+  if (authState !== "approved") {
+    return (
+      <LockedNotice
+        text={
+          authState === "pending"
+            ? "가입 확인 중이에요. 관리자 승인 후 사용할 수 있어요."
+            : "로그인이 필요해요. 설정에서 로그인해 주세요."
+        }
+      />
+    );
+  }
+
   return <PopupView state={state} loading={loading} />;
+}
+
+function LockedNotice({ text }: { text: string }) {
+  function openOptions() {
+    chrome.runtime?.openOptionsPage?.();
+    window.close();
+  }
+
+  return (
+    <div className="w-[320px] flex flex-col items-center gap-4 p-6 text-center">
+      <img src={iconUrl} alt="DV" className="w-10 h-10 rounded-lg" />
+      <p className="text-sm text-gray-700 leading-relaxed break-keep">{text}</p>
+      <Button variant="brand" size="md" block onClick={openOptions}>
+        설정 열기
+      </Button>
+    </div>
+  );
 }
 
 type RefreshStatus =

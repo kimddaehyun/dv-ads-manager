@@ -39,6 +39,7 @@ import { initPeriodCompare } from "@/features/period-compare/period-compare";
 import { initAssetBulk } from "@/features/asset-bulk/asset-bulk";
 import { initShoppingImageImport } from "@/features/asset-bulk/shopping-image-import";
 import { attachTooltip } from "@/shared/tooltip";
+import { requireApproved } from "@/shared/auth-gate";
 
 declare const __APP_VERSION__: string;
 console.log(`[dv-ads] content script loaded · v${__APP_VERSION__}`);
@@ -958,7 +959,7 @@ function watchPageConfirmModal(): void {
     subtree: true,
   });
 }
-watchPageConfirmModal();
+// watchPageConfirmModal()은 main()에서 승인 확인 후 호출한다.
 
 // ─── batched data fetch ───
 
@@ -1080,6 +1081,8 @@ async function pollInner() {
 // ─── F012 — 팝업 새로고침 트리거 ───
 // 화면에 mount된 키워드의 storage + in-memory 캐시만 무효화. 전체 캐시는 건드리지 않음
 // (ROADMAP §"전체 캐시 클리어 X"). 응답 후 즉시 poll로 재조회.
+// 리스너 자체는 등록해두되(main()의 승인 게이트 통과 전엔 mounts가 비어 있어 count 0으로
+// 응답), 실제 배지 주입은 아래 main()이 승인 확인 후에만 수행한다.
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === "REFRESH_ACTIVE_TAB") {
     handleRefreshActiveTab()
@@ -1159,15 +1162,6 @@ function schedule() {
   });
 }
 
-// F-PoP — 전후 비교 모듈. 6개 매체 페이지에서 우측 상단 날짜 picker 옆에
-// 버튼 주입 + 캡처된 stats fetch replay. F001과 독립적으로 동작.
-initPeriodCompare();
-
-// F-AssetBulk — 파워링크 확장소재 일괄 등록. ads.naver.com 광고그룹 페이지의
-// "+ 새 확장 소재" 드롭다운에 "일괄 등록" 항목 주입. F001과 같은 URL 패턴이라
-// 독립 init하면서 자체 MutationObserver로 메뉴 mount를 따라간다.
-initAssetBulk();
-
 // F-MultiAccount — 다계정 대시보드. 광고관리자 페이지 우상단에 fixed 버튼 주입.
 // 명단/어제 데이터/비즈머니/계약 D-day 표시. F001/F-PoP과 독립적으로 동작.
 // 그룹 탭·대행권 점검까지 포함한 큰 모듈이고 버튼·수집이 전부 top frame의
@@ -1188,25 +1182,50 @@ function maybeInitMultiAccount() {
       console.warn("[dv-ads] 다계정 모듈 로드 실패", e);
     });
 }
-maybeInitMultiAccount();
 
-// F-ShoppingImage — 쇼핑검색 소재 수정 모달에 상세페이지 대표 이미지 불러오기 주입.
-// 모달의 네이티브 이미지 업로드칸 하단에 후보 그리드 추가, 클릭 시 file input에 주입.
-initShoppingImageImport();
+// ─── F-Accounts — 전면 잠금 게이트 ───
+// 로그인 안 했거나(signedOut) 관리자 승인 전(pending/blocked)이면 이 아래로 내려가지
+// 않는다 — 배지·팝오버·전후 비교 버튼·다계정 버튼 등 어떤 UI도 주입하지 않고 조용히
+// 종료한다(광고관리자 화면을 안내문으로 가리지 않음). 콘텐츠 스크립트는 페이지당 1회만
+// 실행되므로 이 체크도 페이지 로드당 1회.
+async function main(): Promise<void> {
+  if (!(await requireApproved())) return;
 
-const observer = new MutationObserver(schedule);
-observer.observe(document.body, { childList: true, subtree: true });
+  // 페이지 확정 모달 감지 시작 — 승인된 사용자만 우리 UI(팝오버/토스트)를 recede 처리할
+  // 필요가 있다.
+  watchPageConfirmModal();
 
-let lastUrl = location.href;
-new MutationObserver(() => {
-  if (location.href !== lastUrl) {
-    lastUrl = location.href;
-    // SPA navigation — 캐시는 유지, 배지만 새 페이지에서 재mount
-    teardown();
-    schedule();
-    // 첫 진입이 무관 페이지였다가 SPA로 광고계정 URL에 도달하는 경우 커버
-    maybeInitMultiAccount();
-  }
-}).observe(document, { childList: true, subtree: true });
+  // F-PoP — 전후 비교 모듈. 6개 매체 페이지에서 우측 상단 날짜 picker 옆에
+  // 버튼 주입 + 캡처된 stats fetch replay. F001과 독립적으로 동작.
+  initPeriodCompare();
 
-schedule();
+  // F-AssetBulk — 파워링크 확장소재 일괄 등록. ads.naver.com 광고그룹 페이지의
+  // "+ 새 확장 소재" 드롭다운에 "일괄 등록" 항목 주입. F001과 같은 URL 패턴이라
+  // 독립 init하면서 자체 MutationObserver로 메뉴 mount를 따라간다.
+  initAssetBulk();
+
+  maybeInitMultiAccount();
+
+  // F-ShoppingImage — 쇼핑검색 소재 수정 모달에 상세페이지 대표 이미지 불러오기 주입.
+  // 모달의 네이티브 이미지 업로드칸 하단에 후보 그리드 추가, 클릭 시 file input에 주입.
+  initShoppingImageImport();
+
+  const observer = new MutationObserver(schedule);
+  observer.observe(document.body, { childList: true, subtree: true });
+
+  let lastUrl = location.href;
+  new MutationObserver(() => {
+    if (location.href !== lastUrl) {
+      lastUrl = location.href;
+      // SPA navigation — 캐시는 유지, 배지만 새 페이지에서 재mount
+      teardown();
+      schedule();
+      // 첫 진입이 무관 페이지였다가 SPA로 광고계정 URL에 도달하는 경우 커버
+      maybeInitMultiAccount();
+    }
+  }).observe(document, { childList: true, subtree: true });
+
+  schedule();
+}
+
+void main();
