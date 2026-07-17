@@ -52,6 +52,7 @@ export type BriefKind =
   | "deviceBidSkew"        // PC/모바일 간 ROAS 격차 (Task 14)
   | "lowCtrAd"             // 노출은 충분한데 클릭률 낮은 파워링크 소재 (Task 15)
   | "hourWeekdaySkew"      // 시간대/요일 간 ROAS 격차 (Task 16)
+  | "regionBidSkew"        // 지역(시도) 간 ROAS 격차 (Task 17)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
   | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
   | "productConvDrop";     // 전기 대비 전환 빠진 상품 (Task 8)
@@ -114,6 +115,8 @@ export interface BriefRuleInput {
   byHour?: NamedMetrics[];
   /** 일자별 성과(model.byDay, 라벨 "MM/DD (요일)"). 요일 격차 판정용 — 요일로 접어 쓴다. */
   byDay?: NamedMetrics[];
+  /** 지역(시도)별 성과. brief-data가 regnNo 차원으로 수집(F-Brief 전용). */
+  byRegion?: NamedMetrics[];
 }
 
 /** 매출 낙폭이 이 값 미만이면 후보로 안 만든다 — 소음 방지. */
@@ -471,6 +474,8 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
     ? skewCandidate("hourWeekdaySkew", "요일", foldByWeekday(input.byDay), targetRoas)
     : null;
   if (weekday) out.push(weekday);
+  const region = skewCandidate("regionBidSkew", "지역", input.byRegion, targetRoas);
+  if (region) out.push(region);
 
   // ⑩ 노출은 충분한데 클릭률이 낮은 파워링크 소재 — 입찰이 아니라 **문구 교체** 후보.
   if (input.plAds) {

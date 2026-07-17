@@ -524,6 +524,31 @@ describe("extractCandidates - hourWeekdaySkew", () => {
   });
 });
 
+describe("extractCandidates - regionBidSkew", () => {
+  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+
+  it("지역 간 격차 → 후보 (비용 문턱 미만 지역은 비교 제외)", () => {
+    const byRegion: NamedMetrics[] = [
+      { label: "서울특별시", metrics: m(50_000, 5, 450_000) }, // 900%
+      { label: "경기도", metrics: m(50_000, 2, 200_000) },     // 400%
+      { label: "세종특별자치시", metrics: m(1_000, 0, 0) },     // 문턱 미만
+    ];
+    const c = extractCandidates({ ...base, byRegion }).find((x) => x.kind === "regionBidSkew");
+    expect(c).toBeDefined();
+    expect(c!.facts.좋은쪽).toBe("서울특별시");
+    expect(c!.facts.나쁜쪽).toBe("경기도");
+  });
+
+  it("격차 미달이면 후보 없음", () => {
+    const byRegion: NamedMetrics[] = [
+      { label: "서울특별시", metrics: m(50_000, 5, 450_000) },
+      { label: "경기도", metrics: m(50_000, 5, 440_000) },
+    ];
+    expect(extractCandidates({ ...base, byRegion })
+      .find((x) => x.kind === "regionBidSkew")).toBeUndefined();
+  });
+});
+
 describe("extractCandidates - lowCtrAd", () => {
   const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
   // 노출/클릭 지정 헬퍼

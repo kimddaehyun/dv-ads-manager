@@ -26,6 +26,8 @@ export interface BriefData extends ReportData {
   plAds: NamedMetrics[];
   /** 시간대(24구간)별 검색광고 성과. 실패 시 빈 배열 — 시간대 후보만 생략. */
   byHour: NamedMetrics[];
+  /** 지역(시도)별 검색광고 성과. 실패 시 빈 배열 — 지역 후보만 생략. */
+  byRegion: NamedMetrics[];
 }
 
 /**
@@ -107,7 +109,7 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
   // 담당자/작성일은 엑셀 표지 전용이라 문구엔 안 쓰인다. 빈 값으로 넘긴다.
   // 전기 상품은 F-Brief만 필요하다 — collectReportData를 건드리지 않고 여기서 1회 더 부른다.
   // 두 수집을 동시에 출발시켜 왕복을 더하지 않는다. 실패해도 상품 후보만 생략.
-  const [data, prevAdRows, byDevice, byHour, plAds] = await Promise.all([
+  const [data, prevAdRows, byDevice, byHour, byRegion, plAds] = await Promise.all([
     collectReportData(target, range, { authorName: "", createdDate: "" }),
     fetchPrevProducts(cid, previousRange(range)).catch((e) => {
       console.warn("[dv-ads/brief] 전기 상품 조회 실패 — 상품 후보만 생략", e);
@@ -119,6 +121,10 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
     }),
     fetchSegment(cid, range, "hh24").catch((e) => {
       console.warn("[dv-ads/brief] 시간대별 조회 실패 — 시간대 후보만 생략", e);
+      return [] as NamedMetrics[];
+    }),
+    fetchSegment(cid, range, "regnNo").catch((e) => {
+      console.warn("[dv-ads/brief] 지역별 조회 실패 — 지역 후보만 생략", e);
       return [] as NamedMetrics[];
     }),
     fetchPlAds(cid, range).catch((e) => {
@@ -138,7 +144,7 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
     }))
     .filter((p) => p.label !== "");
 
-  return { ...data, range, advertiserName: target.name, products, byDevice, byHour, plAds };
+  return { ...data, range, advertiserName: target.name, products, byDevice, byHour, byRegion, plAds };
 }
 
 /** 기간 일수. "지난 30일 동안" 같은 표현에 쓴다. */
