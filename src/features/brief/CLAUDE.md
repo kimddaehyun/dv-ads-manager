@@ -35,4 +35,4 @@ F-MultiAccount 행 메뉴 "보고 문구" → 기간 선택 → `collectReportDa
 - 목표 ROAS(`MultiAccountUserMeta.targetRoas`) 미설정 시 구간 분류 후보를 만들지 않는다 — 자동 추정(계정 평균) 금지: 계정이 통째로 부진하면 전부 "정상"으로 나옴.
 - 상품 후보는 소재ID로 전기와 매칭(`shProductAdRows`/`shProductInfo`). 이름 못 얻은 소재는 ID 폴백 금지(광고주에게 `nad-...` 노출 불가) — 제외.
 - Gemini 모델은 신규 키 제공 중단이 있을 수 있음(2.5 → 3.1 flash-lite 교체 사례). 502 upstream이면 키로 모델 목록부터 조회.
-- AE 이용 코드는 `chrome.storage.local`의 `brief_token`(옵션 페이지 카드). 서버 추가 발급: `supabase secrets set BRIEF_TOKENS=코드1,코드2`.
+- 인증은 F-Accounts 도입(2026-07-17)으로 로그인 세션(JWT) + `approved` 확인으로 교체됨 — 이용 코드(`brief_token`) 화이트리스트 방식은 폐기. `BRIEF_TOKENS` 시크릿은 롤백 창(안정화 확인) 뒤 삭제 예정.

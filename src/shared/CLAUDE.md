@@ -13,6 +13,15 @@
 
 - `hintKeywords` 제약 = 한글·영문·숫자만 + 길이 ≤30 + 공백 X. 위반 시 배치(5개) 400. `fetchVolumes`는 400만 swallow하고 401/403/5xx/네트워크는 throw — 인증·서버 장애를 부분 결과로 가리지 않게.
 
+## F-Accounts 인증 모듈
+
+- `supabase.ts` — `getSupabase()` 싱글턴 클라이언트(`chromeStorageAdapter`로 세션을 `chrome.storage.local`에 저장). anon 키는 공개 안전(RLS 방어).
+- `auth-state.ts` — `fetchAuthContext()`가 세션+`profiles` 조회해 `AuthState`(signedOut/pending/blocked/approved) 산출. **네트워크 실패 등 예외 시에도 절대 throw하지 않고 `pending`으로 fallback** — 잠금이 안전 기본값(장애가 승인으로 새면 안 됨).
+- `auth-gate.ts` — `requireApproved()`가 콘텐츠 스크립트의 단일 관문. **페이지당 1회만 조회하도록 모듈 스코프에 Promise 캐시**(여러 기능이 각자 init에서 부르면 중복 네트워크 호출) — per-page memo라 페이지 재로드 전까지 상태 안 바뀜.
+- `server-store.ts` — `account_meta`/`account_groups` CRUD. **저장은 항상 서버 먼저** — 성공 후 로컬 캐시 갱신은 호출부 책임. `pushGroups`는 전체 교체(replace-all, `not in (ids)` 삭제 + upsert) 전략.
+- `vault.ts` — Secret Key는 여기(Edge Function `credentials-vault`) 경유로만 암호화 저장/조회. **서비스 워커 컨텍스트에서는 호출 금지**(`window` 없음) — 호출부(`searchad.ts`)가 그 컨텍스트에서는 동적 import조차 안 한다.
+- `migrate-local.ts` — 첫 로그인 1회성 로컬↔서버 이관. **서버 우선 규칙**: 서버에 데이터가 하나라도 있으면 download(서버→로컬, 다른 PC 재로그인 시 낡은 로컬로 서버를 덮지 않기 위함), 없으면 upload. `migrated_v1` 플래그로 idempotent(실패 시 플래그 안 남겨 재시도). **`added_order`(계정 추가 순서)는 항목 upsert가 아니라 목록 전체를 매번 재동기화** — 순서가 인덱스 기반이라 부분 갱신하면 다른 계정과 순서가 어긋난다.
+
 ## 오버레이 UI 패턴 (전 기능 공통)
 
 - **Popover click-outside 닫힘은 mousedown 시작 위치 추적 필수** — 안에서 텍스트 드래그 → 밖에서 mouseup하면 click이 외부로 발화해 잘못 닫힘. `mousedown` capture로 시작 위치 기록 → 내부였으면 다음 click 1번 면제 (`multi-account.ts`·`period-compare.ts` 동일 패턴).

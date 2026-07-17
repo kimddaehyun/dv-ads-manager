@@ -34,7 +34,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `src/features/change-watch/` — F-ChangeWatch 변경이력 모니터링 알림.
 - `src/features/setup/` — F-Setup 세팅안 엑셀.
 - `src/features/report/` — F-Report 리포트 엑셀 (+ `scripts/test-report-*.ts` node 테스트). `collectReportData()`(수집만, 엑셀 제외)는 F-Brief와 공유 — 병렬 구조 변경 금지(성능 감사 2026-07-02).
-- `src/features/brief/` — F-Brief 광고주 보고 문구(AX 1호). `collectReportData` 재사용 → 규칙 엔진(`brief-rules.ts`, vitest) 후보 추출 → AI(Supabase Edge Function `brief-compose` + Gemini)가 문장만 조립. **AI는 분석가가 아니라 번역기** — 3겹: ①요약은 AI 미경유 ②체크된 facts만 전송 ③숫자 검산(`brief-verify.ts`). AI 판단 문단은 좌측 3px 주황 선. 표는 캡처가 아니라 canvas 생성(`brief-table.ts`). 목표 ROAS는 `MultiAccountUserMeta.targetRoas`(미설정 시 분류 비활성, 자동 추정 안 함). 서버 인증은 이용 코드(`brief_token`) 화이트리스트, `@supabase/supabase-js` 미사용.
+- `src/features/brief/` — F-Brief 광고주 보고 문구(AX 1호). `collectReportData` 재사용 → 규칙 엔진(`brief-rules.ts`, vitest) 후보 추출 → AI(Supabase Edge Function `brief-compose` + Gemini)가 문장만 조립. **AI는 분석가가 아니라 번역기** — 3겹: ①요약은 AI 미경유 ②체크된 facts만 전송 ③숫자 검산(`brief-verify.ts`). AI 판단 문단은 좌측 3px 주황 선. 표는 캡처가 아니라 canvas 생성(`brief-table.ts`). 목표 ROAS는 `MultiAccountUserMeta.targetRoas`(미설정 시 분류 비활성, 자동 추정 안 함). 서버 인증은 로그인 세션(JWT) + `approved` 확인(F-Accounts, 이용 코드 방식 폐기), `@supabase/supabase-js` 미사용.
 - `src/shared/` — 공용 UI(toast·다이얼로그·dropdown)와 searchad API 클라이언트. **오버레이 UI(팝오버·다이얼로그·표)를 만들거나 고칠 땐 `src/shared/CLAUDE.md`의 UI 패턴 절 필독.**
 - `src/background/` — MV3 Service Worker (API fetch 위임, 이미지 binary fetch). `src/popup/`·`src/options/` — React 진입점. `src/types/` — 공용 타입. `manifest.config.ts` — 빌드 시 manifest 생성 (콘텐츠 스크립트 3개 등록).
 
@@ -54,6 +54,11 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - 버전은 `package.json`의 `version`이 단일 소스 — `manifest.config.ts`에서 자동 import.
 - **`tsc -b` incremental cache에 stale 에러가 남을 수 있음** — `rm -f tsconfig.*.tsbuildinfo && npm run typecheck`로 클린 재실행.
 - **사용자 노출 한글 메시지에 영문 기술용어 금지** (`reload`/`fetch`/`background` 등). `friendly-error.ts` 패턴 따라 일상 한글로. 배지 툴팁·토스트·다이얼로그 모두 동일.
+- **F-Accounts 전면 잠금**: 로그인 + 관리자 승인(`approved`) 없으면 전 기능 잠금 — `src/shared/auth-gate.ts`의 `requireApproved()`가 콘텐츠 스크립트 진입점에서 단일 관문(미승인이면 콘텐츠 스크립트 자체를 미주입, 팝업/옵션은 안내만). 상세는 `src/shared/CLAUDE.md`.
+- **Supabase 프로젝트 사용 시작** (`gvyvrjncpwmcwycebrhf`, dvcompany): 4개 테이블(profiles/credentials/account_meta/account_groups) 전부 **서버가 원본, 로컬(`chrome.storage.local`)은 캐시** — 쓰기는 서버 먼저, 성공 시에만 로컬 갱신. RLS는 본인 행 + `approved` 상태 필수.
+- **Secret Key(검색광고 API)는 평문 DB 저장 금지** — 반드시 Edge Function `credentials-vault` 경유로 AES-GCM 암호화 후 저장(`src/shared/vault.ts`). 서비스 워커에는 `window`가 없어 vault 관련 모듈은 그 컨텍스트에서 동적 import조차 하지 않는다.
+- **anon 키는 공개해도 안전** — RLS가 실제 방어선이라 확장 코드(`src/shared/supabase.ts`)에 하드코딩해도 문제 없다.
+- **`@supabase/supabase-js`를 background(service worker) 번들에 정적 import 금지** — 번들 크기 오염 + 서비스 워커에 `window` 없어 일부 API 동작 안 함. 필요하면 동적 import로.
 
 ## CLAUDE.md 관리
 

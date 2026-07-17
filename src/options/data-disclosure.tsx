@@ -12,12 +12,22 @@ const COLLECTED: Row[] = [
   {
     data: "네이버 검색광고 API 자격증명 (Customer ID / Access License / Secret Key)",
     use: "사용자가 등록한 광고주의 검색광고 API 호출 (키워드별 순위·예상 입찰가 조회)",
-    destination: "사용자 PC만 (chrome.storage.local) - 외부 전송 없음",
+    destination: "사내 서버(Supabase) 저장 - Secret Key는 암호화 저장, 로컬은 캐시",
   },
   {
     data: "광고관리자 페이지의 키워드·입찰가·소재 정보",
     use: "키워드 옆 오버레이에 순위·예상 입찰가 표시",
     destination: "사용자 브라우저 메모리만 - 외부 전송 없음",
+  },
+  {
+    data: "회원 정보 (이메일)",
+    use: "로그인 계정 식별 및 관리자 승인 여부 확인",
+    destination: "사내 서버(Supabase) 저장",
+  },
+  {
+    data: "계정 설정·그룹 (별칭·즐겨찾기·목표 ROAS·계정 그룹 등)",
+    use: "다계정 대시보드·보고 문구 등에서 사용자별 설정 유지",
+    destination: "사내 서버(Supabase) 저장",
   },
 ];
 

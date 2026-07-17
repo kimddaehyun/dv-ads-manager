@@ -223,9 +223,19 @@
   - **확장 확정(2026-07-16)**: 조정 가능한 축 전부를 후보로 — Task 12~17(그룹별 예산/성별/연령/저ROAS 지면/기기별/PL 소재/시간대·요일/지역). 설계 §5 "조정 레버 확장 카탈로그" 참조.
   - 2단계(설계 §15): 항목별 실행 버튼 + 조정 기록 DB + 보류함. 계정 설정(targetRoas) DB 이관도 이때 검토.
 
+- **Task 022: F-Accounts 1단계 — 회원 체계 + 전면 잠금 + 서버 저장** ✅ - 완료 (2026-07-17)
+  - Supabase Auth 기반 회원 체계(가입/로그인) + 관리자 승인제(`pending`/`approved`/`blocked`, 기본 잠금). 미승인이면 콘텐츠 스크립트 자체를 미주입하고 팝업/옵션은 안내만(`src/shared/auth-gate.ts`).
+  - DB 테이블 4개(`profiles`/`credentials`/`account_meta`/`account_groups`), RLS는 본인 행 + `approved` 필수.
+  - Secret Key는 Edge Function `credentials-vault`(AES-GCM, `VAULT_KEY`)로 암호화 저장 — 평문 DB 저장 금지.
+  - 첫 로그인 시 로컬→서버 자동 이관(`migrate-local.ts`, 서버 우선 규칙, `migrated_v1` 플래그로 idempotent).
+  - `multi-account-storage`/`searchad`의 저장을 서버 먼저-로컬 캐시 구조로 전환(계정 추가 순서는 부분 갱신 대신 전체 재동기화).
+  - F-Brief 인증을 `brief_token` 화이트리스트에서 로그인 JWT + `approved` 확인으로 교체.
+  - 옵션 페이지에 관리자 탭(승인/차단 관리 `AdminCard`) 추가.
+  - 2단계 예정: `brief_history`(보고 문구 이력 DB 저장) + 조정 기록 DB(F-Brief 설계 §15).
+
 ---
 
-**📅 최종 업데이트**: 2026-07-16 (Task 020·021 등재)
+**📅 최종 업데이트**: 2026-07-17 (Task 022 F-Accounts 1단계 등재)
 **📊 진행 상황**: Phase 1·2·3 완료 ✅ + Phase 4 Task 012 Spike B 완료 ✅ + Task 015 캐시 prune 완료 ✅ + Task 016 device 토글 완료 ✅ + Task 017 F-AssetBulk v1 완료 ✅ + Task 018 F-PoP 데이터 비교 popover 완료 ✅ (DEBUG_CAPTURE flag off). 남은 작업은 Task 015 잔여(아이콘 분리·스토어 자료·v0.1.0 릴리스)만. F001 파워링크 라인 완성 — 1~10위 시장가 + 현재 순위 + 성과 추정 + **팝오버 행 클릭으로 입찰가 자동 변경(다이얼로그 → 페이지 DOM 자동화 → 5초 Undo 토스트)** + **PC/모바일 디바이스 토글(PC default + 모바일 lazy, MOBILE 1~5위 cap 보강, crossfade·height morph 애니메이션, 1-click 키워드 전환, 한글 친화 에러 메시지)** 까지. F012 팝업 새로고침이 실제 동작. 캐시 prune 자동화로 5MB quota 보호. F-AssetBulk로 확장소재 일괄 등록(이미지·추가제목·추가설명 + 노출 위치 슬롯별 지정 + 중복 사전 안내) 추가. F-PoP로 6개 매체 페이지 데이터 비교 popover(8지표·shape 기반 자동 캡처·날짜 매칭 필터·깊이 walk 집계) 추가. **Task 013/014 F002·F003 보류** (2026-05-19). v0.1은 **F001 + F011 + F012 + F-AssetBulk + F-PoP**로 ship, Task 011-1 통합 검증 + Task 015 잔여(아이콘·스토어 자료·릴리스) 마무리 후 출시.
 
 **다음 세션 작업:**
