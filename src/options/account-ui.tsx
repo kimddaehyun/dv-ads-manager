@@ -111,11 +111,13 @@ function AuthForm({ onDone }: { onDone: () => void }) {
   const [mode, setMode] = useState<"sign-in" | "sign-up">("sign-in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const isSignUp = mode === "sign-up";
-  const canSubmit = email.trim().length > 0 && password.trim().length >= 6;
+  const canSubmit =
+    email.trim().length > 0 && password.trim().length >= 6 && (!isSignUp || name.trim().length > 0);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -125,9 +127,12 @@ function AuthForm({ onDone }: { onDone: () => void }) {
     try {
       const supabase = getSupabase();
       if (isSignUp) {
+        // 이름은 가입 metadata로 전달 — 일반 회원은 profiles를 직접 수정할 수 없어(관리자만
+        // update) 서버 트리거(handle_new_user)가 여기 값을 프로필에 옮겨 적는다.
         const { data, error } = await supabase.auth.signUp({
           email: email.trim(),
           password,
+          options: { data: { display_name: name.trim() } },
         });
         if (error) throw error;
         // 이메일 확인 대기 중인 경우 (data.session이 null)
@@ -159,6 +164,16 @@ function AuthForm({ onDone }: { onDone: () => void }) {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-3 max-w-md">
+      {isSignUp && (
+        <Input
+          type="text"
+          value={name}
+          autoComplete="name"
+          onChange={(e) => setName(e.target.value)}
+          placeholder="이름"
+          required
+        />
+      )}
       <Input
         type="email"
         value={email}
