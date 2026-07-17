@@ -280,16 +280,23 @@ function roasBand(roas: number, target: number): RoasBand {
 
 **확장 후보 (`BriefKind` 추가분):**
 
-| tier | `BriefKind`(가칭) | 계층 | 조건(방향) | 데이터 |
+| tier | `BriefKind` | 계층 | 조건(방향) | 데이터 (전부 구현 완료, 2026-07-17) |
 |---|---|---|---|---|
-| 1 | `belowTargetGroup` | 광고그룹 | 그룹 집계 ROAS `none` AND cost >= 임계 | ✅ 있음(키워드가 그룹을 앎) |
+| 1 | `belowTargetGroup` | 광고그룹 | 그룹 합산 ROAS `none` AND cost >= 임계 AND 합산 전환 > 0 | ✅ KeywordGroup **항목별** 집계(이름 키 재집계 금지 - 파워링크/쇼핑 동명 병합 사고) |
 | 1 | `genderBidSkew` | 그룹 타게팅 | 성별 간 ROAS 격차 - 좋은쪽 상향/나쁜쪽 하향 | ✅ `model.byGender` |
 | 1 | `ageBidSkew` | 그룹 타게팅 | 연령대(8구간) 간 ROAS 격차 | ✅ `model.byAge` |
 | 1 | `lowRoasPlacement` | 그룹(지면) | 지면 cost >= 임계 AND `none`(전환>0) | ✅ `placements` (`zeroConvPlacement` 확장) |
-| 2 | `deviceBidSkew` | 그룹 | PC/모바일 ROAS 격차 | 🔴 기기별 수집 추가 |
-| 2 | `lowCtrAd` | 소재 | 소재 CTR 낮음(노출 >= 임계) | 🔴 파워링크 소재 수집 추가 |
-| 3 | `hourWeekdaySkew` | 그룹 타게팅 | 시간대·요일 ROAS 격차 | 🔴 수집기 신규 |
-| 3 | `regionBidSkew` | 그룹 타게팅 | 지역별 효율 격차 | 🔴 수집기 신규 |
+| 2 | `deviceBidSkew` | 그룹 | PC/모바일 ROAS 격차 | ✅ advanced-report `pcMblTp` (brief-data 수집) |
+| 2 | `lowCtrAd` | 소재 | 노출 >= 1,000 AND CTR < 0.5% → 문구 교체 | ✅ `nccAdId` 차원 + `ncc/ads?ids=`로 headline 조인 |
+| 3 | `hourWeekdaySkew` | 그룹 타게팅 | 시간대·요일 ROAS 격차 (같은 kind로 최대 2후보) | ✅ 시간대 `hh24` / 요일은 `model.byDay`를 `foldByWeekday`로 접음(추가 호출 없음, `dayw`도 존재) |
+| 3 | `regionBidSkew` | 그룹 타게팅 | 지역(시도) 간 ROAS 격차 | ✅ advanced-report `regnNo`(시도명 라벨) |
+
+**차원 attribute enum (2026-07-17 SPA 번들 정찰)**: `pcMblTp`(기기) · `dayw`(요일) · `hh24`(시간대) ·
+`regnNo`(지역 시도명) · `schTp`(매체). 신규 수집은 F-Report의 `collectReportData`를 건드리지 않고
+`brief-data.ts`의 `fetchSegment()`가 병렬로 1회씩 더 부른다(병렬 구조 변경 금지 원칙).
+
+**skew 공통 가드**: 양쪽 비용 >= 1만원 + 격차 >= 1.5배 + "알 수 없음"/"기타" 세그먼트 제외 +
+전 세그먼트 매출 0이면 미생성(0% vs 0% 오탐 방지, 코덱스 리뷰 P1).
 
 **"격차(skew)" 판정 공통 규칙:** 타게팅 후보(성별/연령/기기/시간/요일/지역)는 절대 성과가 아니라
 **구간 간 상대 격차**로 판단한다. 예: 남성 ROAS가 여성의 1.5배 이상이고 **양쪽 다 유의미한 비용**을

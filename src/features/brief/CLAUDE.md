@@ -19,6 +19,16 @@ F-MultiAccount 행 메뉴 "보고 문구" → 기간 선택 → `collectReportDa
 - `brief-panel.ts` — 결과 패널(블록별 복사) + 후보 선택 화면(`renderBriefPickPanel`). blob URL은 dispose에서 revoke.
 - 서버: `supabase/functions/brief-compose/index.ts` — 프로젝트 `gvyvrjncpwmcwycebrhf`(dvcompany). 말투 샘플·프롬프트는 서버에 — 확장 재배포 없이 튜닝. 배포: `supabase functions deploy brief-compose --no-verify-jwt`.
 
+## 확장 규칙 (Task 12~17, 2026-07-17 완료)
+
+- 후보 13종. 확장분: `belowTargetGroup`(그룹 합산, **KeywordGroup 항목별 집계** — 이름 키 재집계 금지),
+  `lowRoasPlacement`, `genderBidSkew`/`ageBidSkew`/`deviceBidSkew`/`hourWeekdaySkew`/`regionBidSkew`(공통 `findSkew`),
+  `lowCtrAd`(노출 1,000+ & CTR 0.5% 미만 → 문구 교체).
+- **advanced-report 차원 enum**(SPA 번들 정찰): `pcMblTp` 기기 / `dayw` 요일 / `hh24` 시간대 / `regnNo` 지역(시도명) / `schTp` 매체.
+  잘못된 attribute는 400. 신규 세그먼트는 `brief-data.ts`의 `fetchSegment()`로 — `collectReportData` 병렬 구조 불변.
+- 요일은 `dayw` 대신 이미 수집된 `model.byDay`를 `foldByWeekday`로 접는다(호출 1회 절약).
+- skew 가드: 양쪽 비용 1만원+ / 1.5배+ / "알 수 없음·기타" 제외 / 전 세그먼트 매출 0이면 미생성(0%vs0% 오탐).
+
 ## Gotchas
 
 - **리포트 키워드 행은 검색어(expKeyword)라 입찰가가 없다.** 순위 보강의 userBid는 ncc 등록 키워드에서 가져와 정규화 텍스트 매칭 — 맵에 없는 검색어(확장 매칭)는 순위 미기재, 후보에서 자연히 빠짐. 순위 조회는 green+비용 임계 통과 후보로 좁힌 뒤에만(전체면 수백 회).
