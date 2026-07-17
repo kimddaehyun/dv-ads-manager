@@ -49,6 +49,7 @@ export type BriefKind =
   | "belowTargetGroup"     // 그룹 집계 ROAS가 none 구간 (Task 12)
   | "genderBidSkew"        // 성별 간 ROAS 격차 (Task 13)
   | "ageBidSkew"           // 연령대 간 ROAS 격차 (Task 13)
+  | "deviceBidSkew"        // PC/모바일 간 ROAS 격차 (Task 14)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
   | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
   | "productConvDrop";     // 전기 대비 전환 빠진 상품 (Task 8)
@@ -103,6 +104,8 @@ export interface BriefRuleInput {
   byGender?: NamedMetrics[];
   /** 연령대 성과(검색광고, 8구간). model.byAge를 그대로 넘긴다. */
   byAge?: NamedMetrics[];
+  /** 기기(PC/모바일) 성과. brief-data가 pcMblTp 차원으로 수집(F-Brief 전용). */
+  byDevice?: NamedMetrics[];
 }
 
 /** 매출 낙폭이 이 값 미만이면 후보로 안 만든다 — 소음 방지. */
@@ -421,6 +424,8 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   if (gender) out.push(gender);
   const age = skewCandidate("ageBidSkew", "연령대", input.byAge, targetRoas);
   if (age) out.push(age);
+  const device = skewCandidate("deviceBidSkew", "기기", input.byDevice, targetRoas);
+  if (device) out.push(device);
 
   // ⑤ 전기 대비 전환이 빠진 상품 — 보고 로그의 "객단가 높은 [온열 찜질기]에서 전환이
   // 발생하지 않아"가 이것. 매출 낙폭 임계로 소음을 거른다.

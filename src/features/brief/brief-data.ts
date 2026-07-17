@@ -8,7 +8,7 @@
 import { collectReportData, buildProductAdRows, type ReportData, type ReportTarget } from "@/features/report/report-build";
 import { rangeText, previousRange, type DateRange } from "@/features/report/report-period";
 import {
-  fetchAdvancedReport, CAMPAIGN_TP_CODE, ZERO_METRICS,
+  fetchAdvancedReport, colIndex, rowMetrics, CAMPAIGN_TP_CODE, ZERO_METRICS,
   type ReportMetrics, type AdvReportResult,
 } from "@/features/report/report-data";
 import { type NamedMetrics } from "@/features/report/report-fill";
@@ -20,6 +20,19 @@ export interface BriefData extends ReportData {
   advertiserName: string;
   /** 현재 기간에 존재하는 상품의 현재/전기 지표. 이름은 현재 기준으로만 얻을 수 있다. */
   products: BriefProductDelta[];
+  /** 기기(PC/모바일)별 검색광고 성과. 실패 시 빈 배열 — 기기 후보만 생략. */
+  byDevice: NamedMetrics[];
+}
+
+/**
+ * 기기별 성과 — advanced-report의 `pcMblTp` 차원 (2026-07-17 라이브 정찰: 라벨 "PC"/"모바일",
+ * `x-ad-customer-id` cross-account 정상). F-Report 엑셀엔 안 쓰여 F-Brief 전용으로 여기서 수집.
+ */
+async function fetchByDevice(customerId: number, range: DateRange): Promise<NamedMetrics[]> {
+  const res = await fetchAdvancedReport({ attributes: ["pcMblTp"], range, customerId });
+  const idx = colIndex(res.head);
+  return res.rows.map((r) => ({ label: r[idx.pcMblTp] ?? "", metrics: rowMetrics(r, idx) }))
+    .filter((n) => n.label !== "");
 }
 
 /**
@@ -47,10 +60,14 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
   // 담당자/작성일은 엑셀 표지 전용이라 문구엔 안 쓰인다. 빈 값으로 넘긴다.
   // 전기 상품은 F-Brief만 필요하다 — collectReportData를 건드리지 않고 여기서 1회 더 부른다.
   // 두 수집을 동시에 출발시켜 왕복을 더하지 않는다. 실패해도 상품 후보만 생략.
-  const [data, prevAdRows] = await Promise.all([
+  const [data, prevAdRows, byDevice] = await Promise.all([
     collectReportData(target, range, { authorName: "", createdDate: "" }),
     fetchPrevProducts(cid, previousRange(range)).catch((e) => {
       console.warn("[dv-ads/brief] 전기 상품 조회 실패 — 상품 후보만 생략", e);
+      return [] as NamedMetrics[];
+    }),
+    fetchByDevice(cid, range).catch((e) => {
+      console.warn("[dv-ads/brief] 기기별 조회 실패 — 기기 후보만 생략", e);
       return [] as NamedMetrics[];
     }),
   ]);
@@ -66,7 +83,7 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
     }))
     .filter((p) => p.label !== "");
 
-  return { ...data, range, advertiserName: target.name, products };
+  return { ...data, range, advertiserName: target.name, products, byDevice };
 }
 
 /** 기간 일수. "지난 30일 동안" 같은 표현에 쓴다. */

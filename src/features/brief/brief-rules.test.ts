@@ -439,6 +439,40 @@ describe("extractCandidates - genderBidSkew / ageBidSkew", () => {
   });
 });
 
+describe("extractCandidates - deviceBidSkew", () => {
+  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+
+  it("PC/모바일 ROAS 격차 1.5배 이상 → deviceBidSkew", () => {
+    // 모바일 900% vs PC 400% (2.25배)
+    const byDevice: NamedMetrics[] = [
+      { label: "PC", metrics: m(50_000, 2, 200_000) },
+      { label: "모바일", metrics: m(50_000, 5, 450_000) },
+    ];
+    const c = extractCandidates({ ...base, byDevice }).find((x) => x.kind === "deviceBidSkew");
+    expect(c).toBeDefined();
+    expect(c!.facts.좋은쪽).toBe("모바일");
+    expect(c!.facts.나쁜쪽).toBe("PC");
+  });
+
+  it("격차 미달이면 후보 아님", () => {
+    const byDevice: NamedMetrics[] = [
+      { label: "PC", metrics: m(50_000, 5, 400_000) },
+      { label: "모바일", metrics: m(50_000, 5, 450_000) },
+    ];
+    expect(extractCandidates({ ...base, byDevice })
+      .find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+  });
+
+  it("한쪽 비용 문턱 미만이면 후보 아님", () => {
+    const byDevice: NamedMetrics[] = [
+      { label: "PC", metrics: m(3_000, 0, 0) },
+      { label: "모바일", metrics: m(50_000, 5, 450_000) },
+    ];
+    expect(extractCandidates({ ...base, byDevice })
+      .find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+  });
+});
+
 describe("extractCandidates - productConvDrop", () => {
   const products: BriefProductDelta[] = [
     // 전환 5 → 0, 매출 -340,000 → 후보
