@@ -64,7 +64,14 @@ export default function Options() {
       setCredError(undefined);
       setCredState("empty");
     } catch (e) {
+      // 서버 삭제 실패 시 로컬도 지우지 않는다(되살아남 방지) — 실패를 사용자에게 알린다.
       console.warn("[options] clearCredentials failed", e);
+      const raw = e instanceof Error ? e.message : "";
+      alert(
+        raw.includes("로그인이 만료")
+          ? "로그인이 만료됐어요. 다시 로그인해 주세요"
+          : "삭제하지 못했어요. 잠시 후 다시 시도해 주세요.",
+      );
     }
   }
 

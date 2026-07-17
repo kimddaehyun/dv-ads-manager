@@ -47,3 +47,8 @@ export async function vaultSave(cred: SearchadCredentials): Promise<void> {
     secretKey: cred.secretKey,
   });
 }
+
+/** 서버에 저장된 자격증명 행 삭제. 실패 시 throw — 호출부(UI)가 실패를 사용자에게 알린다. */
+export async function vaultDelete(): Promise<void> {
+  await vaultCall({ action: "delete" });
+}

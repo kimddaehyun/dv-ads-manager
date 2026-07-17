@@ -646,6 +646,14 @@ export async function saveCredentials(c: SearchadCredentials): Promise<void> {
   await chrome.storage.local.set({ [CRED_KEY]: c });
 }
 
+// 서버 먼저 삭제(실패 시 throw — 로컬만 지우면 다음 vault 조회 때 되살아난다), 성공 후 로컬 제거.
 export async function clearCredentials(): Promise<void> {
+  const { vaultDelete } = await import("@/shared/vault");
+  await vaultDelete();
+  await chrome.storage.local.remove(CRED_KEY);
+}
+
+/** 로컬 캐시만 제거 — 로그아웃 정리처럼 서버 행은 남겨야 할 때 사용. */
+export async function clearLocalCredentials(): Promise<void> {
   await chrome.storage.local.remove(CRED_KEY);
 }

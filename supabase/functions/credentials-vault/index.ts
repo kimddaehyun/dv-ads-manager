@@ -124,5 +124,12 @@ Deno.serve(async (req) => {
     });
   }
 
+  if (body.action === "delete") {
+    // 본인 행 삭제 — 로컬만 지우면 다음 vault 조회 때 자격증명이 되살아나므로 서버도 지운다.
+    const { error: delErr } = await admin.from("credentials").delete().eq("user_id", userId);
+    if (delErr) return json({ error: "db_error" }, 500);
+    return json({ ok: true });
+  }
+
   return json({ error: "bad_action" }, 400);
 });
