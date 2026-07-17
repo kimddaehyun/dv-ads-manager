@@ -51,6 +51,7 @@ export type BriefKind =
   | "ageBidSkew"           // 연령대 간 ROAS 격차 (Task 13)
   | "deviceBidSkew"        // PC/모바일 간 ROAS 격차 (Task 14)
   | "lowCtrAd"             // 노출은 충분한데 클릭률 낮은 파워링크 소재 (Task 15)
+  | "hourWeekdaySkew"      // 시간대/요일 간 ROAS 격차 (Task 16)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
   | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
   | "productConvDrop";     // 전기 대비 전환 빠진 상품 (Task 8)
@@ -109,6 +110,10 @@ export interface BriefRuleInput {
   byDevice?: NamedMetrics[];
   /** 파워링크 소재별 성과. label은 소재 제목(headline) — 이름 못 얻은 소재는 이미 걸러져 온다. */
   plAds?: NamedMetrics[];
+  /** 시간대(24구간) 성과. brief-data가 hh24 차원으로 수집(F-Brief 전용). */
+  byHour?: NamedMetrics[];
+  /** 일자별 성과(model.byDay, 라벨 "MM/DD (요일)"). 요일 격차 판정용 — 요일로 접어 쓴다. */
+  byDay?: NamedMetrics[];
 }
 
 /** 매출 낙폭이 이 값 미만이면 후보로 안 만든다 — 소음 방지. */
@@ -205,6 +210,22 @@ export function findSkew(segments: NamedMetrics[]): { best: NamedMetrics; worst:
   if (roasPct(best.metrics) <= 0) return null;
   if (roasPct(best.metrics) < roasPct(worst.metrics) * SKEW_RATIO) return null;
   return { best, worst };
+}
+
+const WEEKDAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"];
+
+/**
+ * 일자별(NamedMetrics, 라벨 "MM/DD (요일)") 지표를 요일 7구간으로 접는다.
+ * 요일 전용 attribute가 없어(2026-07-17 정찰) 이미 수집된 byDay를 재사용 — 추가 호출 없음.
+ */
+export function foldByWeekday(byDay: NamedMetrics[]): NamedMetrics[] {
+  const map = new Map<string, ReportMetrics>();
+  for (const d of byDay) {
+    const wd = d.label.match(/\((월|화|수|목|금|토|일)\)/)?.[1];
+    if (!wd) continue;
+    map.set(wd, addMetrics(map.get(wd) ?? ZERO_METRICS, d.metrics));
+  }
+  return WEEKDAY_ORDER.filter((w) => map.has(w)).map((w) => ({ label: w, metrics: map.get(w)! }));
 }
 
 function segmentTable(title: string, dim: string, segments: NamedMetrics[], targetRoas?: number): BriefTableSpec {
@@ -442,6 +463,14 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   if (age) out.push(age);
   const device = skewCandidate("deviceBidSkew", "기기", input.byDevice, targetRoas);
   if (device) out.push(device);
+
+  // ⑪ 시간대/요일 격차 — 같은 kind로 두 후보까지(시간대 하나 + 요일 하나).
+  const hour = skewCandidate("hourWeekdaySkew", "시간대", input.byHour, targetRoas);
+  if (hour) out.push(hour);
+  const weekday = input.byDay
+    ? skewCandidate("hourWeekdaySkew", "요일", foldByWeekday(input.byDay), targetRoas)
+    : null;
+  if (weekday) out.push(weekday);
 
   // ⑩ 노출은 충분한데 클릭률이 낮은 파워링크 소재 — 입찰이 아니라 **문구 교체** 후보.
   if (input.plAds) {

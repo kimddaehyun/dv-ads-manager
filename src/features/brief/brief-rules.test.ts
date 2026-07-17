@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
-  pickRankTargets, LOW_RANK_FLOOR, SKEW_RATIO, AD_IMP_FLOOR, LOW_CTR_PCT,
+  pickRankTargets, LOW_RANK_FLOOR, SKEW_RATIO, AD_IMP_FLOOR, LOW_CTR_PCT, foldByWeekday,
   type BriefProductDelta,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
@@ -470,6 +470,57 @@ describe("extractCandidates - deviceBidSkew", () => {
     ];
     expect(extractCandidates({ ...base, byDevice })
       .find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+  });
+});
+
+describe("foldByWeekday", () => {
+  it("일자별(MM/DD (요일)) 지표를 요일로 접는다 — 월~일 순서", () => {
+    const byDay: NamedMetrics[] = [
+      { label: "07/06 (월)", metrics: m(10_000, 1, 50_000) },
+      { label: "07/07 (화)", metrics: m(20_000, 2, 100_000) },
+      { label: "07/13 (월)", metrics: m(30_000, 3, 150_000) },
+    ];
+    const folded = foldByWeekday(byDay);
+    expect(folded.map((f) => f.label)).toEqual(["월", "화"]);
+    expect(folded[0].metrics.cost).toBe(40_000); // 월요일 2건 합산
+  });
+
+  it("요일을 못 읽는 라벨은 건너뛴다", () => {
+    expect(foldByWeekday([{ label: "합계", metrics: m(10_000, 1, 50_000) }])).toEqual([]);
+  });
+});
+
+describe("extractCandidates - hourWeekdaySkew", () => {
+  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+
+  it("시간대 간 격차 → 후보 (좋은/나쁜 시간대)", () => {
+    const byHour: NamedMetrics[] = [
+      { label: "10시~11시", metrics: m(30_000, 3, 270_000) }, // 900%
+      { label: "22시~23시", metrics: m(30_000, 1, 90_000) },  // 300%
+    ];
+    const c = extractCandidates({ ...base, byHour }).find((x) => x.kind === "hourWeekdaySkew");
+    expect(c).toBeDefined();
+    expect(c!.facts.좋은쪽).toBe("10시~11시");
+    expect(c!.facts.나쁜쪽).toBe("22시~23시");
+  });
+
+  it("요일 간 격차 → 후보 (byDay를 요일로 접어 판정)", () => {
+    const byDay: NamedMetrics[] = [
+      { label: "07/06 (월)", metrics: m(30_000, 3, 270_000) },
+      { label: "07/08 (수)", metrics: m(30_000, 1, 90_000) },
+    ];
+    const cands = extractCandidates({ ...base, byDay }).filter((x) => x.kind === "hourWeekdaySkew");
+    expect(cands).toHaveLength(1);
+    expect(cands[0].facts.좋은쪽).toBe("월");
+  });
+
+  it("격차 미달이면 후보 없음", () => {
+    const byHour: NamedMetrics[] = [
+      { label: "10시~11시", metrics: m(30_000, 3, 270_000) },
+      { label: "11시~12시", metrics: m(30_000, 3, 260_000) },
+    ];
+    expect(extractCandidates({ ...base, byHour })
+      .find((x) => x.kind === "hourWeekdaySkew")).toBeUndefined();
   });
 });
 
