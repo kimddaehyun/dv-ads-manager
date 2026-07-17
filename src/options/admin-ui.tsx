@@ -137,6 +137,28 @@ export function AdminCard({ currentUserId }: AdminCardProps) {
     }
   }
 
+  async function deleteUser(row: { id: string; email: string }) {
+    // 한 번에 안 지워지게 이메일 재확인 - 되돌릴 수 없는 작업이라 두 단계.
+    if (!window.confirm(`${row.email} 계정을 삭제할까요?\n서버에 저장된 설정·그룹·자격증명이 모두 지워지며 되돌릴 수 없습니다.`)) return;
+    const typed = window.prompt("삭제하려면 해당 계정의 이메일을 똑같이 입력해 주세요.");
+    if (typed?.trim().toLowerCase() !== row.email.trim().toLowerCase()) {
+      if (typed !== null) setError("이메일이 일치하지 않아 삭제를 취소했어요");
+      return;
+    }
+    setBusyId(row.id);
+    setError(null);
+    try {
+      const { error: err } = await getSupabase().rpc("admin_delete_user", { target: row.id });
+      if (err) throw err;
+      await loadRows();
+    } catch (e) {
+      console.warn("[admin-ui] deleteUser failed", e);
+      setError("삭제하지 못했어요. 잠시 후 다시 시도해 주세요");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const filteredRows = rows.filter((row) => {
     if (statusFilter && row.status !== statusFilter) return false;
     if (filter.trim()) {
@@ -304,6 +326,17 @@ export function AdminCard({ currentUserId }: AdminCardProps) {
                               승인
                             </MenuItem>
                           )}
+                          <div className="my-1 h-px bg-[#eef0f3]" />
+                          <MenuItem
+                            tone="red"
+                            disabled={busy}
+                            onClick={() => {
+                              close();
+                              void deleteUser(row);
+                            }}
+                          >
+                            계정 삭제
+                          </MenuItem>
                         </>
                       )}
                     </ActionMenu>
