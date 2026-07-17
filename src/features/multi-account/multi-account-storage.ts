@@ -519,6 +519,11 @@ export function unreadChangeWatchEvents(
 // 대시보드(popover)를 열 때 1회 fire-and-forget으로 호출 — 다른 기기/프로필에서 바뀐
 // 별칭·그룹·추가목록을 반영한다. 실패해도 로컬 캐시로 그대로 렌더되므로 호출부는 catch만 하면 된다.
 export async function refreshFromServer(): Promise<void> {
+  // 이관(migrate-local)이 끝나기 전에는 실행 금지 — 미이관 상태에서 서버의 빈 상태를
+  // 로컬에 쓰면 아직 올리지 못한 로컬 데이터가 지워진다. 로컬 이관 완료 플래그를 먼저 확인.
+  const { isMigratedLocally } = await import("@/shared/migration-flag");
+  if (!(await isMigratedLocally())) return;
+
   const server = await pullAll();
   await saveAllUserMeta(server.metaMap);
   await saveGroups(server.groups);
