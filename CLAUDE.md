@@ -54,7 +54,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - 버전은 `package.json`의 `version`이 단일 소스 — `manifest.config.ts`에서 자동 import.
 - **`tsc -b` incremental cache에 stale 에러가 남을 수 있음** — `rm -f tsconfig.*.tsbuildinfo && npm run typecheck`로 클린 재실행.
 - **사용자 노출 한글 메시지에 영문 기술용어 금지** (`reload`/`fetch`/`background` 등). `friendly-error.ts` 패턴 따라 일상 한글로. 배지 툴팁·토스트·다이얼로그 모두 동일.
-- **F-Accounts 전면 잠금**: 로그인 + 관리자 승인(`approved`) 없으면 전 기능 잠금 — `src/shared/auth-gate.ts`의 `requireApproved()`가 콘텐츠 스크립트 진입점에서 단일 관문(미승인이면 콘텐츠 스크립트 자체를 미주입, 팝업/옵션은 안내만). 상세는 `src/shared/CLAUDE.md`.
+- **F-Accounts 전면 잠금**: 로그인(`approved`) 없으면 전 기능 잠금. 가입 즉시 사용 가능(기본 approved, 2026-07-17 개정) — 관리자는 사후 차단만. 게이트는 `src/shared/auth-gate.ts`의 `requireApproved()`가 콘텐츠 스크립트 진입점에서 단일 관문(미승인이면 콘텐츠 스크립트 자체를 미주입, 팝업/옵션은 안내만). 상세는 `src/shared/CLAUDE.md`.
 - **Supabase 프로젝트 사용 시작** (`gvyvrjncpwmcwycebrhf`, dvcompany): 4개 테이블(profiles/credentials/account_meta/account_groups) 전부 **서버가 원본, 로컬(`chrome.storage.local`)은 캐시** — 쓰기는 서버 먼저, 성공 시에만 로컬 갱신. RLS는 본인 행 + `approved` 상태 필수.
 - **Secret Key(검색광고 API)는 평문 DB 저장 금지** — 반드시 Edge Function `credentials-vault` 경유로 AES-GCM 암호화 후 저장(`src/shared/vault.ts`). 서비스 워커에는 `window`가 없어 vault 관련 모듈은 그 컨텍스트에서 동적 import조차 하지 않는다.
 - **anon 키는 공개해도 안전** — RLS가 실제 방어선이라 확장 코드(`src/shared/supabase.ts`)에 하드코딩해도 문제 없다.

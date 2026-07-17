@@ -64,7 +64,7 @@ export default function App() {
       <LockedNotice
         text={
           authState === "pending"
-            ? "가입 확인 중이에요. 관리자 승인 후 사용할 수 있어요."
+            ? "계정 상태를 확인하는 중이에요. 잠시 후 다시 열어 주세요."
             : "로그인이 필요해요. 설정에서 로그인해 주세요."
         }
       />

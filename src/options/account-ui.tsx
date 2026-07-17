@@ -103,7 +103,7 @@ export function AccountCard({ onAuthChange }: AccountCardProps) {
         <AuthForm onDone={refresh} />
       ) : state === "pending" ? (
         <StatusMessage
-          text="가입 확인 중이에요. 관리자 승인 후 사용할 수 있어요."
+          text="계정 상태를 확인하는 중이에요. 잠시 후 새로고침해 주세요."
           email={profile?.email}
           onSignOut={handleSignOut}
         />
