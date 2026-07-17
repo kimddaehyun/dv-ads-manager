@@ -7,13 +7,24 @@
  * init 시점마다 각자 조회하면 중복 네트워크 호출이 생기므로).
  */
 import { fetchAuthContext } from "@/shared/auth-state";
+import { runMigrationOnce } from "@/shared/migrate-local";
 
 let cached: Promise<boolean> | null = null;
 
 export async function requireApproved(): Promise<boolean> {
   if (!cached) {
     cached = fetchAuthContext()
-      .then(({ state }) => state === "approved")
+      .then(({ state }) => {
+        const approved = state === "approved";
+        // 기존(이미 승인된) 세션도 이관 대상 — migrate-local의 migrated_v1 플래그로 idempotent,
+        // 재실행돼도 즉시 skip된다.
+        if (approved) {
+          runMigrationOnce().catch((e) => {
+            console.warn("[auth-gate] 이관 실패", e);
+          });
+        }
+        return approved;
+      })
       .catch(() => false);
   }
   return cached;

@@ -13,6 +13,7 @@ import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { getSupabase } from "@/shared/supabase";
 import { fetchAuthContext, type AuthState, type ProfileRow } from "@/shared/auth-state";
+import { runMigrationOnce } from "@/shared/migrate-local";
 
 function friendlyAuthError(raw: string): string {
   if (raw.includes("Invalid login credentials")) return "이메일 또는 비밀번호가 맞지 않아요";
@@ -129,6 +130,11 @@ function AuthForm({ onDone }: { onDone: () => void }) {
         });
         if (error) throw error;
       }
+      // 로그인 성공 직후 로컬 ↔ 서버 1회 이관. 실패해도 로그인 자체는 막지 않고 경고만 남긴다
+      // (다음 로그인 때 migrated_v1 플래그가 없으니 재시도됨).
+      runMigrationOnce().catch((e) => {
+        console.warn("[account-ui] 이관 실패", e);
+      });
       onDone();
     } catch (e) {
       const raw = e instanceof Error ? e.message : String(e);
