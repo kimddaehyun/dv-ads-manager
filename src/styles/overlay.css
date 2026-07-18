@@ -4555,6 +4555,21 @@ td.dvads-period-delta-down {
   padding: 16px 24px 20px;
 }
 
+/* F-Brief 지난 보고 목록 — 제목 클릭으로 문구 전문 펼침 */
+.dvads-brief-hist-item {
+  padding: 10px 12px; border: 1px solid #eef0f3; border-radius: 8px;
+}
+.dvads-brief-hist-title {
+  font-size: 13px; font-weight: 600; color: #171717; cursor: pointer;
+}
+.dvads-brief-hist-sum {
+  margin-top: 4px; font-size: 12px; line-height: 1.5; color: #6b7280;
+}
+.dvads-brief-hist-msg {
+  margin: 8px 0 0; white-space: pre-wrap;
+  font: 400 13px/1.7 Pretendard, -apple-system, sans-serif; color: #404040;
+}
+
 /* F-Brief 검산 경고 — 차단하지 않고 표시만(오탐 있음, 판단은 AE) */
 .dvads-brief-warn {
   margin-top: 6px; font-size: 12px; font-weight: 500; color: #DC2626;

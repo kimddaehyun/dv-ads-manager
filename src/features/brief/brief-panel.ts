@@ -32,6 +32,10 @@ export interface BriefPanelOpts {
   notice?: string;
   /** "직접 고르기" 클릭. Task 10에서 후보 선택 화면으로. */
   onPickManually?: () => void;
+  /** 텍스트 블록 복사 시 호출 — 전 텍스트 블록의 현재 값(편집 반영)을 합쳐 넘긴다. 이력 저장용(설계 §7: 복사한 순간). */
+  onCopyText?: (fullMessage: string) => void;
+  /** "지난 보고" 버튼 클릭 — 이 계정의 저장된 보고 목록으로. */
+  onShowHistory?: () => void;
 }
 
 let disposePanel: (() => void) | null = null;
@@ -48,6 +52,7 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
   // disposed 플래그는 닫힌 뒤 늦게 도착한 렌더가 URL을 만들거나 죽은 img에 붙는 것을 막는다.
   const objectUrls: string[] = [];
   let disposed = false;
+  const textAreas: HTMLTextAreaElement[] = [];
 
   const backdrop = document.createElement("div");
   backdrop.className = "dvads dvads-brief-backdrop";
@@ -86,6 +91,7 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
         ta.style.height = `${ta.scrollHeight}px`;
       };
       ta.addEventListener("input", fit);
+      textAreas.push(ta);
       wrap.appendChild(ta);
 
       if (block.numberWarning) {
@@ -102,7 +108,11 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
       btn.addEventListener("click", () => {
         // 편집된 현재 값을 복사한다. 주황 선은 CSS라 텍스트에 안 딸려간다.
         void navigator.clipboard.writeText(ta.value)
-          .then(() => showToast({ message: "문구를 복사했어요", variant: "success" }))
+          .then(() => {
+            showToast({ message: "문구를 복사했어요", variant: "success" });
+            // 저장 시점 = 복사한 순간(설계 §7). 문구 전문은 전 텍스트 블록의 현재 값.
+            opts.onCopyText?.(textAreas.map((t) => t.value).filter((v) => v.trim() !== "").join("\n\n"));
+          })
           .catch(() => showToast({ message: "복사하지 못했어요. 직접 선택해 복사해 주세요", variant: "error" }));
       });
       wrap.appendChild(btn);
@@ -153,6 +163,14 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
     pick.textContent = "직접 고르기";
     pick.addEventListener("click", () => opts.onPickManually?.());
     foot.appendChild(pick);
+  }
+  if (opts.onShowHistory) {
+    const hist = document.createElement("button");
+    hist.type = "button";
+    hist.className = "dvads-btn";
+    hist.textContent = "지난 보고";
+    hist.addEventListener("click", () => opts.onShowHistory?.());
+    foot.appendChild(hist);
   }
   const close = document.createElement("button");
   close.type = "button";

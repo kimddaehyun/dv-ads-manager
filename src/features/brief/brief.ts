@@ -25,7 +25,10 @@ import { collectBriefData, buildSummaryText, buildSummarySpec, fetchPowerlinkBid
 import { rangeText } from "@/features/report/report-period";
 import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate } from "./brief-rules";
 import { composeBlocks, type ComposedBlock } from "./brief-compose";
-import { renderBriefPanel, renderBriefPickPanel, type BriefBlock } from "./brief-panel";
+import { renderBriefPanel, renderBriefPickPanel, closeBriefPanel, type BriefBlock } from "./brief-panel";
+import { saveBriefHistory, fetchBriefHistory, candidatesToActions, type BriefHistoryRecord } from "./brief-history";
+import { buildFollowUpCandidate, currentTargetMap } from "./brief-followup";
+import { openBriefHistoryPanel } from "./brief-history-panel";
 
 let running = false;
 let runToken = 0;
@@ -115,6 +118,15 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
     const data = await collectBriefData(target, range);
     if (stale()) return;
 
+    // 지난 보고 이력 — 실패해도 다른 후보는 살린다(부가 기능).
+    let lastHistory: BriefHistoryRecord | null = null;
+    try {
+      lastHistory = (await fetchBriefHistory(target.adAccountNo, 1))[0] ?? null;
+    } catch (e) {
+      console.warn("[dv-ads/brief] 지난 보고 조회 실패 - 추적 후보만 생략", e);
+    }
+    if (stale()) return;
+
     // 순위 보강 — 후보로 좁힌 뒤에만 조회한다(전체면 수백 회 호출).
     // 실패해도 다른 후보는 살린다 — 자격증명 미등록이 흔하다.
     // 순위 입찰은 파워링크 전용이라 대상도 파워링크 행만(쇼핑검색은 키워드 입찰이 없다).
@@ -144,6 +156,12 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
       byRegion: data.byRegion,
     });
 
+    // 지난 조치 추적 — 후속 언급이 보고의 첫 화제(보고 관례)라 맨 앞에 둔다.
+    if (lastHistory) {
+      const follow = buildFollowUpCandidate(lastHistory, currentTargetMap(candidates, plRows));
+      if (follow) candidates.unshift(follow);
+    }
+
     // 완전자동이 기본 — 후보 전부 선택 + 액션은 AI가 목록에서 고르게(action 비움).
     // 실패해도 요약과 표는 살린다 — 가치의 8할이 규칙 엔진에 있다.
     let aiBlocks: ComposedBlock[] = [];
@@ -169,7 +187,7 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
     }
 
     hideProgress();
-    showResult(target.name, data, candidates, aiBlocks, targetRoas);
+    showResult(target, data, candidates, aiBlocks, targetRoas);
   } catch (e) {
     console.warn("[dv-ads/brief] 보고 문구 생성 실패", e);
     if (stale()) return;
@@ -182,7 +200,7 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
 
 /** 결과 패널 렌더 — 완전자동/AE선택 공용. "직접 고르기"에서 재조립할 때도 이걸 부른다. */
 function showResult(
-  advertiserName: string,
+  target: ReportTarget,
   data: BriefData,
   candidates: BriefCandidate[],
   aiBlocks: ComposedBlock[],
@@ -217,24 +235,56 @@ function showResult(
     notices.push("이번 기간에는 짚어볼 특이사항(전환 없는 키워드·목표 미달 등)이 없어요. 아래 요약만 그대로 쓰시면 됩니다");
   }
 
+  // 이력 저장 — 패널 1회당 레코드 1건(id 고정 upsert). 복사할 때마다 최신 편집본으로 갱신.
+  // 저장 실패는 복사를 막지 않는다 — 토스트도 1회만(복사마다 반복되면 소음).
+  const historyId = crypto.randomUUID();
+  let saveFailedOnce = false;
+  const onCopyText = (fullMessage: string): void => {
+    void saveBriefHistory({
+      id: historyId,
+      adAccountNo: target.adAccountNo,
+      advertiserName: target.name,
+      periodSince: data.range.since,
+      periodUntil: data.range.until,
+      message: fullMessage,
+      actions: candidatesToActions(candidates),
+      snapshot: {
+        totals: { cost: data.model.totalCurrent.cost, revenue: data.model.totalCurrent.revenue, roas: roasPct(data.model.totalCurrent) },
+        prevTotals: { cost: data.model.totalPrev.cost, revenue: data.model.totalPrev.revenue, roas: roasPct(data.model.totalPrev) },
+      },
+    }).catch((e) => {
+      console.warn("[dv-ads/brief] 이력 저장 실패", e);
+      if (!saveFailedOnce) {
+        saveFailedOnce = true;
+        showToast({ message: "복사는 됐지만 보고 이력은 저장하지 못했어요", variant: "error" });
+      }
+    });
+  };
+
   renderBriefPanel({
-    advertiserName,
+    advertiserName: target.name,
     blocks,
     notice: notices.length > 0 ? notices.join(" · ") : undefined,
+    onCopyText,
+    onShowHistory: () => {
+      closeBriefPanel();
+      openBriefHistoryPanel(target.adAccountNo, target.name, () =>
+        showResult(target, data, candidates, aiBlocks, targetRoas));
+    },
     // AE선택 모드 — 체크한 후보 + 지정 액션 + 자유 메모로 재조립. 같은 엔진이다.
-    onPickManually: candidates.length > 0 ? () => openPickFlow(advertiserName, data, candidates, targetRoas) : undefined,
+    onPickManually: candidates.length > 0 ? () => openPickFlow(target, data, candidates, targetRoas) : undefined,
   });
 }
 
 /** "직접 고르기" — 후보 선택 화면을 띄우고, 고른 것만으로 다시 문구를 만든다. */
 function openPickFlow(
-  advertiserName: string,
+  target: ReportTarget,
   data: BriefData,
   candidates: BriefCandidate[],
   targetRoas: number | undefined,
 ): void {
   renderBriefPickPanel({
-    advertiserName,
+    advertiserName: target.name,
     candidates,
     onCompose: (selected, memo) => {
       void (async () => {
@@ -242,7 +292,7 @@ function openPickFlow(
         let aiBlocks: ComposedBlock[] = [];
         try {
           aiBlocks = await composeBlocks({
-            advertiser: advertiserName,
+            advertiser: target.name,
             periodText: rangeText(data.range),
             totals: {
               cost: won(data.model.totalCurrent.cost),
@@ -259,7 +309,7 @@ function openPickFlow(
         }
         hideProgress();
         // 체크한 후보만 문장·표에 나온다 — 안 보낸 건 지어낼 재료가 없다(설계 §3 2겹).
-        showResult(advertiserName, data, selected, aiBlocks, targetRoas);
+        showResult(target, data, selected, aiBlocks, targetRoas);
       })();
     },
   });
