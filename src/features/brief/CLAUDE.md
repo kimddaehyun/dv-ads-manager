@@ -17,6 +17,9 @@ F-MultiAccount 행 메뉴 "보고 문구" → 기간 선택 → `collectReportDa
 - `brief-compose.ts` — Edge Function 호출 + 검산 적용. `FN_URL`은 manifest `host_permissions`와 동일 도메인 필수.
 - `brief.ts` — 오케스트레이터(report.ts 미러). 진행 오버레이는 report.ts에서 import(복제 금지 — DOM 2개 생김), **취소 함수는 각자**(report의 cancelRun을 쓰면 남의 실행을 취소한다).
 - `brief-panel.ts` — 결과 패널(블록별 복사) + 후보 선택 화면(`renderBriefPickPanel`). blob URL은 dispose에서 revoke.
+- `brief-history.ts` — 서버 이력 저장/조회(테이블 `brief_history`, RLS 본인+approved). **저장 시점 = 복사한 순간**(패널 1회당 upsert 1건, id 고정) - 생성만 하고 닫으면 기록 없음. 저장 실패는 복사를 막지 않는다(토스트 1회). 저장은 원본 구조(kind/facts/action + 숫자 targets) - LLM용 가공 금지.
+- `brief-followup.ts` — 지난 조치 추적 후보(`pastActionFollowUp`, 순수+vitest). 최신 이력 1건의 targets를 현재 지표와 **라벨 문자열 매칭** - 키워드명 변경 시 추적 끊김(허용된 한계). 후보 목록 맨 앞에 unshift.
+- `brief-history-panel.ts` — 지난 보고 목록/상세(결과 패널 "지난 보고" 버튼). 저장은 원본 구조, 화면은 그때그때 변환(설계 §7).
 - 서버: `supabase/functions/brief-compose/index.ts` — 프로젝트 `gvyvrjncpwmcwycebrhf`(dvcompany). 말투 샘플·프롬프트는 서버에 — 확장 재배포 없이 튜닝. 배포: `supabase functions deploy brief-compose --no-verify-jwt`.
 
 ## 확장 규칙 (Task 12~17, 2026-07-17 완료)
