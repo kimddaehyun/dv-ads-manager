@@ -43,6 +43,7 @@ export function roasPct(m: ReportMetrics): number {
 export const COST_FLOOR = 10_000;
 
 export type BriefKind =
+  | "pastActionFollowUp"   // 지난 보고 조치의 이번 성과 추적 (2단계 §7)
   | "zeroConvKeyword"      // 비용 임계 이상인데 전환 0
   | "highRoasLowRank"      // 목표 달성인데 순위가 낮음 (Task 7)
   | "belowTargetKeyword"   // 전환은 있으나 none 구간
@@ -73,12 +74,24 @@ export interface BriefTableSpec {
   rows: BriefTableRow[];
 }
 
+/** 이력 저장용 대상 스냅샷 — 표(문자열)와 달리 숫자 그대로. 다음 보고의 비교 계산 재료(설계 §7). */
+export interface BriefTargetSnapshot {
+  label: string;
+  cost: number;
+  revenue: number;
+  purchaseConv: number;
+  clicks: number;
+  impressions: number;
+}
+
 export interface BriefCandidate {
   kind: BriefKind;
   /** 문구에 들어갈 사실. **AI에게는 이것만 전달된다** (설계 §3 2겹). */
   facts: Record<string, string | number>;
   /** 딸려나올 표. kind가 결정한다 — AE가 고르지 않는다. */
   table: BriefTableSpec;
+  /** 조치 대상들의 수치 지표 — brief_history 저장 + 지난 조치 추적 비교용. */
+  targets: BriefTargetSnapshot[];
   selected: boolean;
   action?: BriefAction;
   /** action === "custom"일 때만. */
@@ -140,6 +153,10 @@ export function flattenKeywords(groups: KeywordGroup[]): BriefKeywordRow[] {
 }
 
 const KW_COLUMNS = ["키워드", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"];
+
+function toTarget(label: string, m: ReportMetrics): BriefTargetSnapshot {
+  return { label, cost: m.cost, revenue: m.revenue, purchaseConv: m.purchaseConv, clicks: m.clicks, impressions: m.impressions };
+}
 
 function kwRow(r: BriefKeywordRow, target?: number): BriefTableRow {
   const roas = roasPct(r.metrics);
@@ -269,6 +286,7 @@ function skewCandidate(
       나쁜쪽수익률: `${roasPct(skew.worst.metrics).toFixed(0)}%`,
     },
     table: segmentTable(`${dim} 성과`, dim, segments, targetRoas),
+    targets: [toTarget(skew.best.label, skew.best.metrics), toTarget(skew.worst.label, skew.worst.metrics)],
     selected: false,
   };
 }
@@ -315,6 +333,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         columns: KW_COLUMNS,
         rows: zeroConv.map((r) => kwRow(r, targetRoas)),
       },
+      targets: zeroConv.map((r) => toTarget(r.keyword, r.metrics)),
       selected: false,
     });
   }
@@ -341,6 +360,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           columns: KW_COLUMNS,
           rows: below.map((r) => kwRow(r, targetRoas)),
         },
+        targets: below.map((r) => toTarget(r.keyword, r.metrics)),
         selected: false,
       });
     }
@@ -370,6 +390,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             return { ...base, cells: [...base.cells, `${r.rank}위`] };
           }),
         },
+        targets: lowRank.map((r) => toTarget(r.keyword, r.metrics)),
         selected: false,
       });
     }
@@ -415,6 +436,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             band: roasBand(roasPct(g.metrics), targetRoas),
           })),
         },
+        targets: badGroups.map((g) => toTarget(`${g.campaign} > ${g.group}`, g.metrics)),
         selected: false,
       });
     }
@@ -434,6 +456,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         비용합계: zeroPlace.reduce((s, p) => s + p.metrics.cost, 0),
       },
       table: placementTable(input.placements, targetRoas),
+      targets: zeroPlace.map((p) => toTarget(p.label, p.metrics)),
       selected: false,
     });
   }
@@ -454,6 +477,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           비용합계: lowPlace.reduce((s, p) => s + p.metrics.cost, 0),
         },
         table: placementTable(input.placements, targetRoas),
+        targets: lowPlace.map((p) => toTarget(p.label, p.metrics)),
         selected: false,
       });
     }
@@ -511,6 +535,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             ],
           })),
         },
+        targets: lowCtr.map((a) => toTarget(a.label, a.metrics)),
         selected: false,
       });
     }
@@ -550,6 +575,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             band: targetRoas != null ? roasBand(roasPct(p.cur), targetRoas) : undefined,
           })),
         },
+        targets: dropped.map((p) => toTarget(p.label, p.cur)),
         selected: false,
       });
     }

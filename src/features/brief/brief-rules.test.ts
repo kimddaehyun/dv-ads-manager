@@ -636,3 +636,29 @@ describe("extractCandidates - productConvDrop", () => {
     expect(extractCandidates(base).find((x) => x.kind === "productConvDrop")).toBeUndefined();
   });
 });
+
+describe("targets 스냅샷", () => {
+  it("zeroConvKeyword 후보에 대상 키워드의 수치 지표가 붙는다", () => {
+    const out = extractCandidates({
+      keywords: [{ campaign: "C", group: "G", keywords: [
+        { keyword: "가방", metrics: { ...ZERO_METRICS, impressions: 100, clicks: 10, cost: 20_000, purchaseConv: 0, revenue: 0 } },
+      ] }],
+      placements: [],
+    });
+    const c = out.find((c) => c.kind === "zeroConvKeyword")!;
+    expect(c.targets).toEqual([
+      { label: "가방", cost: 20_000, revenue: 0, purchaseConv: 0, clicks: 10, impressions: 100 },
+    ]);
+  });
+
+  it("skew 후보에는 좋은쪽/나쁜쪽 두 대상이 붙는다", () => {
+    const seg = (label: string, cost: number, revenue: number): NamedMetrics =>
+      ({ label, metrics: { ...ZERO_METRICS, cost, revenue, purchaseConv: 1 } });
+    const out = extractCandidates({
+      keywords: [], placements: [],
+      byGender: [seg("남성", 20_000, 200_000), seg("여성", 20_000, 40_000)],
+    });
+    const c = out.find((c) => c.kind === "genderBidSkew")!;
+    expect(c.targets.map((t) => t.label)).toEqual(["남성", "여성"]);
+  });
+});
