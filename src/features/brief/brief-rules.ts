@@ -97,6 +97,8 @@ export interface BriefCandidate {
   action?: BriefAction;
   /** action === "custom"일 때만. */
   actionText?: string;
+  /** kind === "changeFollowUp"일 때만 — 원본 변경이력 이벤트 id (이력 저장 추적용). */
+  changeEventId?: string;
 }
 
 export interface BriefKeywordRow {

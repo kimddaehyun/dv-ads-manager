@@ -168,6 +168,7 @@ export function buildChangeHistoryCandidates(impacts: BriefChangeImpact[]): Brie
       },
       targets: after ? [after] : [],
       selected: false,
+      changeEventId: event.id,
     };
   });
 }

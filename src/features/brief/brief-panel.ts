@@ -6,6 +6,7 @@
  */
 
 import { type BriefTableSpec, type BriefCandidate, type BriefAction } from "./brief-rules";
+import { type BriefReportType, type BriefTone } from "./brief-history";
 import { renderTablePng, copyTablePng } from "./brief-table";
 import { showToast } from "@/shared/toast";
 import { wireBackdropDismiss } from "@/shared/dialog-dismiss";
@@ -30,13 +31,24 @@ export interface BriefPanelOpts {
   blocks: BriefBlock[];
   /** 머리글 아래 안내 한 줄 (예: 목표 수익률 미설정). 토스트는 금방 사라져 안내로 부적합. */
   notice?: string;
-  /** "직접 고르기" 클릭. Task 10에서 후보 선택 화면으로. */
-  onPickManually?: () => void;
+  /** "다시 고르기" — 재수집 없이 선택 화면으로 복귀. */
+  onRepick?: () => void;
   /** 텍스트 블록 복사 시 호출 — 전 텍스트 블록의 현재 값(편집 반영)을 합쳐 넘긴다. 이력 저장용(설계 §7: 복사한 순간). */
   onCopyText?: (fullMessage: string) => void;
+  /** "저장" — 복사 없이 이력만 저장(saved_only). */
+  onSave?: (fullMessage: string) => void;
+  /** 재생성 — toneOverride가 없으면 같은 옵션으로 다시. 편집분 유실 확인은 패널이 한다. */
+  onRegenerate?: (toneOverride?: BriefTone) => void;
   /** "지난 보고" 버튼 클릭 — 이 계정의 저장된 보고 목록으로. */
   onShowHistory?: () => void;
 }
+
+const REGEN_BUTTONS: Array<{ label: string; tone?: BriefTone }> = [
+  { label: "다시 생성" },
+  { label: "더 짧게", tone: "short" },
+  { label: "더 부드럽게", tone: "soft" },
+  { label: "숫자 중심", tone: "numeric" },
+];
 
 let disposePanel: (() => void) | null = null;
 
@@ -72,6 +84,26 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
     card.appendChild(notice);
   }
 
+  // 재생성 버튼군 — 편집한 내용이 있으면 확인 후 진행(재생성은 텍스트를 덮어쓴다).
+  const originalTexts: string[] = [];
+  if (opts.onRegenerate) {
+    const bar = document.createElement("div");
+    bar.className = "dvads-brief-regen-bar";
+    for (const rb of REGEN_BUTTONS) {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "dvads-btn";
+      b.textContent = rb.label;
+      b.addEventListener("click", () => {
+        const edited = textAreas.some((ta, i) => ta.value !== (originalTexts[i] ?? ta.value));
+        if (edited && !window.confirm("다시 만들면 지금까지 수정한 내용이 사라져요. 계속할까요?")) return;
+        opts.onRegenerate?.(rb.tone);
+      });
+      bar.appendChild(b);
+    }
+    card.appendChild(bar);
+  }
+
   const body = document.createElement("div");
   body.className = "dvads-brief-body";
 
@@ -92,6 +124,7 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
       };
       ta.addEventListener("input", fit);
       textAreas.push(ta);
+      originalTexts.push(block.text);
       wrap.appendChild(ta);
 
       if (block.numberWarning) {
@@ -156,13 +189,23 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
 
   const foot = document.createElement("div");
   foot.className = "dvads-brief-foot";
-  if (opts.onPickManually) {
+  if (opts.onRepick) {
     const pick = document.createElement("button");
     pick.type = "button";
     pick.className = "dvads-btn";
-    pick.textContent = "직접 고르기";
-    pick.addEventListener("click", () => opts.onPickManually?.());
+    pick.textContent = "다시 고르기";
+    pick.addEventListener("click", () => opts.onRepick?.());
     foot.appendChild(pick);
+  }
+  if (opts.onSave) {
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "dvads-btn";
+    save.textContent = "저장";
+    save.addEventListener("click", () => {
+      opts.onSave?.(textAreas.map((t) => t.value).filter((v) => v.trim() !== "").join("\n\n"));
+    });
+    foot.appendChild(save);
   }
   if (opts.onShowHistory) {
     const hist = document.createElement("button");
@@ -213,11 +256,51 @@ const PICK_ACTION_OPTIONS: Array<{ value: PickAction; label: string }> = [
   { value: "ask", label: "광고주에게 문의" },
 ];
 
+/** 선택 화면의 전체 상태 — "다시 고르기" 복귀 시 그대로 복원한다. */
+export interface BriefPickState {
+  reportType: BriefReportType;
+  tone: BriefTone;
+  includePrevHistory: boolean;
+  includeChangeHistory: boolean;
+  memo: string;
+  /** opts.candidates 기준 인덱스. */
+  selectedIdx: number[];
+  actions: Record<number, BriefAction | undefined>;
+}
+
+const REPORT_TYPE_OPTIONS: Array<{ value: BriefReportType; label: string }> = [
+  { value: "post_action_report", label: "사후보고" },
+  { value: "pre_action_proposal", label: "사전제안" },
+];
+
+const TONE_OPTIONS: Array<{ value: BriefTone; label: string }> = [
+  { value: "detailed", label: "상세하게" },
+  { value: "short", label: "짧게" },
+  { value: "numeric", label: "숫자 중심" },
+  { value: "soft", label: "부드럽게" },
+  { value: "professional", label: "전문적으로" },
+  { value: "friendly", label: "친근하게" },
+];
+
+/** 토글로 묶여 숨겨질 수 있는 이력성 후보 kind. */
+const PREV_HISTORY_KIND = "pastActionFollowUp";
+const CHANGE_HISTORY_KIND = "changeFollowUp";
+
 export interface BriefPickOpts {
   advertiserName: string;
   candidates: BriefCandidate[];
-  /** "문구 만들기" — 체크된 후보(액션 반영됨)와 자유 메모를 넘긴다. */
-  onCompose: (selected: BriefCandidate[], memo: string) => void;
+  /** 저장된 지난 보고가 1건 이상인지 — 없으면 "이전 보고 이력 포함" 비활성. */
+  prevHistoryAvailable: boolean;
+  /** 변경 이력 토글을 비활성해야 하는 이유(작업자 목록 없음 등). undefined면 활성. */
+  changeDisabledReason?: string;
+  /** 광고주별 저장 선호 등에서 온 초기값. selectedIdx 등은 "다시 고르기" 복귀용. */
+  initial?: Partial<BriefPickState>;
+  /** "보고문 만들기" — 체크된 후보(액션 반영됨)와 화면 상태 전체를 넘긴다. */
+  onCompose: (selected: BriefCandidate[], state: BriefPickState) => void;
+  /** "내 말투 설정" 버튼. */
+  onToneSettings?: () => void;
+  /** "지난 보고" 버튼. */
+  onShowHistory?: () => void;
 }
 
 export function renderBriefPickPanel(opts: BriefPickOpts): void {
@@ -236,8 +319,102 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   const body = document.createElement("div");
   body.className = "dvads-brief-body";
 
-  // 후보별 상태 — 원본을 건드리지 않고 사본에 선택/액션을 기록.
-  const picks = opts.candidates.map((c) => ({ ...c, selected: false, action: undefined as BriefAction | undefined }));
+  const init = opts.initial ?? {};
+  const state: BriefPickState = {
+    reportType: init.reportType ?? "post_action_report",
+    tone: init.tone ?? "detailed",
+    includePrevHistory: init.includePrevHistory ?? opts.prevHistoryAvailable,
+    includeChangeHistory:
+      init.includeChangeHistory ??
+      (opts.changeDisabledReason == null && opts.candidates.some((c) => c.kind === CHANGE_HISTORY_KIND)),
+    memo: init.memo ?? "",
+    selectedIdx: init.selectedIdx ?? [],
+    actions: init.actions ?? {},
+  };
+  if (!opts.prevHistoryAvailable) state.includePrevHistory = false;
+  if (opts.changeDisabledReason != null) state.includeChangeHistory = false;
+
+  // ── 옵션 영역: 보고 유형 / 톤 / 이력 토글 2개 ──
+  const optWrap = document.createElement("div");
+  optWrap.className = "dvads-brief-pick-options";
+
+  const ddRow = document.createElement("div");
+  ddRow.className = "dvads-brief-pick-opt-row";
+  const typeLabel = document.createElement("span");
+  typeLabel.textContent = "보고 유형";
+  ddRow.appendChild(typeLabel);
+  const typeDd = createDropdown<BriefReportType>({
+    value: state.reportType,
+    options: REPORT_TYPE_OPTIONS,
+    ariaLabel: "보고 유형",
+    width: 120,
+    onChange: (v) => { state.reportType = v; },
+  });
+  ddRow.appendChild(typeDd.root);
+  const toneLabel = document.createElement("span");
+  toneLabel.textContent = "말투 톤";
+  ddRow.appendChild(toneLabel);
+  const toneDd = createDropdown<BriefTone>({
+    value: state.tone,
+    options: TONE_OPTIONS,
+    ariaLabel: "말투 톤",
+    width: 120,
+    onChange: (v) => { state.tone = v; },
+  });
+  ddRow.appendChild(toneDd.root);
+  optWrap.appendChild(ddRow);
+
+  const makeToggle = (
+    text: string,
+    checked: boolean,
+    disabledReason: string | undefined,
+    onChange: (on: boolean) => void,
+  ): HTMLLabelElement => {
+    const row = document.createElement("label");
+    row.className = "dvads-brief-pick-toggle";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = checked && disabledReason == null;
+    cb.disabled = disabledReason != null;
+    cb.addEventListener("change", () => onChange(cb.checked));
+    row.appendChild(cb);
+    const span = document.createElement("span");
+    span.textContent = disabledReason != null ? `${text} - ${disabledReason}` : text;
+    row.appendChild(span);
+    return row;
+  };
+
+  const refreshRows = () => rowsByIdx.forEach((r) => r.refresh());
+
+  optWrap.appendChild(makeToggle(
+    "이전 보고 이력 포함",
+    state.includePrevHistory,
+    opts.prevHistoryAvailable ? undefined : "저장된 지난 보고가 없습니다",
+    (on) => { state.includePrevHistory = on; refreshRows(); },
+  ));
+  optWrap.appendChild(makeToggle(
+    "변경 이력 포함",
+    state.includeChangeHistory,
+    opts.changeDisabledReason,
+    (on) => { state.includeChangeHistory = on; refreshRows(); },
+  ));
+  body.appendChild(optWrap);
+
+  // ── 후보 목록 — 원본을 건드리지 않고 사본에 선택/액션을 기록. ──
+  const picks = opts.candidates.map((c, i) => ({
+    ...c,
+    selected: state.selectedIdx.includes(i),
+    action: state.actions[i],
+  }));
+
+  const rowsByIdx: Array<{ refresh: () => void }> = [];
+
+  const updateComposeEnabled = () => {
+    composeBtn.disabled = !picks.some((p) => p.selected && !isHiddenKind(p.kind)) && memoTa.value.trim() === "";
+  };
+  const isHiddenKind = (kind: string): boolean =>
+    (kind === PREV_HISTORY_KIND && !state.includePrevHistory) ||
+    (kind === CHANGE_HISTORY_KIND && !state.includeChangeHistory);
 
   picks.forEach((pick) => {
     const row = document.createElement("label");
@@ -245,8 +422,10 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
 
     const cb = document.createElement("input");
     cb.type = "checkbox";
+    cb.checked = pick.selected;
     cb.addEventListener("change", () => {
       pick.selected = cb.checked;
+      updateComposeEnabled();
     });
     row.appendChild(cb);
 
@@ -256,7 +435,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     row.appendChild(label);
 
     const dd = createDropdown<PickAction>({
-      value: "ai",
+      value: pick.action ?? "ai",
       options: PICK_ACTION_OPTIONS,
       ariaLabel: "액션 선택",
       width: 140,
@@ -269,6 +448,18 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     row.appendChild(dd.root);
 
     body.appendChild(row);
+
+    // 토글 off면 해당 이력성 후보는 숨김 + 체크 해제(보내면 안 된다).
+    const refresh = () => {
+      const hidden = isHiddenKind(pick.kind);
+      row.style.display = hidden ? "none" : "";
+      if (hidden && pick.selected) {
+        pick.selected = false;
+        cb.checked = false;
+      }
+      updateComposeEnabled();
+    };
+    rowsByIdx.push({ refresh });
   });
 
   // 자유 입력 — 데이터가 모르는 맥락(예: "6월 말부터 CPC 낮춰 운영 중").
@@ -276,38 +467,61 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   memoTa.className = "dvads-brief-pick-memo";
   memoTa.placeholder = "데이터에 없는 맥락이 있으면 적어주세요 (예: 6월 말부터 단가 낮춰 운영 중)";
   memoTa.rows = 3;
+  memoTa.value = state.memo;
+  memoTa.addEventListener("input", () => updateComposeEnabled());
   body.appendChild(memoTa);
 
   card.appendChild(body);
 
   const foot = document.createElement("div");
   foot.className = "dvads-brief-foot";
+  if (opts.onToneSettings) {
+    const toneBtn = document.createElement("button");
+    toneBtn.type = "button";
+    toneBtn.className = "dvads-btn";
+    toneBtn.textContent = "내 말투 설정";
+    toneBtn.addEventListener("click", () => opts.onToneSettings?.());
+    foot.appendChild(toneBtn);
+  }
+  if (opts.onShowHistory) {
+    const hist = document.createElement("button");
+    hist.type = "button";
+    hist.className = "dvads-btn";
+    hist.textContent = "지난 보고";
+    hist.addEventListener("click", () => opts.onShowHistory?.());
+    foot.appendChild(hist);
+  }
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "dvads-btn";
-  cancel.textContent = "취소";
+  cancel.textContent = "닫기";
   cancel.addEventListener("click", () => closeBriefPanel());
   foot.appendChild(cancel);
-  const compose = document.createElement("button");
-  compose.type = "button";
-  compose.className = "dvads-btn dvads-btn-primary";
-  compose.textContent = "문구 만들기";
-  compose.addEventListener("click", () => {
-    const selected = picks.filter((p) => p.selected);
+  const composeBtn = document.createElement("button");
+  composeBtn.type = "button";
+  composeBtn.className = "dvads-btn dvads-btn-primary";
+  composeBtn.textContent = "보고문 만들기";
+  composeBtn.addEventListener("click", () => {
+    const selected = picks.filter((p) => p.selected && !isHiddenKind(p.kind));
     if (selected.length === 0 && !memoTa.value.trim()) {
       showToast({ message: "말할 내용을 하나 이상 골라 주세요", variant: "error" });
       return;
     }
-    const memo = memoTa.value.trim();
+    state.memo = memoTa.value.trim();
+    state.selectedIdx = picks.map((p, i) => (p.selected ? i : -1)).filter((i) => i >= 0);
+    state.actions = Object.fromEntries(picks.map((p, i) => [i, p.action]));
     closeBriefPanel();
-    opts.onCompose(selected, memo);
+    opts.onCompose(selected, state);
   });
-  foot.appendChild(compose);
+  foot.appendChild(composeBtn);
   card.appendChild(foot);
 
   backdrop.appendChild(card);
   document.body.appendChild(backdrop);
   wireBackdropDismiss(backdrop, () => closeBriefPanel());
+
+  // 첫 렌더 반영 — 토글 초기 off면 후보 숨김, 선택 0개면 만들기 비활성.
+  rowsByIdx.forEach((r) => r.refresh());
 
   disposePanel = () => {
     closeAllOpenDropdowns();

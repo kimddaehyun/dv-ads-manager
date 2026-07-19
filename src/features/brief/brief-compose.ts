@@ -3,10 +3,12 @@
  *
  * 체크된 후보의 facts만 보낸다 — 리포트 전체를 보내지 않는다(설계 §3 2겹).
  * 검산은 차단하지 않고 numberWarning 표시만 — 판단은 AE에게(설계 §6.5).
+ * 보고 유형(사후보고/사전제안)·톤·지난 보고 요약은 구조 개편(선택 우선 흐름)에서 추가.
  */
 
 import { extractNumbers, verifyBlock } from "./brief-verify";
 import { type BriefCandidate } from "./brief-rules";
+import { type BriefReportType, type BriefTone, type BriefHistoryRecord } from "./brief-history";
 import { getSupabase } from "@/shared/supabase";
 
 // manifest.config.ts의 host_permissions와 동일 도메인이어야 한다 — 다르면 요청이 차단된다.
@@ -19,6 +21,10 @@ export interface ComposeRequest {
   prevTotals: Record<string, string>;
   selected: BriefCandidate[];
   memo: string;
+  reportType: BriefReportType;
+  tone: BriefTone;
+  /** "이전 보고 이력 포함" 시 최근 1건 — 원문 앞부분만 잘라 보낸다. */
+  prevReport?: { message: string; actions: Array<{ kind: string; actionText?: string }> };
 }
 
 export interface ComposedBlock {
@@ -26,6 +32,18 @@ export interface ComposedBlock {
   isAiJudgment: boolean;
   /** 검산 실패 — 우리가 안 준 숫자가 문장에 있다. 차단하지 않고 AE에게 표시만. */
   numberWarning: boolean;
+}
+
+/** 지난 보고 원문은 이만큼만 — 말투가 아니라 "무슨 조치를 안내했는지"만 필요하다. */
+const PREV_REPORT_CHARS = 500;
+
+export function toPrevReport(history: BriefHistoryRecord): NonNullable<ComposeRequest["prevReport"]> {
+  return {
+    message: history.message.slice(0, PREV_REPORT_CHARS),
+    actions: history.actions
+      .filter((a) => a.action != null || a.actionText)
+      .map((a) => ({ kind: a.kind, actionText: a.actionText })),
+  };
 }
 
 async function loadToken(): Promise<string> {
@@ -48,9 +66,12 @@ export async function composeBlocks(req: ComposeRequest): Promise<ComposedBlock[
       // 체크된 후보의 facts만. 리포트 전체를 보내지 않는다(설계 §3 2겹).
       facts: req.selected.map((c) => ({ facts: c.facts, action: c.action, actionText: c.actionText })),
       memo: req.memo,
+      reportType: req.reportType,
+      tone: req.tone,
+      prevReport: req.prevReport,
     }),
   });
-  if (res.status === 401) throw new Error("보고 문구 이용 코드가 올바르지 않아요. 확장 프로그램 설정에서 다시 확인해 주세요");
+  if (res.status === 401) throw new Error("로그인이 만료됐어요. 확장 프로그램 설정에서 다시 로그인해 주세요");
   if (!res.ok) throw new Error("문구를 만들지 못했어요. 잠시 후 다시 시도해 주세요");
 
   const data = await res.json();
@@ -66,10 +87,28 @@ export async function composeBlocks(req: ComposeRequest): Promise<ComposedBlock[
     }
   }
   extractNumbers(req.memo).forEach((n) => allowed.add(n));
+  // 지난 보고 원문의 숫자도 허용 — AI가 이어 말하며 재인용할 수 있다(오탐 방지).
+  if (req.prevReport) extractNumbers(req.prevReport.message).forEach((n) => allowed.add(n));
 
   return (data.blocks ?? []).map((b: { text: string; isAiJudgment?: boolean }) => ({
     text: b.text,
     isAiJudgment: b.isAiJudgment === true,
     numberWarning: !verifyBlock(b.text, allowed),
   }));
+}
+
+/** 채팅 이력 → AI 말투 프롬프트 생성 (T5.5). 광고주 데이터가 아니라 AE 본인의 글이다. */
+export async function distillTone(samples: string): Promise<string> {
+  const token = await loadToken();
+  const res = await fetch(FN_URL, {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+    body: JSON.stringify({ mode: "distillTone", samples }),
+  });
+  if (res.status === 401) throw new Error("로그인이 만료됐어요. 확장 프로그램 설정에서 다시 로그인해 주세요");
+  if (!res.ok) throw new Error("말투를 분석하지 못했어요. 잠시 후 다시 시도해 주세요");
+  const data = await res.json();
+  const prompt = typeof data.tonePrompt === "string" ? data.tonePrompt.trim() : "";
+  if (!prompt) throw new Error("말투를 분석하지 못했어요. 채팅 이력을 조금 더 붙여넣어 주세요");
+  return prompt;
 }
