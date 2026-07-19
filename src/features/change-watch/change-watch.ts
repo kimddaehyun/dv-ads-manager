@@ -17,7 +17,7 @@ const SERVICE_ID = "james-rhodes";
 // 앱이 쓰는 값과 동일. 한 번에 이만큼 넘으면 잘리므로 초과 시 경고만 남긴다.
 const MAX_ROWS = 5000;
 
-interface RawHistoryObject {
+export interface RawHistoryObject {
   id?: string;
   displayName?: string;
   data?: {
@@ -33,7 +33,7 @@ interface RawHistoryObject {
   };
 }
 
-interface RawHistoryRow {
+export interface RawHistoryRow {
   eventId?: string;
   eventType?: string;
   eventTime?: string;
@@ -65,7 +65,7 @@ function isAttributed(actor: string): boolean {
 }
 
 // eventType → 사람이 읽는 동작 이름. 없는 건 "설정"으로 폴백 (영문 코드 노출 금지).
-const EVENT_LABEL: Record<string, string> = {
+export const EVENT_LABEL: Record<string, string> = {
   "ncc.heroes.CAMPAIGN.MODIFY": "캠페인",
   "ncc.heroes.ADGROUP.MODIFY": "광고그룹",
   "ncc.heroes.ADGROUP.MODIFY_USER_LOCK": "광고그룹",
@@ -116,7 +116,7 @@ function formatValue(field: string, v: unknown): string {
  * before/after를 "일예산 10,000원 -> 15,000원" 같은 한 줄로. 아는 필드가 하나도 없으면
  * 개수만 알린다 — 영문 필드명을 그대로 보여주느니 "설정 2개 변경"이 낫다.
  */
-function diffSummary(before?: Record<string, unknown>, after?: Record<string, unknown>): string {
+export function diffSummary(before?: Record<string, unknown>, after?: Record<string, unknown>): string {
   const b = before ?? {};
   const a = after ?? {};
   const keys = [...new Set([...Object.keys(b), ...Object.keys(a)])];
@@ -144,7 +144,7 @@ function lockedBudget(obj: RawHistoryObject): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function rowTime(row: RawHistoryRow): number {
+export function rowTime(row: RawHistoryRow): number {
   const iso = row["@timestamp"];
   if (iso) {
     const t = Date.parse(iso);

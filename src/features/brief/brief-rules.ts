@@ -56,7 +56,8 @@ export type BriefKind =
   | "regionBidSkew"        // 지역(시도) 간 ROAS 격차 (Task 17)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
   | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
-  | "productConvDrop";     // 전기 대비 전환 빠진 상품 (Task 8)
+  | "productConvDrop"      // 전기 대비 전환 빠진 상품 (Task 8)
+  | "changeFollowUp";      // 우리 팀 변경 이력 + 이후 성과 평가 (구조 개편 2차)
 
 /** AE가 고르는 액션. AI가 창작하지 않는다 — 완전자동 모드에서도 이 목록에서만 고른다. */
 export type BriefAction = "raise" | "hold" | "lower" | "exclude" | "ask" | "custom";
