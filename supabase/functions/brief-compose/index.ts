@@ -96,6 +96,50 @@ Deno.serve(async (req) => {
   }
 
   const body = await req.json();
+
+  // ── 모드: 말투 프롬프트 생성 (T5.5) — AE 본인의 채팅 이력을 말투 규칙으로 요약 ──
+  if (body.mode === "distillTone") {
+    const samples = typeof body.samples === "string" ? body.samples.trim() : "";
+    if (samples.length < 50) {
+      return new Response(JSON.stringify({ error: "samples" }), {
+        status: 400, headers: { "content-type": "application/json", ...CORS_HEADERS },
+      });
+    }
+    const distillPrompt = [
+      "아래는 한 광고 대행사 AE가 광고주에게 실제로 보낸 보고 채팅 모음이다.",
+      "이 사람의 말투를 다른 보고문 작성에 재사용할 수 있게 정리해라.",
+      "",
+      "[채팅 모음]",
+      samples.slice(0, 8000),
+      "",
+      "[정리 형식 - 텍스트로만]",
+      "1) 말투 규칙: 인사 방식, 자주 쓰는 어미(예: ~로 판단됩니다, ~하겠습니다), 존댓말 수준,",
+      "   숫자 표기 습관, 문단 길이 습관을 항목당 한 줄로.",
+      "2) 대표 예문: 채팅 모음에서 말투가 가장 잘 드러나는 문단 3~5개를 그대로 옮겨 적기.",
+      "채팅에 없는 표현을 지어내지 마라. 설명이나 머리말 없이 정리 내용만 출력해라.",
+    ].join("\n");
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: distillPrompt }] }],
+        generationConfig: { temperature: 0.2, maxOutputTokens: 2000 },
+      }),
+    });
+    if (!res.ok) {
+      console.error("gemini error", res.status);
+      return new Response(JSON.stringify({ error: "upstream" }), {
+        status: 502, headers: { "content-type": "application/json", ...CORS_HEADERS },
+      });
+    }
+    const data = await res.json();
+    const tonePrompt = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    return new Response(JSON.stringify({ tonePrompt }), {
+      headers: { "content-type": "application/json", ...CORS_HEADERS },
+    });
+  }
+
   const facts = (body.facts ?? []) as Array<Record<string, unknown>>;
   if (facts.length === 0 && !body.memo) {
     return new Response(JSON.stringify({ blocks: [] }), { headers: { "content-type": "application/json", ...CORS_HEADERS } });
@@ -108,11 +152,61 @@ Deno.serve(async (req) => {
   });
   if (body.memo) factLines.push(`- AE 메모: ${body.memo}`);
 
+  // AE 개인 말투 — brief_tone에 저장된 프롬프트가 있으면 그걸 쓰고, 없으면 기본 샘플.
+  // 클라이언트 payload가 아니라 서버가 JWT의 사용자 id로 직접 읽는다(조작 방지).
+  let toneSection = TONE_SAMPLES;
+  try {
+    const { data: toneRow } = await admin
+      .from("brief_tone")
+      .select("tone_prompt")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (toneRow?.tone_prompt && String(toneRow.tone_prompt).trim() !== "") {
+      toneSection = String(toneRow.tone_prompt).trim();
+    }
+  } catch (_) { /* 말투 조회 실패는 기본 샘플로 진행 */ }
+
+  // 보고 유형 — 사후보고(이미 조치함) vs 사전제안(조치 전, 동의 요청). 기본은 사후보고.
+  const isProposal = body.reportType === "pre_action_proposal";
+  const typeLines = isProposal
+    ? [
+        "- 이번 보고는 **사전제안**이다: 아직 아무것도 수정하지 않았다.",
+        "  '~한 상태입니다. ~해 볼 수 있도록 하겠습니다' 또는 '~조정 진행해도 괜찮을까요?' 같은",
+        "  근거 + 제안 + 동의 요청 구조로 써라. '~했습니다' 같은 완료형 표현 금지.",
+      ]
+    : [
+        "- 이번 보고는 **사후보고**다: 액션이 지정된 항목은 이미 조치를 끝낸 것이다.",
+        "  '~하여 운영하고자 합니다 / ~조정하여 운영하겠습니다 / ~진행하였습니다' 같은 완료+계획 구조로 써라.",
+      ];
+
+  // 톤 — 어떤 톤이든 말투 샘플의 어미 범위 안에서만.
+  const TONE_RULE: Record<string, string> = {
+    short: "- 톤: 짧게 - 문단당 1~2문장, 수식어 최소화. 핵심 사실과 액션만.",
+    detailed: "- 톤: 상세하게 - 근거 수치와 판단 이유를 문장으로 풀어서.",
+    numeric: "- 톤: 숫자 중심 - 모든 주장 옆에 근거 숫자를 병기. 형용사 대신 수치로 말해라.",
+    soft: "- 톤: 부드럽게 - 단정 대신 완곡한 표현(~로 보입니다 대신 ~로 판단됩니다, ~해 볼 수 있을 것 같습니다).",
+    professional: "- 톤: 전문적으로 - 격식 있는 존댓말, 감탄사·이모티콘 없이.",
+    friendly: "- 톤: 친근하게 - 딱딱하지 않게, 말투 샘플의 인사·구어체 습관을 살려서.",
+  };
+  const toneRule = TONE_RULE[String(body.tone ?? "")] ?? TONE_RULE.detailed;
+
+  // 지난 보고 — 이어지는 보고로 쓰되 지난 수치를 새 수치처럼 재사용하지 않게.
+  const prevReport = body.prevReport as { message?: string; actions?: Array<{ kind?: string; actionText?: string }> } | undefined;
+  const prevLines = prevReport?.message
+    ? [
+        "",
+        "[지난 보고]",
+        String(prevReport.message).slice(0, 800),
+        "- 지난 보고와 자연스럽게 이어지게 써라 (예: 지난번 안내드린 ~ 이후).",
+        "- 지난 보고의 숫자를 이번 성과 숫자처럼 재사용하지 마라 - 비교 언급만 허용.",
+      ]
+    : [];
+
   const prompt = [
     "너는 디브이마케팅 AE다. 아래 말투로 광고주 보고 문구를 써라.",
     "",
     "[말투 샘플]",
-    TONE_SAMPLES,
+    toneSection,
     "",
     "[이번 데이터]",
     `광고주: ${body.advertiser}`,
@@ -122,6 +216,7 @@ Deno.serve(async (req) => {
     "",
     "[말할 것]",
     ...factLines,
+    ...prevLines,
     "",
     "[규칙]",
     "- 위에 준 사실 외에는 쓰지 마라. 시즌·트렌드 등 일반 상식을 끼워 넣지 마라.",
@@ -129,8 +224,11 @@ Deno.serve(async (req) => {
     "- 인사말과 지표 요약은 쓰지 마라 — 이미 따로 만들었다. 진단과 액션만 써라.",
     "- 말할 것 하나당 문단 하나. 문단은 빈 줄로 구분.",
     "- em dash(—)를 쓰지 마라. 일반 하이픈(-)만.",
-    "- 보고 문장 유형: 1) 수정했다고 통보 2) 이래서 이렇게 수정하려 한다(예고+근거) 3) 조치 결과 보고 4) 성과가 아쉬워 새 계획 제시. 액션이 지정된 항목은 1·2 어조로.",
-    "- '지난 보고에서 조치한 항목의 이번 성과 비교' 항목은 당시/이번 숫자를 그대로 써서, 좋아졌으면 3(조치 결과) 어조로, 나빠졌으면 4(아쉬움+새 계획) 어조로 써라.",
+    ...typeLines,
+    toneRule,
+    "- 말투 샘플에 없는 상투어 금지: '흐름입니다', '~하는 모습입니다', '~로 보여집니다' 등을 쓰지 말고 샘플의 어미만 써라.",
+    "- '지난 보고에서 조치한 항목의 이번 성과 비교' 항목은 당시/이번 숫자를 그대로 써서, 좋아졌으면 조치 결과 어조로, 나빠졌으면 아쉬움+새 계획 어조로 써라.",
+    "- '우리 팀이 진행한 변경 내역과 이후 성과' 항목은 '지난 ~에 ~를 조정하였으며, 이후 ~한 것을 확인했습니다. 이에 ~하겠습니다' 구조로 써라. 평가가 '판단 보류'면 성과를 단정하지 말고 변경 사실만 전해라.",
     "",
     "JSON만 출력: {\"blocks\":[{\"text\":\"문단\",\"isAiJudgment\":true}]}",
     "isAiJudgment는 그 문단에 액션 선언·판단이 들어갔으면 true, 데이터 서술뿐이면 false.",
