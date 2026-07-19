@@ -231,7 +231,7 @@ function showSelection(ctx: BriefContext, initial?: Partial<BriefPickState>): vo
     candidates: ctx.candidates,
     prevHistoryAvailable: ctx.lastHistory != null,
     changeDisabledReason: ctx.changeRes.actorsMissing
-      ? "다계정 화면의 변경이력 알림에서 우리 팀 작업자 이름을 먼저 등록해 주세요"
+      ? "변경이력 알림에서 우리 팀 작업자를 등록하면 쓸 수 있어요"
       : undefined,
     initial,
     onToneSettings: () => openBriefToneDialog(),
@@ -313,10 +313,10 @@ function showResult(
   // 토스트는 금방 사라져 안내로 부적합 — 패널 상단 고정 안내줄 (설계 §5).
   const notices: string[] = [];
   if (targetRoas == null) {
-    notices.push("목표 수익률을 설정하면 키워드 분류를 제안해요. 계정 메뉴의 \"목표 수익률\"에서 입력할 수 있어요");
+    notices.push("계정 메뉴에서 목표 수익률을 설정하면 키워드 분류도 제안해요");
   }
   if (selected.length === 0) {
-    notices.push("고른 이슈가 없어 아래 요약만 표시해요");
+    notices.push("고른 이슈가 없어 요약만 표시해요");
   }
 
   // 이력 저장 — 패널 1회당 레코드 1건(id 고정 upsert). 복사/저장할 때마다 최신 편집본으로 갱신.

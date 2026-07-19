@@ -130,7 +130,7 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
       if (block.numberWarning) {
         const warn = document.createElement("div");
         warn.className = "dvads-brief-warn";
-        warn.textContent = "확인 필요 - 데이터에 없는 숫자가 있어요";
+        warn.textContent = "데이터에 없는 숫자가 있어요";
         wrap.appendChild(warn);
       }
 
@@ -364,12 +364,14 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   ddRow.appendChild(toneDd.root);
   optWrap.appendChild(ddRow);
 
+  // 비활성 사유는 라벨에 이어붙이지 않고 아래 작은 줄로 — 라벨은 항상 짧게 유지.
   const makeToggle = (
     text: string,
     checked: boolean,
     disabledReason: string | undefined,
     onChange: (on: boolean) => void,
-  ): HTMLLabelElement => {
+  ): HTMLElement => {
+    const wrap = document.createElement("div");
     const row = document.createElement("label");
     row.className = "dvads-brief-pick-toggle";
     const cb = document.createElement("input");
@@ -379,9 +381,16 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     cb.addEventListener("change", () => onChange(cb.checked));
     row.appendChild(cb);
     const span = document.createElement("span");
-    span.textContent = disabledReason != null ? `${text} - ${disabledReason}` : text;
+    span.textContent = text;
     row.appendChild(span);
-    return row;
+    wrap.appendChild(row);
+    if (disabledReason != null) {
+      const sub = document.createElement("div");
+      sub.className = "dvads-brief-pick-sub";
+      sub.textContent = disabledReason;
+      wrap.appendChild(sub);
+    }
+    return wrap;
   };
 
   const refreshRows = () => rowsByIdx.forEach((r) => r.refresh());
@@ -389,7 +398,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   optWrap.appendChild(makeToggle(
     "이전 보고 이력 포함",
     state.includePrevHistory,
-    opts.prevHistoryAvailable ? undefined : "저장된 지난 보고가 없습니다",
+    opts.prevHistoryAvailable ? undefined : "아직 저장된 지난 보고가 없어요",
     (on) => { state.includePrevHistory = on; refreshRows(); },
   ));
   optWrap.appendChild(makeToggle(
@@ -431,7 +440,11 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
 
     const label = document.createElement("span");
     label.className = "dvads-brief-pick-label";
-    label.textContent = String(pick.facts["기준"] ?? pick.kind);
+    // 변경 이력 후보는 "기준"이 전부 같아 구분이 안 된다 — 대상 + 변경 내용으로 표시.
+    label.textContent =
+      pick.kind === CHANGE_HISTORY_KIND
+        ? `${pick.facts["대상"] ?? ""} · ${pick.facts["변경내용"] ?? ""}`.replace(/^ · /, "")
+        : String(pick.facts["기준"] ?? pick.kind);
     row.appendChild(label);
 
     const dd = createDropdown<PickAction>({
@@ -465,7 +478,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   // 자유 입력 — 데이터가 모르는 맥락(예: "6월 말부터 CPC 낮춰 운영 중").
   const memoTa = document.createElement("textarea");
   memoTa.className = "dvads-brief-pick-memo";
-  memoTa.placeholder = "데이터에 없는 맥락이 있으면 적어주세요 (예: 6월 말부터 단가 낮춰 운영 중)";
+  memoTa.placeholder = "추가로 전할 내용이 있다면 적어주세요";
   memoTa.rows = 3;
   memoTa.value = state.memo;
   memoTa.addEventListener("input", () => updateComposeEnabled());

@@ -4612,6 +4612,10 @@ td.dvads-period-delta-down {
   width: 16px; height: 16px; accent-color: #E6783B; flex-shrink: 0;
 }
 .dvads-brief-pick-toggle input[type="checkbox"]:disabled + span { color: #9aa1ab; }
+.dvads-brief-pick-sub {
+  margin: 2px 0 0 24px;
+  font: 400 12px/1.5 Pretendard, -apple-system, sans-serif; color: #9aa1ab;
+}
 
 /* F-Brief 결과 패널 재생성 버튼군 */
 .dvads-brief-regen-bar {

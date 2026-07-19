@@ -33,7 +33,7 @@ export function openBriefToneDialog(onClose?: () => void): void {
 
   const hint1 = document.createElement("div");
   hint1.className = "dvads-brief-tone-hint";
-  hint1.textContent = "광고주에게 실제로 보냈던 보고 채팅을 붙여넣어 주세요. 여러 건일수록 내 말투에 가까워져요.";
+  hint1.textContent = "실제로 보냈던 보고 채팅을 붙여넣어 주세요";
   body.appendChild(hint1);
 
   const samplesTa = document.createElement("textarea");
@@ -52,7 +52,7 @@ export function openBriefToneDialog(onClose?: () => void): void {
   const hint2 = document.createElement("div");
   hint2.className = "dvads-brief-tone-hint";
   hint2.style.marginTop = "14px";
-  hint2.textContent = "아래는 붙여넣은 채팅에서 뽑은 말투 규칙이에요. 마음에 안 드는 부분은 직접 고쳐도 됩니다.";
+  hint2.textContent = "만들어진 말투 규칙이에요. 직접 고칠 수 있어요";
   body.appendChild(hint2);
 
   const promptTa = document.createElement("textarea");
