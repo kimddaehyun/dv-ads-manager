@@ -133,10 +133,31 @@ export interface BriefRuleInput {
   byDay?: NamedMetrics[];
   /** 지역(시도)별 성과. brief-data가 regnNo 차원으로 수집(F-Brief 전용). */
   byRegion?: NamedMetrics[];
+  /** 이슈 판정 임계값 — 없으면 기본값(DEFAULT_THRESHOLDS). */
+  thresholds?: BriefThresholds;
 }
 
 /** 매출 낙폭이 이 값 미만이면 후보로 안 만든다 — 소음 방지. */
 export const REVENUE_DROP_FLOOR = 100_000;
+
+/**
+ * 이슈 판정 임계값 묶음 — 광고주별 커스텀(프리셋/자동 보정/직접 설정)의 단위.
+ * 값의 출처는 brief-thresholds.ts가 정하고, 규칙 엔진은 받은 값만 쓴다.
+ */
+export interface BriefThresholds {
+  /** 키워드·지면·세그먼트 비용 문턱(원). */
+  costFloor: number;
+  /** 격차 임계 배수 — 좋은쪽 ROAS ≥ 나쁜쪽 x 이 값. */
+  skewRatio: number;
+  /** 소재 후보 노출 문턱(회). */
+  adImpFloor: number;
+  /** 클릭률 하한(%) — 미만이면 소재 교체 후보. */
+  lowCtrPct: number;
+  /** 이 순위 이상(숫자 큼)이면 "낮다". */
+  lowRankFloor: number;
+  /** 상품 매출 낙폭 문턱(원). */
+  revenueDropFloor: number;
+}
 
 export interface BriefProductDelta {
   label: string;
@@ -189,10 +210,14 @@ export const LOW_RANK_FLOOR = 6;
  * 순위를 조회할 키워드만 고른다 — **전체에 걸면 수백 회 호출이다.**
  * 비용 임계를 넘고 목표를 달성한(green) 키워드만. 실측 수십 개 수준.
  */
-export function pickRankTargets(rows: BriefKeywordRow[], targetRoas?: number): BriefKeywordRow[] {
+export function pickRankTargets(
+  rows: BriefKeywordRow[],
+  targetRoas?: number,
+  th: BriefThresholds = DEFAULT_THRESHOLDS,
+): BriefKeywordRow[] {
   if (targetRoas == null || targetRoas <= 0) return [];
   return rows.filter((r) =>
-    r.metrics.cost >= COST_FLOOR && roasBand(roasPct(r.metrics), targetRoas) === "green",
+    r.metrics.cost >= th.costFloor && roasBand(roasPct(r.metrics), targetRoas) === "green",
   );
 }
 
@@ -214,6 +239,16 @@ export function ctrPct(m: ReportMetrics): number {
 /** 격차 임계 — 좋은쪽 ROAS가 나쁜쪽의 이 배수 이상이어야 후보(설계 §5 "격차 판정 공통 규칙"). */
 export const SKEW_RATIO = 1.5;
 
+/** 기본 임계값 세트 — 커스텀이 없을 때. (선언 순서상 모든 상수 뒤에 있어야 한다) */
+export const DEFAULT_THRESHOLDS: BriefThresholds = {
+  costFloor: COST_FLOOR,
+  skewRatio: SKEW_RATIO,
+  adImpFloor: AD_IMP_FLOOR,
+  lowCtrPct: LOW_CTR_PCT,
+  lowRankFloor: LOW_RANK_FLOOR,
+  revenueDropFloor: REVENUE_DROP_FLOOR,
+};
+
 /** 가중치를 걸 수 없는 세그먼트(성별 "알 수 없음" 등)는 비교에서 뺀다. */
 const UNKNOWN_SEGMENT = /알\s*수\s*없음|알수없음|기타/;
 
@@ -221,9 +256,12 @@ const UNKNOWN_SEGMENT = /알\s*수\s*없음|알수없음|기타/;
  * 세그먼트 간 상대 격차 판정. 절대 성과가 아니라 **구간 간 비교**다 — 모든 계정에 늘 있는
  * 미세한 차이는 (a) 양쪽 비용 문턱 (b) 격차 임계로 거른다. 통과 못 하면 null.
  */
-export function findSkew(segments: NamedMetrics[]): { best: NamedMetrics; worst: NamedMetrics } | null {
+export function findSkew(
+  segments: NamedMetrics[],
+  th: BriefThresholds = DEFAULT_THRESHOLDS,
+): { best: NamedMetrics; worst: NamedMetrics } | null {
   const comparable = segments.filter(
-    (s) => s.metrics.cost >= COST_FLOOR && !UNKNOWN_SEGMENT.test(s.label),
+    (s) => s.metrics.cost >= th.costFloor && !UNKNOWN_SEGMENT.test(s.label),
   );
   if (comparable.length < 2) return null;
   const byRoas = [...comparable].sort((a, b) => roasPct(b.metrics) - roasPct(a.metrics));
@@ -231,7 +269,7 @@ export function findSkew(segments: NamedMetrics[]): { best: NamedMetrics; worst:
   const worst = byRoas[byRoas.length - 1];
   // 전부 매출 0이면 0% vs 0% — 격차가 아니다(0 < 0x1.5가 false로 통과하는 함정).
   if (roasPct(best.metrics) <= 0) return null;
-  if (roasPct(best.metrics) < roasPct(worst.metrics) * SKEW_RATIO) return null;
+  if (roasPct(best.metrics) < roasPct(worst.metrics) * th.skewRatio) return null;
   return { best, worst };
 }
 
@@ -274,15 +312,16 @@ function skewCandidate(
   kind: BriefKind,
   dim: string,
   segments: NamedMetrics[] | undefined,
-  targetRoas?: number,
+  targetRoas: number | undefined,
+  th: BriefThresholds,
 ): BriefCandidate | null {
   if (!segments) return null;
-  const skew = findSkew(segments);
+  const skew = findSkew(segments, th);
   if (!skew) return null;
   return {
     kind,
     facts: {
-      기준: `${dim} 간 수익률 격차 ${SKEW_RATIO}배 이상 — 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
+      기준: `${dim} 간 수익률 격차 ${th.skewRatio}배 이상 — 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
       좋은쪽: skew.best.label,
       좋은쪽수익률: `${roasPct(skew.best.metrics).toFixed(0)}%`,
       나쁜쪽: skew.worst.label,
@@ -316,23 +355,24 @@ function placementTable(placements: NamedMetrics[], targetRoas?: number): BriefT
 
 export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   const { targetRoas } = input;
+  const th = input.thresholds ?? DEFAULT_THRESHOLDS;
   const rows = flattenKeywords(input.keywords);
   const out: BriefCandidate[] = [];
 
   // ① 비용 임계 이상인데 전환 0인 키워드
-  const zeroConv = rows.filter((r) => r.metrics.cost >= COST_FLOOR && r.metrics.purchaseConv === 0)
+  const zeroConv = rows.filter((r) => r.metrics.cost >= th.costFloor && r.metrics.purchaseConv === 0)
     .sort(byCostDesc);
   if (zeroConv.length > 0) {
     out.push({
       kind: "zeroConvKeyword",
       facts: {
-        기준: `광고비 ${COST_FLOOR.toLocaleString()}원 이상 소진, 구매완료 전환 0건`,
+        기준: `광고비 ${th.costFloor.toLocaleString()}원 이상 소진, 구매완료 전환 0건`,
         keywords: zeroConv.map((r) => r.keyword).join(", "),
         count: zeroConv.length,
         비용합계: zeroConv.reduce((s, r) => s + r.metrics.cost, 0),
       },
       table: {
-        title: `광고비 ${COST_FLOOR.toLocaleString()}원 이상 · 전환 0 키워드`,
+        title: `광고비 ${th.costFloor.toLocaleString()}원 이상 · 전환 0 키워드`,
         columns: KW_COLUMNS,
         rows: zeroConv.map((r) => kwRow(r, targetRoas)),
       },
@@ -345,7 +385,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   // 전환 0은 ①에서 이미 다뤘으므로 purchaseConv > 0으로 제외 — 중복 후보 방지.
   if (targetRoas != null && targetRoas > 0) {
     const below = rows.filter((r) =>
-      r.metrics.cost >= COST_FLOOR &&
+      r.metrics.cost >= th.costFloor &&
       r.metrics.purchaseConv > 0 &&
       roasBand(roasPct(r.metrics), targetRoas) === "none",
     ).sort(byCostDesc);
@@ -373,14 +413,14 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   // 순위를 못 얻었으면(자격증명 미등록 등) rank가 undefined라 자연히 후보가 안 만들어진다.
   if (targetRoas != null && targetRoas > 0 && input.rankedRows) {
     const lowRank = input.rankedRows
-      .filter((r) => r.rank != null && r.rank >= LOW_RANK_FLOOR &&
+      .filter((r) => r.rank != null && r.rank >= th.lowRankFloor &&
         roasBand(roasPct(r.metrics), targetRoas) === "green")
       .sort(byCostDesc);
     if (lowRank.length > 0) {
       out.push({
         kind: "highRoasLowRank",
         facts: {
-          기준: `목표 수익률 ${targetRoas}% 달성, 추정 순위 ${LOW_RANK_FLOOR}위 이하`,
+          기준: `목표 수익률 ${targetRoas}% 달성, 추정 순위 ${th.lowRankFloor}위 이하`,
           keywords: lowRank.map((r) => r.keyword).join(", "),
           count: lowRank.length,
           평균순위: Math.round(lowRank.reduce((s, r) => s + (r.rank ?? 0), 0) / lowRank.length),
@@ -411,7 +451,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         group: g.group,
         metrics: g.keywords.reduce((s, k) => addMetrics(s, k.metrics), ZERO_METRICS),
       }))
-      .filter((g) => g.metrics.cost >= COST_FLOOR && g.metrics.purchaseConv > 0 &&
+      .filter((g) => g.metrics.cost >= th.costFloor && g.metrics.purchaseConv > 0 &&
         roasBand(roasPct(g.metrics), targetRoas) === "none")
       .sort(byCostDesc);
     if (badGroups.length > 0) {
@@ -447,13 +487,13 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
 
   // ③ 지면 비용 임계 이상인데 전환 0
   const zeroPlace = input.placements
-    .filter((p) => p.metrics.cost >= COST_FLOOR && p.metrics.purchaseConv === 0)
+    .filter((p) => p.metrics.cost >= th.costFloor && p.metrics.purchaseConv === 0)
     .sort(byCostDesc);
   if (zeroPlace.length > 0) {
     out.push({
       kind: "zeroConvPlacement",
       facts: {
-        기준: `광고비 ${COST_FLOOR.toLocaleString()}원 이상 소진, 구매완료 전환 0건`,
+        기준: `광고비 ${th.costFloor.toLocaleString()}원 이상 소진, 구매완료 전환 0건`,
         placements: zeroPlace.map((p) => p.label).join(", "),
         count: zeroPlace.length,
         비용합계: zeroPlace.reduce((s, p) => s + p.metrics.cost, 0),
@@ -467,7 +507,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   // ⑦ 지면 전환은 있으나 none 구간 — ③(전환 0)과 겹치지 않게 purchaseConv > 0만.
   if (targetRoas != null && targetRoas > 0) {
     const lowPlace = input.placements
-      .filter((p) => p.metrics.cost >= COST_FLOOR && p.metrics.purchaseConv > 0 &&
+      .filter((p) => p.metrics.cost >= th.costFloor && p.metrics.purchaseConv > 0 &&
         roasBand(roasPct(p.metrics), targetRoas) === "none")
       .sort(byCostDesc);
     if (lowPlace.length > 0) {
@@ -487,21 +527,21 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   }
 
   // ⑧⑨ 성별/연령 가중치 — 상대 격차라 목표 ROAS 없이도 동작한다(표 색칠에만 사용).
-  const gender = skewCandidate("genderBidSkew", "성별", input.byGender, targetRoas);
+  const gender = skewCandidate("genderBidSkew", "성별", input.byGender, targetRoas, th);
   if (gender) out.push(gender);
-  const age = skewCandidate("ageBidSkew", "연령대", input.byAge, targetRoas);
+  const age = skewCandidate("ageBidSkew", "연령대", input.byAge, targetRoas, th);
   if (age) out.push(age);
-  const device = skewCandidate("deviceBidSkew", "기기", input.byDevice, targetRoas);
+  const device = skewCandidate("deviceBidSkew", "기기", input.byDevice, targetRoas, th);
   if (device) out.push(device);
 
   // ⑪ 시간대/요일 격차 — 같은 kind로 두 후보까지(시간대 하나 + 요일 하나).
-  const hour = skewCandidate("hourWeekdaySkew", "시간대", input.byHour, targetRoas);
+  const hour = skewCandidate("hourWeekdaySkew", "시간대", input.byHour, targetRoas, th);
   if (hour) out.push(hour);
   const weekday = input.byDay
-    ? skewCandidate("hourWeekdaySkew", "요일", foldByWeekday(input.byDay), targetRoas)
+    ? skewCandidate("hourWeekdaySkew", "요일", foldByWeekday(input.byDay), targetRoas, th)
     : null;
   if (weekday) out.push(weekday);
-  const region = skewCandidate("regionBidSkew", "지역", input.byRegion, targetRoas);
+  const region = skewCandidate("regionBidSkew", "지역", input.byRegion, targetRoas, th);
   if (region) out.push(region);
 
   // ⑩ 노출은 충분한데 클릭률이 낮은 파워링크 소재 — 입찰이 아니라 **문구 교체** 후보.
@@ -513,13 +553,13 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
       byLabel.set(a.label, addMetrics(byLabel.get(a.label) ?? ZERO_METRICS, a.metrics));
     }
     const lowCtr = [...byLabel.entries()].map(([label, metrics]) => ({ label, metrics }))
-      .filter((a) => a.metrics.impressions >= AD_IMP_FLOOR && ctrPct(a.metrics) < LOW_CTR_PCT)
+      .filter((a) => a.metrics.impressions >= th.adImpFloor && ctrPct(a.metrics) < th.lowCtrPct)
       .sort((a, b) => b.metrics.impressions - a.metrics.impressions);
     if (lowCtr.length > 0) {
       out.push({
         kind: "lowCtrAd",
         facts: {
-          기준: `노출 ${AD_IMP_FLOOR.toLocaleString()}회 이상, 클릭률 ${LOW_CTR_PCT}% 미만 — 소재 문구 교체 검토`,
+          기준: `노출 ${th.adImpFloor.toLocaleString()}회 이상, 클릭률 ${th.lowCtrPct}% 미만 — 소재 문구 교체 검토`,
           ads: lowCtr.map((a) => a.label).join(", "),
           count: lowCtr.length,
         },
@@ -550,7 +590,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
     const dropped = input.products
       .filter((p) =>
         p.cur.purchaseConv < p.prev.purchaseConv &&
-        p.prev.revenue - p.cur.revenue >= REVENUE_DROP_FLOOR,
+        p.prev.revenue - p.cur.revenue >= th.revenueDropFloor,
       )
       .sort((a, b) => (b.prev.revenue - b.cur.revenue) - (a.prev.revenue - a.cur.revenue));
     if (dropped.length > 0) {

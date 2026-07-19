@@ -185,6 +185,17 @@ export interface MultiAccountUserMeta {
   briefReportType?: "post_action_report" | "pre_action_proposal";
   /** F-Brief 이 광고주의 보고 톤 기억. undefined = 기본(상세하게). */
   briefTone?: "short" | "detailed" | "numeric" | "soft" | "professional" | "friendly";
+  /** F-Brief 이슈 기준 민감도. undefined = 보통(광고비 규모 자동 보정). */
+  briefSensitivity?: "sensitive" | "normal" | "loose" | "custom";
+  /** F-Brief 이슈 기준 직접 설정값 — briefSensitivity === "custom"일 때만 사용. */
+  briefThresholds?: {
+    costFloor?: number;
+    skewRatio?: number;
+    adImpFloor?: number;
+    lowCtrPct?: number;
+    lowRankFloor?: number;
+    revenueDropFloor?: number;
+  };
 }
 
 /**

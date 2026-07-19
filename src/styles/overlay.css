@@ -4623,6 +4623,25 @@ td.dvads-period-delta-down {
   padding: 10px 20px 0;
 }
 
+/* F-Brief 이슈 기준 다이얼로그 (프리셋 칩 + 직접 설정) */
+.dvads-brief-preset-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.dvads-brief-preset-chip {
+  padding: 6px 14px; border: 1px solid #e2e5ea; border-radius: 8px; background: #fff;
+  font: 500 13px/1.4 Pretendard, -apple-system, sans-serif; color: #404040; cursor: pointer;
+}
+.dvads-brief-preset-chip.is-on { border-color: #E6783B; color: #E6783B; background: #FDF3EC; }
+.dvads-brief-custom-row {
+  display: flex; align-items: center; gap: 8px; padding: 6px 0;
+  font: 400 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+.dvads-brief-custom-row > span:first-child { flex: 1; }
+.dvads-brief-custom-input {
+  width: 100px; padding: 6px 10px; border: 1px solid #e2e5ea; border-radius: 8px;
+  font: 400 13px/1.4 Pretendard, -apple-system, sans-serif; text-align: right;
+}
+.dvads-brief-custom-input:focus { outline: none; border-color: #E6783B; }
+.dvads-brief-custom-unit { color: #9aa1ab; font-size: 12px; width: 20px; }
+
 /* F-Brief 내 말투 설정 다이얼로그 */
 .dvads-brief-tone-hint {
   font: 400 12px/1.6 Pretendard, -apple-system, sans-serif; color: #6b7280;

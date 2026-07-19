@@ -25,7 +25,9 @@ import { type RankPosition } from "@/types/storage";
 import { type GetBidEstimateRequest, type GetBidEstimateResponse } from "@/types/messages";
 import { collectBriefData, buildSummaryText, buildSummarySpec, fetchPowerlinkBidMap, won, type BriefData } from "./brief-data";
 import { rangeText } from "@/features/report/report-period";
-import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate, type BriefTargetSnapshot } from "./brief-rules";
+import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate, type BriefTargetSnapshot, type BriefRuleInput, type BriefThresholds } from "./brief-rules";
+import { resolveThresholds, type BriefSensitivity } from "./brief-thresholds";
+import { openBriefThresholdDialog } from "./brief-threshold-panel";
 import { composeBlocks, toPrevReport, type ComposedBlock } from "./brief-compose";
 import { renderBriefPanel, renderBriefPickPanel, closeBriefPanel, type BriefBlock, type BriefPickState } from "./brief-panel";
 import { saveBriefHistory, fetchBriefHistory, candidatesToActions, type BriefHistoryRecord, type BriefTone, type BriefSentStatus } from "./brief-history";
@@ -121,6 +123,25 @@ interface BriefContext {
   changeRes: BriefChangeFetchResult;
   /** 패널 1회당 이력 레코드 1건(id 고정 upsert) — 재생성해도 같은 보고로 취급. */
   historyId: string;
+  /** 이슈 기준 변경 시 재계산 재료 — 재수집 없이 규칙 엔진만 다시 돌린다. */
+  ruleInput: Omit<BriefRuleInput, "thresholds">;
+  followCand: BriefCandidate | null;
+  changeCands: BriefCandidate[];
+  sensitivity: BriefSensitivity;
+  customThresholds: Partial<BriefThresholds>;
+}
+
+/** 이슈 기준(민감도)으로 규칙 엔진만 다시 돌려 후보 목록을 갈아끼운다 — 수집 재사용. */
+function rebuildCandidates(ctx: BriefContext): void {
+  const thresholds = resolveThresholds({
+    sensitivity: ctx.sensitivity,
+    custom: ctx.customThresholds,
+    totalCost: ctx.data.model.totalCurrent.cost,
+  });
+  const next = extractCandidates({ ...ctx.ruleInput, thresholds });
+  next.unshift(...ctx.changeCands);
+  if (ctx.followCand) next.unshift(ctx.followCand);
+  ctx.candidates = next;
 }
 
 async function run(target: ReportTarget, range: DateRange): Promise<void> {
@@ -156,8 +177,15 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
 
     // 순위 보강 — 후보로 좁힌 뒤에만 조회한다(전체면 수백 회 호출).
     // 실패해도 다른 후보는 살린다 — 자격증명 미등록이 흔하다.
+    // 이슈 기준 — 프리셋(민감도) + 총광고비 자동 보정 + 직접 설정.
+    const sensitivity: BriefSensitivity = meta?.briefSensitivity ?? "normal";
+    const customThresholds = meta?.briefThresholds ?? {};
+    const thresholds = resolveThresholds({
+      sensitivity, custom: customThresholds, totalCost: data.model.totalCurrent.cost,
+    });
+
     const plRows = flattenKeywords(data.plKeywords);
-    const rankTargets = pickRankTargets(plRows, targetRoas);
+    const rankTargets = pickRankTargets(plRows, targetRoas, thresholds);
     if (rankTargets.length > 0 && target.masterCustomerId != null) {
       try {
         await fillRanks(target.masterCustomerId, rankTargets);
@@ -167,7 +195,7 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
     }
     if (stale()) return;
 
-    const candidates = extractCandidates({
+    const ruleInput: Omit<BriefRuleInput, "thresholds"> = {
       keywords: [...data.plKeywords, ...data.shKeywords],
       placements: data.model.byPlacement,
       targetRoas,
@@ -180,7 +208,8 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
       byHour: data.byHour,
       byDay: data.model.byDay,
       byRegion: data.byRegion,
-    });
+    };
+    const candidates = extractCandidates({ ...ruleInput, thresholds });
 
     // 변경 이력 후보 — 전기 지표는 상품 델타에서만 나온다(추가 API 호출 없음).
     // 키워드 등 전기 지표가 없는 대상은 "판단 보류"로 변경 사실만 전달된다.
@@ -199,15 +228,14 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
     candidates.unshift(...changeCands);
 
     // 지난 조치 추적 — 후속 언급이 보고의 첫 화제(보고 관례)라 맨 앞에 둔다.
-    if (lastHistory) {
-      const follow = buildFollowUpCandidate(lastHistory, currentMap);
-      if (follow) candidates.unshift(follow);
-    }
+    const followCand = lastHistory ? buildFollowUpCandidate(lastHistory, currentMap) : null;
+    if (followCand) candidates.unshift(followCand);
 
     hideProgress();
     const ctx: BriefContext = {
       target, data, candidates, targetRoas, lastHistory, changeRes,
       historyId: crypto.randomUUID(),
+      ruleInput, followCand, changeCands, sensitivity, customThresholds,
     };
     // 선택 화면이 먼저다 — AE가 고른 것만 문구가 된다(구조 개편).
     showSelection(ctx, {
@@ -235,6 +263,27 @@ function showSelection(ctx: BriefContext, initial?: Partial<BriefPickState>): vo
       : undefined,
     initial,
     onToneSettings: () => openBriefToneDialog(),
+    onThresholdSettings: () => {
+      openBriefThresholdDialog({
+        sensitivity: ctx.sensitivity,
+        custom: ctx.customThresholds,
+        totalCost: ctx.data.model.totalCurrent.cost,
+        onClose: () => showSelection(ctx, initial),
+        onSave: (sensitivity, custom) => {
+          ctx.sensitivity = sensitivity;
+          ctx.customThresholds = custom;
+          // 광고주별 저장 — 실패해도 이번 세션 재계산은 진행.
+          void updateUserMeta(ctx.target.adAccountNo, {
+            briefSensitivity: sensitivity,
+            briefThresholds: sensitivity === "custom" ? custom : undefined,
+          }).catch((e) => console.warn("[dv-ads/brief] 이슈 기준 저장 실패", e));
+          rebuildCandidates(ctx);
+          // 후보 구성이 바뀌어 선택 인덱스는 무효 — 유형·톤만 유지하고 새로 고른다.
+          showSelection(ctx, { reportType: initial?.reportType, tone: initial?.tone });
+          showToast({ message: "이슈 기준을 바꿨어요. 목록을 다시 만들었어요", variant: "success" });
+        },
+      });
+    },
     onShowHistory: () => {
       closeBriefPanel();
       openBriefHistoryPanel(ctx.target.adAccountNo, ctx.target.name, () => showSelection(ctx, initial));

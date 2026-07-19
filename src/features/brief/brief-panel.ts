@@ -299,6 +299,8 @@ export interface BriefPickOpts {
   onCompose: (selected: BriefCandidate[], state: BriefPickState) => void;
   /** "내 말투 설정" 버튼. */
   onToneSettings?: () => void;
+  /** "이슈 기준" 버튼 — 민감도/직접 설정. */
+  onThresholdSettings?: () => void;
   /** "지난 보고" 버튼. */
   onShowHistory?: () => void;
 }
@@ -488,11 +490,19 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
 
   const foot = document.createElement("div");
   foot.className = "dvads-brief-foot";
+  if (opts.onThresholdSettings) {
+    const thBtn = document.createElement("button");
+    thBtn.type = "button";
+    thBtn.className = "dvads-btn";
+    thBtn.textContent = "이슈 기준";
+    thBtn.addEventListener("click", () => opts.onThresholdSettings?.());
+    foot.appendChild(thBtn);
+  }
   if (opts.onToneSettings) {
     const toneBtn = document.createElement("button");
     toneBtn.type = "button";
     toneBtn.className = "dvads-btn";
-    toneBtn.textContent = "내 말투 설정";
+    toneBtn.textContent = "내 말투";
     toneBtn.addEventListener("click", () => opts.onToneSettings?.());
     foot.appendChild(toneBtn);
   }
