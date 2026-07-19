@@ -4588,6 +4588,13 @@ td.dvads-period-delta-down {
   flex: 1; min-width: 0;
   font: 400 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
 }
+.dvads-brief-pick-title {
+  font-weight: 600; font-size: 14px; color: #171717;
+}
+.dvads-brief-pick-data {
+  margin-top: 2px; font-size: 12px; color: #6b7280;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .dvads-brief-pick-memo {
   margin-top: 16px; width: 100%; padding: 10px 12px;
   border: 1px solid #e2e5ea; border-radius: 8px; resize: vertical;

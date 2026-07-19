@@ -240,21 +240,68 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
 
 // ── 후보 선택 화면 (AE선택 모드) ─────────────────────────────────────────
 //
-// 완전자동과 같은 엔진 — 완전자동은 체크박스를 AI가 미리 채운 상태일 뿐(설계 §7).
-// 체크한 후보만 서버로 간다. 액션 dropdown의 "AI가 판단"은 action을 비워 보내
-// AI가 목록(raise/hold/...)에서 고르게 한다.
+// 체크한 후보만 서버로 간다. 액션은 항상 AI가 목록(raise/hold/...)에서 고른다 —
+// 액션 지정 dropdown은 가독성 문제로 제거(2026-07-19), action은 비워서 보낸다.
 
-/** 액션 dropdown 값 — "ai"는 action 미지정(AI가 고름). */
-type PickAction = "ai" | BriefAction;
+/** 숫자 리스트 문자열을 한 줄 요약으로 — 길면 "가방, 지갑 외 3개"로 줄인다. */
+function shortList(raw: unknown, count: unknown): string {
+  const items = String(raw ?? "").split(", ").filter((s) => s !== "");
+  if (items.length === 0) return "";
+  const shown = items.slice(0, 2).join(", ");
+  const rest = (typeof count === "number" ? count : items.length) - Math.min(items.length, 2);
+  return rest > 0 ? `${shown} 외 ${rest}개` : shown;
+}
 
-const PICK_ACTION_OPTIONS: Array<{ value: PickAction; label: string }> = [
-  { value: "ai", label: "AI가 판단" },
-  { value: "raise", label: "입찰가 상향" },
-  { value: "hold", label: "유지 후 관찰" },
-  { value: "lower", label: "입찰가 하향" },
-  { value: "exclude", label: "제외 처리" },
-  { value: "ask", label: "광고주에게 문의" },
-];
+function wonOf(v: unknown): string {
+  return typeof v === "number" ? `${v.toLocaleString()}원` : "";
+}
+
+/** 후보 → 제목 + 데이터 한 줄. 긴 판정 문장 대신 "무엇인지 + 근거 수치"를 보여준다. */
+export function pickRowText(c: BriefCandidate): { title: string; sub: string } {
+  const f = c.facts;
+  const join = (parts: Array<string | undefined>) => parts.filter((p) => p && p !== "").join(" · ");
+  switch (c.kind) {
+    case "pastActionFollowUp":
+      return {
+        title: `지난 조치 성과 추적 (${f["지난보고일"] ?? ""})`,
+        sub: join([shortList(f["대상"], f["count"]), `수익률 ${f["당시수익률"]} → ${f["이번수익률"]}`]),
+      };
+    case "changeFollowUp":
+      return {
+        title: `변경 이후 성과 (${f["변경일"] ?? ""})`,
+        sub: join([String(f["대상"] ?? ""), String(f["변경내용"] ?? ""), `평가 ${f["평가"] ?? ""}`]),
+      };
+    case "zeroConvKeyword":
+      return { title: "전환 없는 키워드", sub: join([shortList(f["keywords"], f["count"]), `광고비 ${wonOf(f["비용합계"])}`]) };
+    case "belowTargetKeyword":
+      return { title: "목표 수익률 미달 키워드", sub: join([shortList(f["keywords"], f["count"]), `광고비 ${wonOf(f["비용합계"])}`]) };
+    case "belowTargetGroup":
+      return { title: "목표 수익률 미달 광고그룹", sub: join([shortList(f["groups"], f["count"]), `광고비 ${wonOf(f["비용합계"])}`]) };
+    case "highRoasLowRank":
+      return { title: "잘되는데 순위가 낮은 키워드", sub: join([shortList(f["keywords"], f["count"]), `평균 ${f["평균순위"]}위`]) };
+    case "zeroConvPlacement":
+      return { title: "전환 없는 지면", sub: join([shortList(f["placements"], f["count"]), `광고비 ${wonOf(f["비용합계"])}`]) };
+    case "lowRoasPlacement":
+      return { title: "수익률 낮은 지면", sub: join([shortList(f["placements"], f["count"]), `광고비 ${wonOf(f["비용합계"])}`]) };
+    case "lowCtrAd":
+      return { title: "클릭률 낮은 소재", sub: shortList(f["ads"], f["count"]) };
+    case "productConvDrop":
+      return { title: "전환 줄어든 상품", sub: join([shortList(f["products"], f["count"]), `매출 ${wonOf(f["매출감소합계"])} 감소`]) };
+    case "genderBidSkew":
+    case "ageBidSkew":
+    case "deviceBidSkew":
+    case "hourWeekdaySkew":
+    case "regionBidSkew": {
+      const dim = String(f["기준"] ?? "").split(" 간 ")[0] || "구간";
+      return {
+        title: `${dim} 효율 격차`,
+        sub: `${f["좋은쪽"]} ${f["좋은쪽수익률"]} vs ${f["나쁜쪽"]} ${f["나쁜쪽수익률"]}`,
+      };
+    }
+    default:
+      return { title: String(f["기준"] ?? c.kind), sub: "" };
+  }
+}
 
 /** 선택 화면의 전체 상태 — "다시 고르기" 복귀 시 그대로 복원한다. */
 export interface BriefPickState {
@@ -440,27 +487,20 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     });
     row.appendChild(cb);
 
-    const label = document.createElement("span");
-    label.className = "dvads-brief-pick-label";
-    // 변경 이력 후보는 "기준"이 전부 같아 구분이 안 된다 — 대상 + 변경 내용으로 표시.
-    label.textContent =
-      pick.kind === CHANGE_HISTORY_KIND
-        ? `${pick.facts["대상"] ?? ""} · ${pick.facts["변경내용"] ?? ""}`.replace(/^ · /, "")
-        : String(pick.facts["기준"] ?? pick.kind);
-    row.appendChild(label);
-
-    const dd = createDropdown<PickAction>({
-      value: pick.action ?? "ai",
-      options: PICK_ACTION_OPTIONS,
-      ariaLabel: "액션 선택",
-      width: 140,
-      onChange: (v) => {
-        pick.action = v === "ai" ? undefined : v;
-      },
-    });
-    // dropdown 클릭이 label 체크박스를 토글하지 않게.
-    dd.root.addEventListener("click", (e) => e.preventDefault());
-    row.appendChild(dd.root);
+    const { title, sub } = pickRowText(pick);
+    const main = document.createElement("span");
+    main.className = "dvads-brief-pick-label";
+    const titleEl = document.createElement("div");
+    titleEl.className = "dvads-brief-pick-title";
+    titleEl.textContent = title;
+    main.appendChild(titleEl);
+    if (sub) {
+      const subEl = document.createElement("div");
+      subEl.className = "dvads-brief-pick-data";
+      subEl.textContent = sub;
+      main.appendChild(subEl);
+    }
+    row.appendChild(main);
 
     body.appendChild(row);
 
