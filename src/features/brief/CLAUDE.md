@@ -1,6 +1,6 @@
 # F-Brief — 광고주 보고 문구 생성 (AX 1호)
 
-F-MultiAccount 행 메뉴 "보고 문구" → 기간 선택 → `collectReportData` 재사용(엑셀 제외) → 규칙 엔진 후보 추출 → AI가 문장만 조립 → 블록별 복사(카톡은 텍스트/이미지를 한 메시지에 못 붙임). 설계 `docs/superpowers/specs/2026-07-16-f-brief-design.md` / 계획 `docs/superpowers/plans/2026-07-16-f-brief.md`.
+F-MultiAccount 행 메뉴 "보고 문구" → 기간 선택 → 수집(성과 ∥ 지난 보고 ∥ 변경 이력) → 규칙 엔진 후보 추출 → **이슈 선택 화면 먼저**(체크 + 보고 유형 사후보고/사전제안 + 톤 6종 + 이전 이력/변경 이력 토글) → 선택한 이슈만 AI 조립 → 결과 패널(재생성 버튼군 + 저장/복사). **자동 전체 생성 모드는 폐기**(2026-07-19 구조 개편) — AE가 고른 것만 문구가 된다. 설계 `docs/superpowers/specs/2026-07-16-f-brief-design.md` / 계획 `docs/superpowers/plans/2026-07-16-f-brief.md`.
 
 ## 핵심 원칙 — AI는 분석가가 아니라 번역기 (3겹 방어)
 
@@ -20,6 +20,11 @@ F-MultiAccount 행 메뉴 "보고 문구" → 기간 선택 → `collectReportDa
 - `brief-history.ts` — 서버 이력 저장/조회(테이블 `brief_history`, RLS 본인+approved). **저장 시점 = 복사한 순간**(패널 1회당 upsert 1건, id 고정) - 생성만 하고 닫으면 기록 없음. 저장 실패는 복사를 막지 않는다(토스트 1회). 저장은 원본 구조(kind/facts/action + 숫자 targets) - LLM용 가공 금지.
 - `brief-followup.ts` — 지난 조치 추적 후보(`pastActionFollowUp`, 순수+vitest). 최신 이력 1건의 targets를 현재 지표와 **라벨 문자열 매칭** - 키워드명 변경 시 추적 끊김(허용된 한계). 후보 목록 맨 앞에 unshift.
 - `brief-history-panel.ts` — 지난 보고 목록/상세(결과 패널 "지난 보고" 버튼). 저장은 원본 구조, 화면은 그때그때 변환(설계 §7).
+- `brief-change-rules.ts` — 변경 이력 후보(`changeFollowUp`, 순수+vitest). change-watch 판정의 **역방향**(우리 팀 작업자 포함 매칭). 전/후 성과는 추가 API 호출 없이 전기/현기 지표 라벨 매칭 — 기간 중간 변경은 "판단 보류"로 성과 단정 금지(프롬프트 이중 방어). 대상당 최신 1건, 상한 8건.
+- `brief-change-data.ts` — 변경이력 fetch(조회 창 = 기간 시작 14일 전~기간 끝). 작업자 목록(`change_watch_identity`) 비면 후보 0 + 선택 화면 토글 비활성. 실패해도 흐름 계속.
+- `brief-tone.ts` / `brief-tone-panel.ts` — AE 개인 말투(테이블 `brief_tone`, 사용자당 1행). 채팅 이력 붙여넣기 → 서버 `mode:"distillTone"`으로 말투 프롬프트 생성 → 미리보기 수정 → 저장. compose 때는 **서버가 JWT 사용자 id로 tone_prompt를 직접 읽는다**(payload로 안 보냄 - 조작 방지), 없으면 기본 `TONE_SAMPLES`.
+- 보고 유형/톤은 광고주별로 기억(`MultiAccountUserMeta.briefReportType/briefTone`) — "보고문 만들기" 확정 시 조용히 저장, 실패해도 진행.
+- 결과 패널 재생성 버튼군(다시 생성/더 짧게/더 부드럽게/숫자 중심)은 톤만 바꿔 재compose — 편집분이 있으면 확인 후 덮어씀. 패널 uuid 유지(같은 보고로 upsert, `ai_draft` 갱신).
 - 서버: `supabase/functions/brief-compose/index.ts` — 프로젝트 `gvyvrjncpwmcwycebrhf`(dvcompany). 말투 샘플·프롬프트는 서버에 — 확장 재배포 없이 튜닝. 배포: `supabase functions deploy brief-compose --no-verify-jwt`.
 
 ## 확장 규칙 (Task 12~17, 2026-07-17 완료)

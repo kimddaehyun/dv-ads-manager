@@ -34,7 +34,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - `src/features/change-watch/` — F-ChangeWatch 변경이력 모니터링 알림.
 - `src/features/setup/` — F-Setup 세팅안 엑셀.
 - `src/features/report/` — F-Report 리포트 엑셀 (+ `scripts/test-report-*.ts` node 테스트). `collectReportData()`(수집만, 엑셀 제외)는 F-Brief와 공유 — 병렬 구조 변경 금지(성능 감사 2026-07-02).
-- `src/features/brief/` — F-Brief 광고주 보고 문구(AX 1호). `collectReportData` 재사용 → 규칙 엔진(`brief-rules.ts`, vitest) 후보 추출 → AI(Supabase Edge Function `brief-compose` + Gemini)가 문장만 조립. **AI는 분석가가 아니라 번역기** — 3겹: ①요약은 AI 미경유 ②체크된 facts만 전송 ③숫자 검산(`brief-verify.ts`). AI 판단 문단은 좌측 3px 주황 선. 표는 캡처가 아니라 canvas 생성(`brief-table.ts`). 목표 ROAS는 `MultiAccountUserMeta.targetRoas`(미설정 시 분류 비활성, 자동 추정 안 함). 서버 인증은 로그인 세션(JWT) + `approved` 확인(F-Accounts, 이용 코드 방식 폐기), `@supabase/supabase-js` 미사용.
+- `src/features/brief/` — F-Brief 광고주 보고 문구(AX 1호). `collectReportData` 재사용 → 규칙 엔진(`brief-rules.ts`, vitest) 후보 추출 → **이슈 선택 화면 먼저**(보고 유형/톤/이력 토글, 2026-07-19 선택 우선 개편 - 자동 전체 생성 폐기) → 선택분만 AI(Supabase Edge Function `brief-compose` + Gemini)가 문장 조립. **AI는 분석가가 아니라 번역기** — 3겹: ①요약은 AI 미경유 ②체크된 facts만 전송 ③숫자 검산(`brief-verify.ts`). AI 판단 문단은 좌측 3px 주황 선. 표는 캡처가 아니라 canvas 생성(`brief-table.ts`). 목표 ROAS는 `MultiAccountUserMeta.targetRoas`(미설정 시 분류 비활성, 자동 추정 안 함). 서버 인증은 로그인 세션(JWT) + `approved` 확인(F-Accounts, 이용 코드 방식 폐기), `@supabase/supabase-js` 미사용.
 - `src/shared/` — 공용 UI(toast·다이얼로그·dropdown)와 searchad API 클라이언트. **오버레이 UI(팝오버·다이얼로그·표)를 만들거나 고칠 땐 `src/shared/CLAUDE.md`의 UI 패턴 절 필독.**
 - `src/background/` — MV3 Service Worker (API fetch 위임, 이미지 binary fetch). `src/popup/`·`src/options/` — React 진입점. `src/types/` — 공용 타입. `manifest.config.ts` — 빌드 시 manifest 생성 (콘텐츠 스크립트 3개 등록).
 
