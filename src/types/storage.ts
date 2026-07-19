@@ -181,6 +181,10 @@ export interface MultiAccountUserMeta {
    * undefined = 미설정 - 구간 분류 후보를 만들지 않는다(자동 추정 안 함).
    */
   targetRoas?: number;
+  /** F-Brief 이 광고주의 보고 유형 기억 (사후보고/사전제안). undefined = 기본(사후보고). */
+  briefReportType?: "post_action_report" | "pre_action_proposal";
+  /** F-Brief 이 광고주의 보고 톤 기억. undefined = 기본(상세하게). */
+  briefTone?: "short" | "detailed" | "numeric" | "soft" | "professional" | "friendly";
 }
 
 /**
