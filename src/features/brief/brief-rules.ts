@@ -321,7 +321,7 @@ function skewCandidate(
   return {
     kind,
     facts: {
-      기준: `${dim} 간 수익률 격차 ${th.skewRatio}배 이상 — 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
+      기준: `${dim} 간 수익률 격차 ${th.skewRatio}배 이상 - 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
       좋은쪽: skew.best.label,
       좋은쪽수익률: `${roasPct(skew.best.metrics).toFixed(0)}%`,
       나쁜쪽: skew.worst.label,
@@ -559,7 +559,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
       out.push({
         kind: "lowCtrAd",
         facts: {
-          기준: `노출 ${th.adImpFloor.toLocaleString()}회 이상, 클릭률 ${th.lowCtrPct}% 미만 — 소재 문구 교체 검토`,
+          기준: `노출 ${th.adImpFloor.toLocaleString()}회 이상, 클릭률 ${th.lowCtrPct}% 미만 - 소재 문구 교체 검토`,
           ads: lowCtr.map((a) => a.label).join(", "),
           count: lowCtr.length,
         },
