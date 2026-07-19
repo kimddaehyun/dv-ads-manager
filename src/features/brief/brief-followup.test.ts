@@ -11,6 +11,8 @@ const history: BriefHistoryRecord = {
   message: "...",
   actions: [{ kind: "zeroConvKeyword", facts: {}, action: "lower", targets: [t("가방", 50_000, 0), t("지갑", 30_000, 0)] }],
   snapshot: { totals: { cost: 100_000, revenue: 400_000, roas: 400 }, prevTotals: { cost: 0, revenue: 0, roas: 0 } },
+  reportType: "post_action_report", tone: "detailed", aiDraft: "",
+  includedPreviousHistory: false, includedChangeHistory: false, relatedChangeIds: [], sentStatus: "copied",
   createdAt: "2026-07-10T09:00:00Z",
 };
 

@@ -248,6 +248,14 @@ function showResult(
       periodUntil: data.range.until,
       message: fullMessage,
       actions: candidatesToActions(candidates),
+      // T6(흐름 반전)에서 실제 선택값으로 교체된다 — 그때까지는 기존 자동 흐름의 기본값.
+      reportType: "post_action_report",
+      tone: "detailed",
+      aiDraft: "",
+      includedPreviousHistory: false,
+      includedChangeHistory: false,
+      relatedChangeIds: [],
+      sentStatus: "copied",
       snapshot: {
         totals: { cost: data.model.totalCurrent.cost, revenue: data.model.totalCurrent.revenue, roas: roasPct(data.model.totalCurrent) },
         prevTotals: { cost: data.model.totalPrev.cost, revenue: data.model.totalPrev.revenue, roas: roasPct(data.model.totalPrev) },

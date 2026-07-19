@@ -23,6 +23,10 @@ export interface BriefTotals {
   roas: number;
 }
 
+export type BriefReportType = "post_action_report" | "pre_action_proposal";
+export type BriefTone = "short" | "detailed" | "numeric" | "soft" | "professional" | "friendly";
+export type BriefSentStatus = "copied" | "saved_only";
+
 export interface BriefHistoryRecord {
   id: string;
   adAccountNo: number;
@@ -34,6 +38,15 @@ export interface BriefHistoryRecord {
   message: string;
   actions: BriefHistoryAction[];
   snapshot: { totals: BriefTotals; prevTotals: BriefTotals };
+  reportType: BriefReportType;
+  tone: BriefTone;
+  /** compose 직후 초안 — message(최종 편집본)와 비교/추적용. 재생성 시 갱신. */
+  aiDraft: string;
+  includedPreviousHistory: boolean;
+  includedChangeHistory: boolean;
+  /** 보고에 반영한 변경이력 이벤트 id 목록. */
+  relatedChangeIds: string[];
+  sentStatus: BriefSentStatus;
   createdAt: string;
 }
 
@@ -56,6 +69,13 @@ export async function saveBriefHistory(rec: Omit<BriefHistoryRecord, "createdAt"
     message: rec.message,
     actions: rec.actions,
     snapshot: rec.snapshot,
+    report_type: rec.reportType,
+    tone: rec.tone,
+    ai_draft: rec.aiDraft,
+    included_previous_history: rec.includedPreviousHistory,
+    included_change_history: rec.includedChangeHistory,
+    related_change_ids: rec.relatedChangeIds,
+    sent_status: rec.sentStatus,
     updated_at: new Date().toISOString(),
   });
   if (error) {
@@ -70,7 +90,7 @@ const EMPTY_TOTALS: BriefTotals = { cost: 0, revenue: 0, roas: 0 };
 export async function fetchBriefHistory(adAccountNo: number, limit = 10): Promise<BriefHistoryRecord[]> {
   const { data, error } = await getSupabase()
     .from("brief_history")
-    .select("id, ad_account_no, advertiser_name, period_since, period_until, message, actions, snapshot, created_at")
+    .select("id, ad_account_no, advertiser_name, period_since, period_until, message, actions, snapshot, report_type, tone, ai_draft, included_previous_history, included_change_history, related_change_ids, sent_status, created_at")
     .eq("ad_account_no", adAccountNo)
     .order("created_at", { ascending: false })
     .limit(limit);
@@ -89,6 +109,13 @@ export async function fetchBriefHistory(adAccountNo: number, limit = 10): Promis
     snapshot: (r.snapshot && typeof r.snapshot === "object" && "totals" in (r.snapshot as object)
       ? r.snapshot
       : { totals: EMPTY_TOTALS, prevTotals: EMPTY_TOTALS }) as BriefHistoryRecord["snapshot"],
+    reportType: ((r.report_type as string) === "pre_action_proposal" ? "pre_action_proposal" : "post_action_report") as BriefReportType,
+    tone: ((r.tone as string) || "detailed") as BriefTone,
+    aiDraft: (r.ai_draft as string) ?? "",
+    includedPreviousHistory: Boolean(r.included_previous_history),
+    includedChangeHistory: Boolean(r.included_change_history),
+    relatedChangeIds: Array.isArray(r.related_change_ids) ? (r.related_change_ids as string[]) : [],
+    sentStatus: ((r.sent_status as string) === "saved_only" ? "saved_only" : "copied") as BriefSentStatus,
     createdAt: (r.created_at as string) ?? "",
   }));
 }
