@@ -3,7 +3,7 @@ import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
   pickRankTargets, LOW_RANK_FLOOR, SKEW_RATIO, AD_IMP_FLOOR, LOW_CTR_PCT, foldByWeekday,
-  type BriefProductDelta,
+  type BriefProductDelta, type BriefGroupData, type BriefAdRow,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
 import { type KeywordGroup } from "@/features/report/report-variable";
@@ -61,6 +61,11 @@ function m(cost: number, purchaseConv: number, revenue: number): ReportMetrics {
   return { ...ZERO_METRICS, cost, purchaseConv, revenue };
 }
 
+// 그룹별 차원 데이터 헬퍼 — 모든 세그먼트 판정은 캠페인 > 그룹 단위(2026-07-20 개편).
+function gd(campaign: string, group: string, i: number, dims: Partial<BriefGroupData>): BriefGroupData {
+  return { campaign, group, nccCampaignId: `cmp-${i}`, nccAdgroupId: `grp-${i}`, ...dims };
+}
+
 const GROUPS: KeywordGroup[] = [
   {
     campaign: "[DV] 대나무",
@@ -93,17 +98,19 @@ describe("flattenKeywords", () => {
 });
 
 describe("extractCandidates", () => {
-  const base = { keywords: GROUPS, placements: [] as NamedMetrics[], targetRoas: 800 };
+  const base = { keywords: GROUPS, targetRoas: 800 };
 
   it("COST_FLOOR는 1만원", () => {
     expect(COST_FLOOR).toBe(10_000);
   });
 
-  it("비용 임계 이상 + 전환 0 → zeroConvKeyword", () => {
+  it("비용 임계 이상 + 전환 0 → zeroConvKeyword (그룹 scope 부착)", () => {
     const c = extractCandidates(base).find((x) => x.kind === "zeroConvKeyword");
     expect(c).toBeDefined();
     expect(c!.facts.keywords).toBe("대나무돗자리");
     expect(c!.facts.count).toBe(1);
+    expect(c!.scope).toMatchObject({ campaign: "[DV] 대나무", group: "1. 기본 상품명" });
+    expect(c!.facts.캠페인).toBe("[DV] 대나무");
   });
 
   it("비용 임계 미만은 전환 0이어도 후보에서 제외", () => {
@@ -132,19 +139,35 @@ describe("extractCandidates", () => {
     expect(cands.find((x) => x.kind === "zeroConvKeyword")).toBeDefined();
   });
 
-  it("지면 비용 임계 이상 + 전환 0 → zeroConvPlacement", () => {
-    const placements: NamedMetrics[] = [
+  it("키워드 이슈는 그룹마다 따로 만들어진다 — 다른 그룹 데이터가 섞이지 않는다", () => {
+    const two: KeywordGroup[] = [
+      { campaign: "A", group: "G1", keywords: [{ keyword: "a전환없음", metrics: m(20_000, 0, 0) }] },
+      { campaign: "B", group: "G2", keywords: [{ keyword: "b전환없음", metrics: m(20_000, 0, 0) }] },
+    ];
+    const cands = extractCandidates({ keywords: two, targetRoas: 800 })
+      .filter((x) => x.kind === "zeroConvKeyword");
+    expect(cands).toHaveLength(2);
+    expect(cands[0].facts.keywords).toBe("a전환없음");
+    expect(cands[0].scope?.campaign).toBe("A");
+    expect(cands[1].facts.keywords).toBe("b전환없음");
+    expect(cands[1].scope?.campaign).toBe("B");
+  });
+
+  it("지면 비용 임계 이상 + 전환 0 → zeroConvPlacement (그룹 데이터로만 판정)", () => {
+    const byPlacement: NamedMetrics[] = [
       { label: "네이버 메인", metrics: m(31_000, 0, 0) },
       { label: "네이버 검색", metrics: m(80_000, 10, 800_000) },
       { label: "기타", metrics: m(500, 0, 0) },
     ];
-    const c = extractCandidates({ ...base, placements }).find((x) => x.kind === "zeroConvPlacement");
+    const c = extractCandidates({ ...base, groups: [gd("C", "G", 1, { byPlacement })] })
+      .find((x) => x.kind === "zeroConvPlacement");
     expect(c!.facts.placements).toBe("네이버 메인");
+    expect(c!.scope).toMatchObject({ campaign: "C", group: "G", nccAdgroupId: "grp-1" });
   });
 
-  it("후보의 표는 kind가 결정한다 — 행에 band가 칠해진다", () => {
+  it("후보의 표는 kind가 결정한다 — 발화 행에 problem이 칠해진다", () => {
     const c = extractCandidates(base).find((x) => x.kind === "belowTargetKeyword");
-    expect(c!.table.rows.some((r) => r.band === "none")).toBe(true);
+    expect(c!.table.rows.some((r) => r.problem)).toBe(true);
   });
 
   it("기본 선택은 전부 해제 — AE선택 모드의 시작 상태", () => {
@@ -152,7 +175,7 @@ describe("extractCandidates", () => {
   });
 
   it("후보가 없으면 빈 배열", () => {
-    expect(extractCandidates({ keywords: [], placements: [], targetRoas: 800 })).toEqual([]);
+    expect(extractCandidates({ keywords: [], targetRoas: 800 })).toEqual([]);
   });
 });
 
@@ -177,41 +200,46 @@ describe("extractCandidates - highRoasLowRank", () => {
     keywords: [{ keyword: "고효율", metrics: m(50_000, 5, 450_000) }],
   }];
 
-  it("green + 저순위면 후보", () => {
-    const rows = flattenKeywords(withRank());
+  it("green + 저순위면 후보 (해당 그룹 scope)", () => {
+    const kws = withRank();
+    const rows = flattenKeywords(kws);
     rows[0].rank = 8;
-    const c = extractCandidates({ keywords: [], placements: [], targetRoas: 800, rankedRows: rows })
+    const c = extractCandidates({ keywords: kws, targetRoas: 800, rankedRows: rows })
       .find((x) => x.kind === "highRoasLowRank");
     expect(c).toBeDefined();
     expect(c!.facts.keywords).toBe("고효율");
+    expect(c!.scope).toMatchObject({ campaign: "C", group: "G" });
     // 표에 추정순위 열이 붙는다.
     expect(c!.table.columns).toContain("추정순위");
     expect(c!.table.rows[0].cells).toContain("8위");
   });
 
   it("green이어도 순위가 높으면 후보 아님", () => {
-    const rows = flattenKeywords(withRank());
+    const kws = withRank();
+    const rows = flattenKeywords(kws);
     rows[0].rank = 2;
-    expect(extractCandidates({ keywords: [], placements: [], targetRoas: 800, rankedRows: rows })
+    expect(extractCandidates({ keywords: kws, targetRoas: 800, rankedRows: rows })
       .find((x) => x.kind === "highRoasLowRank")).toBeUndefined();
   });
 
   it("순위를 못 얻었으면 후보 아님 — 자격증명 미등록 시 조용히 스킵", () => {
-    const rows = flattenKeywords(withRank());
-    expect(extractCandidates({ keywords: [], placements: [], targetRoas: 800, rankedRows: rows })
+    const kws = withRank();
+    const rows = flattenKeywords(kws);
+    expect(extractCandidates({ keywords: kws, targetRoas: 800, rankedRows: rows })
       .find((x) => x.kind === "highRoasLowRank")).toBeUndefined();
   });
 
   it("목표 미설정이면 rankedRows가 있어도 후보 아님", () => {
-    const rows = flattenKeywords(withRank());
+    const kws = withRank();
+    const rows = flattenKeywords(kws);
     rows[0].rank = 8;
-    expect(extractCandidates({ keywords: [], placements: [], rankedRows: rows })
+    expect(extractCandidates({ keywords: kws, rankedRows: rows })
       .find((x) => x.kind === "highRoasLowRank")).toBeUndefined();
   });
 });
 
 describe("extractCandidates - belowTargetGroup", () => {
-  const base = { placements: [] as NamedMetrics[], targetRoas: 800 };
+  const base = { targetRoas: 800 };
 
   it("그룹 집계 ROAS가 none이어야만 후보 — 초록·노랑·무색이 섞여도 합산이 기준", () => {
     // 그룹 합산: 비용 10만, 매출 85만 → ROAS 850% = green → 후보 아님.
@@ -227,7 +255,7 @@ describe("extractCandidates - belowTargetGroup", () => {
       .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
   });
 
-  it("그룹 집계 ROAS none + 비용 임계 이상 → 후보", () => {
+  it("그룹 집계 ROAS none + 비용 임계 이상 → 그 그룹의 후보 1개", () => {
     // 합산: 비용 6만, 매출 24만 → 400% = none.
     const bad: KeywordGroup[] = [{
       campaign: "[DV] 대나무", group: "2. 세부",
@@ -239,10 +267,11 @@ describe("extractCandidates - belowTargetGroup", () => {
     const c = extractCandidates({ ...base, keywords: bad })
       .find((x) => x.kind === "belowTargetGroup");
     expect(c).toBeDefined();
-    expect(String(c!.facts.groups)).toContain("2. 세부");
-    expect(c!.facts.count).toBe(1);
+    expect(c!.scope).toMatchObject({ campaign: "[DV] 대나무", group: "2. 세부" });
+    expect(c!.facts.수익률).toBe("400%");
     // 그룹 후보는 요약 — 키워드 나열이 아니라 그룹 단위 표.
     expect(c!.table.columns[0]).toBe("광고그룹");
+    expect(c!.table.rows[0].problem).toBe(true);
   });
 
   it("그룹 합산 비용이 임계 미만이면 제외", () => {
@@ -259,7 +288,7 @@ describe("extractCandidates - belowTargetGroup", () => {
       campaign: "C", group: "G",
       keywords: [{ keyword: "a", metrics: m(60_000, 2, 240_000) }],
     }];
-    expect(extractCandidates({ keywords: bad, placements: [] })
+    expect(extractCandidates({ keywords: bad })
       .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
   });
 
@@ -281,11 +310,10 @@ describe("extractCandidates - belowTargetGroup", () => {
       { campaign: "C", group: "기본", keywords: [{ keyword: "a", metrics: m(30_000, 3, 390_000) }] },
       { campaign: "C", group: "기본", keywords: [{ keyword: "b", metrics: m(30_000, 1, 120_000) }] }, // 400% none
     ];
-    const c = extractCandidates({ ...base, keywords: dup })
-      .find((x) => x.kind === "belowTargetGroup");
+    const cands = extractCandidates({ ...base, keywords: dup })
+      .filter((x) => x.kind === "belowTargetGroup");
     // 두 번째 항목만 none → 후보 1개. 합쳐졌다면 (60_000, 510_000) = 850% green으로 사라진다.
-    expect(c).toBeDefined();
-    expect(c!.facts.count).toBe(1);
+    expect(cands).toHaveLength(1);
   });
 
   it("같은 그룹명이 다른 캠페인에 있어도 따로 집계한다", () => {
@@ -294,17 +322,16 @@ describe("extractCandidates - belowTargetGroup", () => {
       { campaign: "A", group: "기본", keywords: [{ keyword: "a", metrics: m(60_000, 2, 240_000) }] },
       { campaign: "B", group: "기본", keywords: [{ keyword: "b", metrics: m(60_000, 8, 600_000) }] },
     ];
-    const c = extractCandidates({ ...base, keywords: two })
-      .find((x) => x.kind === "belowTargetGroup");
-    expect(c!.facts.count).toBe(1);
-    expect(String(c!.facts.groups)).toContain("A");
-    expect(String(c!.facts.groups)).not.toContain("B");
+    const cands = extractCandidates({ ...base, keywords: two })
+      .filter((x) => x.kind === "belowTargetGroup");
+    expect(cands).toHaveLength(1);
+    expect(cands[0].scope?.campaign).toBe("A");
   });
 });
 
-describe("extractCandidates - lowRoasPlacement", () => {
+describe("extractCandidates - lowRoasPlacement (그룹 단위)", () => {
   const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
-  const placements: NamedMetrics[] = [
+  const byPlacement: NamedMetrics[] = [
     // 비용 임계 이상 + 전환>0 + ROAS 400% = none → 후보
     { label: "쇼핑 검색탭", metrics: m(40_000, 2, 160_000) },
     // 전환 0 → zeroConvPlacement 몫 — 여기 중복 금지
@@ -316,17 +343,19 @@ describe("extractCandidates - lowRoasPlacement", () => {
     // none이지만 비용 임계 미만 → 제외
     { label: "기타", metrics: m(5_000, 1, 5_000) },
   ];
+  const groups = [gd("C", "G", 1, { byPlacement })];
 
   it("전환은 있으나 none 구간인 지면만 후보 — 전환 0/노랑/임계 미만 제외", () => {
-    const c = extractCandidates({ ...base, placements })
+    const c = extractCandidates({ ...base, groups })
       .find((x) => x.kind === "lowRoasPlacement");
     expect(c).toBeDefined();
     expect(c!.facts.placements).toBe("쇼핑 검색탭");
     expect(c!.facts.count).toBe(1);
+    expect(c!.scope?.group).toBe("G");
   });
 
   it("zeroConvPlacement와 중복되지 않는다", () => {
-    const cands = extractCandidates({ ...base, placements });
+    const cands = extractCandidates({ ...base, groups });
     const zero = cands.find((x) => x.kind === "zeroConvPlacement");
     const low = cands.find((x) => x.kind === "lowRoasPlacement");
     expect(zero!.facts.placements).toBe("네이버 메인");
@@ -334,14 +363,26 @@ describe("extractCandidates - lowRoasPlacement", () => {
   });
 
   it("목표 미설정이면 후보를 만들지 않는다 — zeroConvPlacement는 그대로", () => {
-    const cands = extractCandidates({ keywords: [], placements });
+    const cands = extractCandidates({ keywords: [], groups });
     expect(cands.find((x) => x.kind === "lowRoasPlacement")).toBeUndefined();
     expect(cands.find((x) => x.kind === "zeroConvPlacement")).toBeDefined();
   });
+
+  it("지면 이슈는 그룹마다 따로 — 다른 그룹 지면과 섞이지 않는다", () => {
+    const two = [
+      gd("A", "G1", 1, { byPlacement: [{ label: "네이버 메인", metrics: m(31_000, 0, 0) }] }),
+      gd("B", "G2", 2, { byPlacement: [{ label: "네이버 메인", metrics: m(31_000, 0, 0) }] }),
+    ];
+    const cands = extractCandidates({ ...base, groups: two })
+      .filter((x) => x.kind === "zeroConvPlacement");
+    expect(cands).toHaveLength(2);
+    expect(cands.map((c) => c.scope?.campaign)).toEqual(["A", "B"]);
+  });
 });
 
-describe("extractCandidates - genderBidSkew / ageBidSkew", () => {
-  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+describe("extractCandidates - genderBidSkew / ageBidSkew (그룹 단위)", () => {
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
+  const withGender = (byGender: NamedMetrics[]) => ({ ...base, groups: [gd("C", "G", 1, { byGender })] });
 
   it("SKEW_RATIO는 1.5", () => {
     expect(SKEW_RATIO).toBe(1.5);
@@ -349,61 +390,56 @@ describe("extractCandidates - genderBidSkew / ageBidSkew", () => {
 
   it("성별 ROAS 격차 1.5배 이상 + 양쪽 비용 임계 이상 → genderBidSkew", () => {
     // 남성 900% vs 여성 400% (2.25배) — 남성 상향/여성 하향 제안.
-    const byGender: NamedMetrics[] = [
+    const c = extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 5, 450_000) },
       { label: "여성", metrics: m(50_000, 2, 200_000) },
-    ];
-    const c = extractCandidates({ ...base, byGender }).find((x) => x.kind === "genderBidSkew");
+    ])).find((x) => x.kind === "genderBidSkew");
     expect(c).toBeDefined();
     expect(c!.facts.좋은쪽).toBe("남성");
     expect(c!.facts.나쁜쪽).toBe("여성");
+    expect(c!.scope).toMatchObject({ campaign: "C", group: "G" });
   });
 
   it("격차가 임계 바로 아래면 후보 아님", () => {
     // 600% vs 449% → 449 x 1.5 = 673.5 > 600 → 미달.
-    const byGender: NamedMetrics[] = [
+    expect(extractCandidates(withGender([
       { label: "남성", metrics: m(100_000, 6, 600_000) },
       { label: "여성", metrics: m(100_000, 4, 449_000) },
-    ];
-    expect(extractCandidates({ ...base, byGender })
-      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+    ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
   it("격차가 정확히 1.5배면 후보 — 경계 포함", () => {
-    const byGender: NamedMetrics[] = [
+    expect(extractCandidates(withGender([
       { label: "남성", metrics: m(100_000, 6, 600_000) },
       { label: "여성", metrics: m(100_000, 4, 400_000) },
-    ];
-    expect(extractCandidates({ ...base, byGender })
-      .find((x) => x.kind === "genderBidSkew")).toBeDefined();
+    ])).find((x) => x.kind === "genderBidSkew")).toBeDefined();
   });
 
   it("한쪽 비용이 문턱 미만이면 후보 아님 — 잡음 방지", () => {
-    const byGender: NamedMetrics[] = [
+    expect(extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 5, 450_000) },
       { label: "여성", metrics: m(5_000, 0, 0) },
-    ];
-    expect(extractCandidates({ ...base, byGender })
-      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+    ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
   it("'알 수 없음' 세그먼트는 비교에서 제외 — 가중치를 걸 수 없는 대상", () => {
-    const byGender: NamedMetrics[] = [
+    expect(extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 5, 450_000) },
       { label: "여성", metrics: m(50_000, 5, 440_000) },
       { label: "알 수 없음", metrics: m(50_000, 1, 50_000) },
-    ];
-    expect(extractCandidates({ ...base, byGender })
-      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+    ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
   it("목표 ROAS 미설정이어도 동작 — 격차는 상대 비교라 목표가 필요 없다", () => {
-    const byGender: NamedMetrics[] = [
-      { label: "남성", metrics: m(50_000, 5, 450_000) },
-      { label: "여성", metrics: m(50_000, 2, 200_000) },
-    ];
-    expect(extractCandidates({ keywords: [], placements: [], byGender })
-      .find((x) => x.kind === "genderBidSkew")).toBeDefined();
+    expect(extractCandidates({
+      keywords: [],
+      groups: [gd("C", "G", 1, {
+        byGender: [
+          { label: "남성", metrics: m(50_000, 5, 450_000) },
+          { label: "여성", metrics: m(50_000, 2, 200_000) },
+        ],
+      })],
+    }).find((x) => x.kind === "genderBidSkew")).toBeDefined();
   });
 
   it("연령 버킷 간 격차 → ageBidSkew (최고 vs 최저)", () => {
@@ -413,7 +449,8 @@ describe("extractCandidates - genderBidSkew / ageBidSkew", () => {
       { label: "50세 ~ 54세", metrics: m(30_000, 1, 90_000) },  // 300%
       { label: "기타", metrics: m(2_000, 0, 0) },                // 문턱 미만 → 비교 제외
     ];
-    const c = extractCandidates({ ...base, byAge }).find((x) => x.kind === "ageBidSkew");
+    const c = extractCandidates({ ...base, groups: [gd("C", "G", 1, { byAge })] })
+      .find((x) => x.kind === "ageBidSkew");
     expect(c).toBeDefined();
     expect(c!.facts.좋은쪽).toBe("25세 ~ 29세");
     expect(c!.facts.나쁜쪽).toBe("50세 ~ 54세");
@@ -422,145 +459,177 @@ describe("extractCandidates - genderBidSkew / ageBidSkew", () => {
   });
 
   it("양쪽 다 매출 0이면 후보 아님 — 0% vs 0%는 격차가 아니다", () => {
-    const byGender: NamedMetrics[] = [
+    expect(extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 0, 0) },
       { label: "여성", metrics: m(50_000, 0, 0) },
-    ];
-    expect(extractCandidates({ ...base, byGender })
-      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+    ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
   it("비교 가능한 세그먼트가 2개 미만이면 후보 아님", () => {
-    const byAge: NamedMetrics[] = [
-      { label: "25세 ~ 29세", metrics: m(30_000, 3, 270_000) },
+    expect(extractCandidates({
+      ...base,
+      groups: [gd("C", "G", 1, { byAge: [{ label: "25세 ~ 29세", metrics: m(30_000, 3, 270_000) }] })],
+    }).find((x) => x.kind === "ageBidSkew")).toBeUndefined();
+  });
+
+  it("세그먼트 격차는 그룹 안에서만 비교 — 그룹이 다르면 섞이지 않는다", () => {
+    // 두 그룹 각각은 격차가 없다. 계정 합산이었다면 남성(G1) 900% vs 여성(G2) 400%로 오탐.
+    const two = [
+      gd("A", "G1", 1, { byGender: [{ label: "남성", metrics: m(50_000, 5, 450_000) }] }),
+      gd("B", "G2", 2, { byGender: [{ label: "여성", metrics: m(50_000, 2, 200_000) }] }),
     ];
-    expect(extractCandidates({ ...base, byAge })
-      .find((x) => x.kind === "ageBidSkew")).toBeUndefined();
+    expect(extractCandidates({ ...base, groups: two })
+      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 });
 
-describe("extractCandidates - deviceBidSkew", () => {
-  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+describe("extractCandidates - deviceBidSkew (그룹 단위)", () => {
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
+  const withDevice = (byDevice: NamedMetrics[]) => ({ ...base, groups: [gd("C", "G", 1, { byDevice })] });
 
   it("PC/모바일 ROAS 격차 1.5배 이상 → deviceBidSkew", () => {
     // 모바일 900% vs PC 400% (2.25배)
-    const byDevice: NamedMetrics[] = [
+    const c = extractCandidates(withDevice([
       { label: "PC", metrics: m(50_000, 2, 200_000) },
       { label: "모바일", metrics: m(50_000, 5, 450_000) },
-    ];
-    const c = extractCandidates({ ...base, byDevice }).find((x) => x.kind === "deviceBidSkew");
+    ])).find((x) => x.kind === "deviceBidSkew");
     expect(c).toBeDefined();
     expect(c!.facts.좋은쪽).toBe("모바일");
     expect(c!.facts.나쁜쪽).toBe("PC");
   });
 
   it("격차 미달이면 후보 아님", () => {
-    const byDevice: NamedMetrics[] = [
+    expect(extractCandidates(withDevice([
       { label: "PC", metrics: m(50_000, 5, 400_000) },
       { label: "모바일", metrics: m(50_000, 5, 450_000) },
-    ];
-    expect(extractCandidates({ ...base, byDevice })
-      .find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+    ])).find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
   });
 
   it("한쪽 비용 문턱 미만이면 후보 아님", () => {
-    const byDevice: NamedMetrics[] = [
+    expect(extractCandidates(withDevice([
       { label: "PC", metrics: m(3_000, 0, 0) },
       { label: "모바일", metrics: m(50_000, 5, 450_000) },
-    ];
-    expect(extractCandidates({ ...base, byDevice })
-      .find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+    ])).find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
   });
 });
 
 describe("foldByWeekday", () => {
-  it("일자별(MM/DD (요일)) 지표를 요일로 접는다 — 월~일 순서", () => {
+  it("일자별(ISO yyyy-mm-dd) 지표를 요일로 접는다 — 월~일 순서", () => {
     const byDay: NamedMetrics[] = [
-      { label: "07/06 (월)", metrics: m(10_000, 1, 50_000) },
-      { label: "07/07 (화)", metrics: m(20_000, 2, 100_000) },
-      { label: "07/13 (월)", metrics: m(30_000, 3, 150_000) },
+      { label: "2026-07-06", metrics: m(10_000, 1, 50_000) },  // 월
+      { label: "2026-07-07", metrics: m(20_000, 2, 100_000) }, // 화
+      { label: "2026-07-13", metrics: m(30_000, 3, 150_000) }, // 월
     ];
     const folded = foldByWeekday(byDay);
     expect(folded.map((f) => f.label)).toEqual(["월", "화"]);
     expect(folded[0].metrics.cost).toBe(40_000); // 월요일 2건 합산
   });
 
-  it("요일을 못 읽는 라벨은 건너뛴다", () => {
+  it("날짜로 못 읽는 라벨은 건너뛴다", () => {
     expect(foldByWeekday([{ label: "합계", metrics: m(10_000, 1, 50_000) }])).toEqual([]);
   });
 });
 
-describe("extractCandidates - hourWeekdaySkew", () => {
-  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+describe("extractCandidates - hourWeekdaySkew (그룹 단위)", () => {
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
 
-  it("시간대 간 격차 → 후보 (좋은/나쁜 시간대)", () => {
-    const byHour: NamedMetrics[] = [
-      { label: "10시~11시", metrics: m(30_000, 3, 270_000) }, // 900%
-      { label: "22시~23시", metrics: m(30_000, 1, 90_000) },  // 300%
-    ];
-    const c = extractCandidates({ ...base, byHour }).find((x) => x.kind === "hourWeekdaySkew");
+  it("그룹 내 시간대 격차 → 그 그룹의 후보 (worst 행만 problem)", () => {
+    const groups = [gd("브랜드", "핵심", 1, {
+      byHour: [
+        { label: "10시~11시", metrics: m(30_000, 3, 270_000) }, // 900%
+        { label: "22시~23시", metrics: m(30_000, 1, 90_000) },  // 300%
+      ],
+    })];
+    const c = extractCandidates({ ...base, groups }).find((x) => x.kind === "hourWeekdaySkew");
     expect(c).toBeDefined();
     expect(c!.facts.좋은쪽).toBe("10시~11시");
     expect(c!.facts.나쁜쪽).toBe("22시~23시");
+    expect(c!.scope).toMatchObject({ campaign: "브랜드", group: "핵심", nccAdgroupId: "grp-1" });
+    expect(c!.table.rows.filter((r) => r.problem)).toHaveLength(1);
+    expect(c!.table.rows.find((r) => r.problem)!.cells[0]).toBe("22시~23시");
   });
 
-  it("요일 간 격차 → 후보 (byDay를 요일로 접어 판정)", () => {
-    const byDay: NamedMetrics[] = [
-      { label: "07/06 (월)", metrics: m(30_000, 3, 270_000) },
-      { label: "07/08 (수)", metrics: m(30_000, 1, 90_000) },
-    ];
-    const cands = extractCandidates({ ...base, byDay }).filter((x) => x.kind === "hourWeekdaySkew");
+  it("요일 간 격차 → 후보 (그룹의 byDay를 요일로 접어 판정)", () => {
+    const groups = [gd("브랜드", "핵심", 1, {
+      byDay: [
+        { label: "2026-07-06", metrics: m(30_000, 3, 270_000) }, // 월
+        { label: "2026-07-08", metrics: m(30_000, 1, 90_000) },  // 수
+      ],
+    })];
+    const cands = extractCandidates({ ...base, groups }).filter((x) => x.kind === "hourWeekdaySkew");
     expect(cands).toHaveLength(1);
     expect(cands[0].facts.좋은쪽).toBe("월");
   });
 
-  it("격차 미달이면 후보 없음", () => {
-    const byHour: NamedMetrics[] = [
-      { label: "10시~11시", metrics: m(30_000, 3, 270_000) },
-      { label: "11시~12시", metrics: m(30_000, 3, 260_000) },
-    ];
-    expect(extractCandidates({ ...base, byHour })
+  it("그룹 내 격차 미달이면 후보 없음", () => {
+    const groups = [gd("브랜드", "핵심", 1, {
+      byHour: [
+        { label: "10시~11시", metrics: m(30_000, 3, 270_000) },
+        { label: "11시~12시", metrics: m(30_000, 3, 260_000) },
+      ],
+    })];
+    expect(extractCandidates({ ...base, groups })
       .find((x) => x.kind === "hourWeekdaySkew")).toBeUndefined();
+  });
+
+  it("시간대 격차 그룹이 여럿이면 그룹마다 후보가 따로", () => {
+    const mk = (i: number) => gd("브랜드", `그룹${i}`, i, {
+      byHour: [
+        { label: "10시~11시", metrics: m(30_000, 3, 270_000) },
+        { label: "22시~23시", metrics: m(30_000, 1, 90_000) },
+      ],
+    });
+    const cands = extractCandidates({ ...base, groups: [mk(1), mk(2)] })
+      .filter((x) => x.kind === "hourWeekdaySkew");
+    expect(cands).toHaveLength(2);
+    expect(cands.map((c) => c.scope?.group)).toEqual(["그룹1", "그룹2"]);
   });
 });
 
-describe("extractCandidates - regionBidSkew", () => {
-  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+describe("extractCandidates - regionBidSkew (그룹 단위)", () => {
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
 
-  it("지역 간 격차 → 후보 (비용 문턱 미만 지역은 비교 제외)", () => {
-    const byRegion: NamedMetrics[] = [
-      { label: "서울특별시", metrics: m(50_000, 5, 450_000) }, // 900%
-      { label: "경기도", metrics: m(50_000, 2, 200_000) },     // 400%
-      { label: "세종특별자치시", metrics: m(1_000, 0, 0) },     // 문턱 미만
-    ];
-    const c = extractCandidates({ ...base, byRegion }).find((x) => x.kind === "regionBidSkew");
+  it("그룹 내 지역 격차 → 후보 (비용 문턱 미만 지역은 비교 제외)", () => {
+    const groups = [gd("브랜드", "핵심", 1, {
+      byRegion: [
+        { label: "서울특별시", metrics: m(50_000, 5, 450_000) }, // 900%
+        { label: "경기도", metrics: m(50_000, 2, 200_000) },     // 400%
+        { label: "세종특별자치시", metrics: m(1_000, 0, 0) },     // 문턱 미만
+      ],
+    })];
+    const c = extractCandidates({ ...base, groups }).find((x) => x.kind === "regionBidSkew");
     expect(c).toBeDefined();
     expect(c!.facts.좋은쪽).toBe("서울특별시");
     expect(c!.facts.나쁜쪽).toBe("경기도");
+    expect(c!.scope?.group).toBe("핵심");
   });
 
-  it("격차 미달이면 후보 없음", () => {
-    const byRegion: NamedMetrics[] = [
-      { label: "서울특별시", metrics: m(50_000, 5, 450_000) },
-      { label: "경기도", metrics: m(50_000, 5, 440_000) },
-    ];
-    expect(extractCandidates({ ...base, byRegion })
+  it("그룹 내 격차 미달이면 후보 없음", () => {
+    const groups = [gd("브랜드", "핵심", 1, {
+      byRegion: [
+        { label: "서울특별시", metrics: m(50_000, 5, 450_000) },
+        { label: "경기도", metrics: m(50_000, 5, 440_000) },
+      ],
+    })];
+    expect(extractCandidates({ ...base, groups })
       .find((x) => x.kind === "regionBidSkew")).toBeUndefined();
   });
 });
 
-describe("extractCandidates - lowCtrAd", () => {
-  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
-  // 노출/클릭 지정 헬퍼
-  const ad = (label: string, impressions: number, clicks: number): NamedMetrics =>
-    ({ label, metrics: { ...ZERO_METRICS, impressions, clicks, cost: 20_000 } });
+describe("extractCandidates - lowCtrAd (그룹 단위)", () => {
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
+  // 노출/클릭 지정 헬퍼 — 같은 그룹(G/grp-1) 소속 소재.
+  const ad = (label: string, impressions: number, clicks: number, group = "G", i = 1): BriefAdRow => ({
+    campaign: "C", group, nccCampaignId: `cmp-${i}`, nccAdgroupId: `grp-${i}`,
+    label, metrics: { ...ZERO_METRICS, impressions, clicks, cost: 20_000 },
+  });
 
   it("AD_IMP_FLOOR는 1000, LOW_CTR_PCT는 0.5", () => {
     expect(AD_IMP_FLOOR).toBe(1_000);
     expect(LOW_CTR_PCT).toBe(0.5);
   });
 
-  it("노출 임계 이상 + 클릭률 0.5% 미만 소재만 후보", () => {
+  it("노출 임계 이상 + 클릭률 0.5% 미만 소재만 후보 (그룹 scope)", () => {
     const plAds = [
       ad("문구A", 5_000, 10),  // 0.2% → 후보
       ad("문구B", 5_000, 100), // 2.0% → 제외
@@ -570,6 +639,7 @@ describe("extractCandidates - lowCtrAd", () => {
     expect(c).toBeDefined();
     expect(c!.facts.ads).toBe("문구A");
     expect(c!.facts.count).toBe(1);
+    expect(c!.scope).toMatchObject({ campaign: "C", group: "G", nccAdgroupId: "grp-1" });
   });
 
   it("클릭률이 정확히 0.5%면 후보 아님 — 미만만", () => {
@@ -588,7 +658,7 @@ describe("extractCandidates - lowCtrAd", () => {
     expect(extractCandidates(base).find((x) => x.kind === "lowCtrAd")).toBeUndefined();
   });
 
-  it("같은 문구가 여러 소재로 흩어져 있으면 합산해서 판정 — 문구 교체 후보의 단위는 문구다", () => {
+  it("같은 그룹의 같은 문구는 합산해서 판정 — 문구 교체 후보의 단위는 문구다", () => {
     // 각각 노출 600(임계 미만)이지만 합치면 1,200 + CTR 0.17% → 후보.
     const plAds = [ad("같은문구", 600, 1), ad("같은문구", 600, 1)];
     const c = extractCandidates({ ...base, plAds }).find((x) => x.kind === "lowCtrAd");
@@ -598,6 +668,13 @@ describe("extractCandidates - lowCtrAd", () => {
 
   it("문구 합산 CTR이 건강하면 후보 아님 — 한쪽 소재만 낮아도 문구 탓이 아니다", () => {
     const plAds = [ad("건강문구", 5_000, 10), ad("건강문구", 5_000, 200)]; // 합산 2.1%
+    expect(extractCandidates({ ...base, plAds })
+      .find((x) => x.kind === "lowCtrAd")).toBeUndefined();
+  });
+
+  it("소재 이슈는 그룹마다 따로 — 다른 그룹의 같은 문구는 합치지 않는다", () => {
+    // 그룹별 노출 600은 임계 미만 — 그룹을 넘어 합산하면(1,200) 오탐이 된다.
+    const plAds = [ad("같은문구", 600, 1, "G1", 1), ad("같은문구", 600, 1, "G2", 2)];
     expect(extractCandidates({ ...base, plAds })
       .find((x) => x.kind === "lowCtrAd")).toBeUndefined();
   });
@@ -614,7 +691,7 @@ describe("extractCandidates - productConvDrop", () => {
     // 전환 감소하나 매출 낙폭이 임계 미만 → 후보 아님 (소음)
     { label: "소품", cur: m(20_000, 1, 30_000), prev: m(20_000, 2, 35_000) },
   ];
-  const base = { keywords: [] as KeywordGroup[], placements: [] as NamedMetrics[], targetRoas: 800 };
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
 
   it("전환이 줄고 매출 낙폭이 임계 이상인 상품만", () => {
     const c = extractCandidates({ ...base, products }).find((x) => x.kind === "productConvDrop");
@@ -643,7 +720,6 @@ describe("targets 스냅샷", () => {
       keywords: [{ campaign: "C", group: "G", keywords: [
         { keyword: "가방", metrics: { ...ZERO_METRICS, impressions: 100, clicks: 10, cost: 20_000, purchaseConv: 0, revenue: 0 } },
       ] }],
-      placements: [],
     });
     const c = out.find((c) => c.kind === "zeroConvKeyword")!;
     expect(c.targets).toEqual([
@@ -651,14 +727,14 @@ describe("targets 스냅샷", () => {
     ]);
   });
 
-  it("skew 후보에는 좋은쪽/나쁜쪽 두 대상이 붙는다", () => {
+  it("skew 후보에는 좋은쪽/나쁜쪽 두 대상이 붙는다 — 라벨에 캠페인 > 그룹 경로 포함", () => {
     const seg = (label: string, cost: number, revenue: number): NamedMetrics =>
       ({ label, metrics: { ...ZERO_METRICS, cost, revenue, purchaseConv: 1 } });
     const out = extractCandidates({
-      keywords: [], placements: [],
-      byGender: [seg("남성", 20_000, 200_000), seg("여성", 20_000, 40_000)],
+      keywords: [],
+      groups: [gd("C", "G", 1, { byGender: [seg("남성", 20_000, 200_000), seg("여성", 20_000, 40_000)] })],
     });
     const c = out.find((c) => c.kind === "genderBidSkew")!;
-    expect(c.targets.map((t) => t.label)).toEqual(["남성", "여성"]);
+    expect(c.targets.map((t) => t.label)).toEqual(["C > G > 남성", "C > G > 여성"]);
   });
 });

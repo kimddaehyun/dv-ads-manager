@@ -13,8 +13,7 @@ import { wireBackdropDismiss } from "@/shared/dialog-dismiss";
 import { createDropdown, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
 import { type BriefThresholds } from "./brief-rules";
 import { resolveThresholds, SENSITIVITY_LABEL, type BriefSensitivity } from "./brief-thresholds";
-import { distillTone } from "./brief-compose";
-import { loadBriefTone, saveBriefTone } from "./brief-tone";
+import { openBriefToneDialog } from "./brief-tone-panel";
 
 export interface BriefTextBlock {
   type: "text";
@@ -263,7 +262,7 @@ function wonOf(v: unknown): string {
 /** 후보 → 제목 + 데이터 한 줄. 긴 판정 문장 대신 "무엇인지 + 근거 수치"를 보여준다. */
 export function pickRowText(c: BriefCandidate): { title: string; sub: string } {
   const f = c.facts;
-  const join = (parts: Array<string | undefined>) => parts.filter((p) => p && p !== "").join(" · ");
+  const join = (parts: Array<string | undefined>) => parts.filter((p) => p && p !== "").join(", ");
   switch (c.kind) {
     case "pastActionFollowUp":
       return {
@@ -280,7 +279,7 @@ export function pickRowText(c: BriefCandidate): { title: string; sub: string } {
     case "belowTargetKeyword":
       return { title: "목표 수익률 미달 키워드", sub: join([shortList(f["keywords"], f["count"]), `광고비 ${wonOf(f["비용합계"])}`]) };
     case "belowTargetGroup":
-      return { title: "목표 수익률 미달 광고그룹", sub: join([shortList(f["groups"], f["count"]), `광고비 ${wonOf(f["비용합계"])}`]) };
+      return { title: "그룹 합산 목표 수익률 미달", sub: join([`광고비 ${wonOf(f["비용합계"])}`, `수익률 ${f["수익률"] ?? ""}`]) };
     case "highRoasLowRank":
       return { title: "잘되는데 순위가 낮은 키워드", sub: join([shortList(f["keywords"], f["count"]), `평균 ${f["평균순위"]}위`]) };
     case "zeroConvPlacement":
@@ -399,6 +398,8 @@ const CHANGE_HISTORY_KIND = "changeFollowUp";
 
 export interface BriefPickOpts {
   advertiserName: string;
+  /** 광고관리자 URL용 — 있으면 그룹 단위 후보에 "광고관리자에서 열기" 링크를 단다. */
+  adAccountNo?: number;
   candidates: BriefCandidate[];
   /** 저장된 지난 보고가 1건 이상인지 — 없으면 "이전 보고 이력 포함" 비활성. */
   prevHistoryAvailable: boolean;
@@ -424,7 +425,7 @@ export interface BriefPickOpts {
  * 펼침 영역 — 이 이슈의 근거가 된 실제 데이터. 후보가 이미 들고 있는 표를 그대로 그린다
  * (여기서 다시 계산하지 않는다 — 화면과 보고문의 숫자가 갈리면 안 된다).
  */
-function buildPickDetail(pick: BriefCandidate): HTMLElement {
+function buildPickDetail(pick: BriefCandidate, adAccountNo?: number): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "dvads-brief-pick-detail-inner";
 
@@ -434,6 +435,24 @@ function buildPickDetail(pick: BriefCandidate): HTMLElement {
     b.className = "dvads-brief-pick-detail-basis";
     b.textContent = `기준 - ${basis}`;
     wrap.appendChild(b);
+  }
+
+  // 그룹 이슈는 광고관리자 해당 그룹 화면으로 바로 이동할 수 있게 링크를 단다.
+  if (adAccountNo != null && pick.scope?.nccAdgroupId) {
+    const links = document.createElement("div");
+    links.className = "dvads-brief-pick-links";
+    const a = document.createElement("button");
+    a.type = "button";
+    a.className = "dvads-brief-pick-link";
+    a.textContent = "광고관리자에서 이 그룹 열기";
+    const id = pick.scope.nccAdgroupId;
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(`${location.origin}/manage/ad-accounts/${adAccountNo}/sa/adgroups/${id}`, "_blank");
+    });
+    links.appendChild(a);
+    wrap.appendChild(links);
   }
 
   if (!pick.table) {
@@ -460,7 +479,7 @@ function buildPickDetail(pick: BriefCandidate): HTMLElement {
   const tbody = document.createElement("tbody");
   for (const r of pick.table.rows) {
     const tr = document.createElement("tr");
-    if (r.band) tr.classList.add(`dvads-brief-band-${r.band}`);
+    if (r.problem) tr.classList.add("dvads-brief-row-problem");
     for (const cell of r.cells) {
       const td = document.createElement("td");
       td.textContent = cell;
@@ -633,7 +652,49 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   const list = document.createElement("div");
   list.className = "dvads-brief-pick-list";
 
-  picks.forEach((pick) => {
+  // ── 캠페인 > 그룹 계층으로 묶는다(2026-07-20 개편). 계정 공통(이력·변경·상품) 이슈가 먼저. ──
+  interface PickSection { campaign?: string; group?: string; picks: BriefCandidate[] }
+  const sectionMap = new Map<string, PickSection>();
+  const sectionList: PickSection[] = [];
+  for (const p of picks) {
+    const key = p.scope ? `${p.scope.campaign}||${p.scope.group}` : "";
+    let s = sectionMap.get(key);
+    if (!s) {
+      s = { campaign: p.scope?.campaign, group: p.scope?.group, picks: [] };
+      sectionMap.set(key, s);
+      sectionList.push(s);
+    }
+    s.picks.push(p);
+  }
+  sectionList.sort((a, b) => {
+    if (!a.campaign) return b.campaign ? -1 : 0;
+    if (!b.campaign) return 1;
+    return a.campaign.localeCompare(b.campaign, "ko") || (a.group ?? "").localeCompare(b.group ?? "", "ko");
+  });
+  const hasScoped = sectionList.some((s) => s.campaign);
+
+  let prevCampaign: string | undefined;
+  for (const section of sectionList) {
+    if (section.campaign) {
+      if (section.campaign !== prevCampaign) {
+        const camp = document.createElement("div");
+        camp.className = "dvads-brief-pick-camp";
+        camp.textContent = section.campaign;
+        list.appendChild(camp);
+        prevCampaign = section.campaign;
+      }
+      const grouphead = document.createElement("div");
+      grouphead.className = "dvads-brief-pick-grouphead";
+      grouphead.textContent = section.group ?? "";
+      list.appendChild(grouphead);
+    } else if (hasScoped) {
+      const camp = document.createElement("div");
+      camp.className = "dvads-brief-pick-camp";
+      camp.textContent = "계정 공통";
+      list.appendChild(camp);
+    }
+
+    section.picks.forEach((pick) => {
     // 행(선택) + 펼침 영역(실제 데이터)을 한 덩어리로 — 구분선은 덩어리 사이에만.
     const item = document.createElement("div");
     item.className = "dvads-brief-pick-item";
@@ -691,7 +752,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       e.stopPropagation();
       if (!detailBuilt) {
         detailBuilt = true;
-        detail.appendChild(buildPickDetail(pick));
+        detail.appendChild(buildPickDetail(pick, opts.adAccountNo));
       }
       const open = item.classList.toggle("is-expanded");
       chev.setAttribute("aria-expanded", open ? "true" : "false");
@@ -729,7 +790,8 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       item.classList.toggle("is-selected", on);
     };
     rowsByIdx.push({ refresh, setSelected });
-  });
+    });
+  }
   body.appendChild(list);
 
   // 고급옵션 안의 소제목 — 네이버는 항목마다 굵은 라벨 + 설명 한 줄.
@@ -829,76 +891,25 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     refreshThreshold();
   }
 
-  // ── 내 말투 — 채팅 붙여넣기 → 말투 규칙 생성 → 저장. 역시 여기서 바로. ──
-  addSubHead("내 말투", "실제로 보냈던 보고 채팅을 붙여넣으면 그 말투로 씁니다.");
-  const toneSamples = document.createElement("textarea");
-  toneSamples.className = "dvads-brief-tone-ta";
-  toneSamples.rows = 4;
-  toneSamples.placeholder = "예) 안녕하세요:) 지난 30일 동안 ...";
-  optWrap.appendChild(toneSamples);
-  const tonePrompt = document.createElement("textarea");
-  tonePrompt.className = "dvads-brief-tone-ta";
-  tonePrompt.rows = 4;
-  tonePrompt.style.marginTop = "8px";
-  tonePrompt.placeholder = "\"말투 만들기\"를 누르면 여기에 말투 규칙이 생겨요. 직접 고칠 수 있어요";
-  optWrap.appendChild(tonePrompt);
-  const toneBtnRow = document.createElement("div");
-  toneBtnRow.className = "dvads-brief-pick-setting-row";
-  const makeToneBtn = document.createElement("button");
-  makeToneBtn.type = "button";
-  makeToneBtn.className = "dvads-btn";
-  makeToneBtn.textContent = "말투 만들기";
-  makeToneBtn.addEventListener("click", () => {
-    const samples = toneSamples.value.trim();
-    if (samples.length < 50) {
-      showToast({ message: "채팅 이력을 조금 더 붙여넣어 주세요 (최소 두세 문장)", variant: "error" });
-      return;
-    }
-    makeToneBtn.disabled = true;
-    makeToneBtn.textContent = "만드는 중...";
-    void distillTone(samples)
-      .then((p) => { tonePrompt.value = p; })
-      .catch((e) => showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" }))
-      .finally(() => { makeToneBtn.disabled = false; makeToneBtn.textContent = "말투 만들기"; });
-  });
-  toneBtnRow.appendChild(makeToneBtn);
-  const saveToneBtn = document.createElement("button");
-  saveToneBtn.type = "button";
-  saveToneBtn.className = "dvads-btn";
-  saveToneBtn.textContent = "말투 저장";
-  saveToneBtn.addEventListener("click", () => {
-    const p = tonePrompt.value.trim();
-    if (!p) {
-      showToast({ message: "먼저 \"말투 만들기\"로 말투 규칙을 만들어 주세요", variant: "error" });
-      return;
-    }
-    saveToneBtn.disabled = true;
-    void saveBriefTone({ samples: toneSamples.value.trim(), tonePrompt: p })
-      .then(() => showToast({ message: "말투를 저장했어요. 다음 보고부터 내 말투로 만들어져요", variant: "success" }))
-      .catch((e) => showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" }))
-      .finally(() => { saveToneBtn.disabled = false; });
-  });
-  toneBtnRow.appendChild(saveToneBtn);
-  optWrap.appendChild(toneBtnRow);
-  void loadBriefTone().then((rec) => {
-    if (!rec) return;
-    if (toneSamples.value === "") toneSamples.value = rec.samples;
-    if (tonePrompt.value === "") tonePrompt.value = rec.tonePrompt;
-  });
-
-  // 지난 보고는 "설정"이 아니라 열람이라 화면 전환 — 버튼으로 남긴다.
+  // ── 내 말투 / 지난 보고 — 긴 인라인 폼 대신 버튼 한 줄로 정리(2026-07-20 단순화). ──
+  addSubHead("내 말투 / 지난 보고", "말투 설정은 별도 창에서, 지난 보고는 열람 화면으로 이동합니다.");
+  const extraRow = document.createElement("div");
+  extraRow.className = "dvads-brief-pick-setting-row";
+  const toneBtn = document.createElement("button");
+  toneBtn.type = "button";
+  toneBtn.className = "dvads-btn";
+  toneBtn.textContent = "내 말투 설정";
+  toneBtn.addEventListener("click", () => openBriefToneDialog());
+  extraRow.appendChild(toneBtn);
   if (opts.onShowHistory) {
-    addSubHead("지난 보고", "이 광고주에게 보냈던 지난 보고를 확인합니다.");
-    const histRow = document.createElement("div");
-    histRow.className = "dvads-brief-pick-setting-row";
     const hist = document.createElement("button");
     hist.type = "button";
     hist.className = "dvads-btn";
     hist.textContent = "지난 보고 보기";
     hist.addEventListener("click", () => opts.onShowHistory?.());
-    histRow.appendChild(hist);
-    optWrap.appendChild(histRow);
+    extraRow.appendChild(hist);
   }
+  optWrap.appendChild(extraRow);
 
   // 네이버 광고관리자 "고급옵션" 아코디언과 동일한 구조 — 제목+설명 줄 클릭으로 펼침.
   const adv = document.createElement("div");
@@ -912,7 +923,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   advText.className = "dvads-brief-adv-text";
   advText.innerHTML =
     '<span class="dvads-brief-adv-title">고급옵션</span>' +
-    '<span class="dvads-brief-adv-desc">고급옵션에서는 보고 유형·말투, 포함할 이력, 이슈 기준을 설정/수정할 수 있습니다.</span>';
+    '<span class="dvads-brief-adv-desc">고급옵션에서는 보고 유형과 말투, 포함할 이력, 이슈 기준을 설정/수정할 수 있습니다.</span>';
   advHead.appendChild(advText);
   const advChev = document.createElement("span");
   advChev.className = "dvads-brief-adv-chev";

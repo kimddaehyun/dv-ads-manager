@@ -208,17 +208,12 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
 
     const ruleInput: Omit<BriefRuleInput, "thresholds"> = {
       keywords: [...data.plKeywords, ...data.shKeywords],
-      placements: data.model.byPlacement,
       targetRoas,
       rankedRows: plRows,
       products: data.products,
-      byGender: data.model.byGender,
-      byAge: data.model.byAge,
-      byDevice: data.byDevice,
       plAds: data.plAds,
-      byHour: data.byHour,
-      byDay: data.model.byDay,
-      byRegion: data.byRegion,
+      groups: data.groups,
+      groupIds: data.groupIds,
     };
     const candidates = extractCandidates({ ...ruleInput, thresholds });
 
@@ -267,6 +262,7 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
 function showSelection(ctx: BriefContext, initial?: Partial<BriefPickState>): void {
   renderBriefPickPanel({
     advertiserName: ctx.target.name,
+    adAccountNo: ctx.target.adAccountNo,
     candidates: ctx.candidates,
     prevHistoryAvailable: ctx.lastHistory != null,
     changeDisabledReason: ctx.changeRes.actorsMissing
@@ -421,7 +417,7 @@ function showResult(
   renderBriefPanel({
     advertiserName: target.name,
     blocks,
-    notice: notices.length > 0 ? notices.join(" · ") : undefined,
+    notice: notices.length > 0 ? notices.join(" / ") : undefined,
     onCopyText,
     onSave,
     // 재생성 — 같은 선택으로 다시. 톤 버튼은 톤만 바꿔 다시(선택·유형·이력 포함 유지).

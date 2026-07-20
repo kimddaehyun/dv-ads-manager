@@ -6,13 +6,13 @@
  */
 
 import { collectReportData, buildProductAdRows, type ReportData, type ReportTarget } from "@/features/report/report-build";
-import { rangeText, previousRange, type DateRange } from "@/features/report/report-period";
+import { rangeText, previousRange, ymdToIso, type DateRange } from "@/features/report/report-period";
 import {
-  fetchAdvancedReport, colIndex, rowMetrics, CAMPAIGN_TP_CODE, ZERO_METRICS,
+  fetchAdvancedReport, colIndex, rowMetrics, parseEntity, CAMPAIGN_TP_CODE, ZERO_METRICS,
   type ReportMetrics, type AdvReportResult,
 } from "@/features/report/report-data";
 import { type NamedMetrics } from "@/features/report/report-fill";
-import { type BriefTableSpec, type BriefProductDelta } from "./brief-rules";
+import { type BriefTableSpec, type BriefProductDelta, type BriefGroupData, type BriefAdRow } from "./brief-rules";
 import { roasPct } from "./brief-rules";
 
 export interface BriefData extends ReportData {
@@ -20,26 +20,68 @@ export interface BriefData extends ReportData {
   advertiserName: string;
   /** 현재 기간에 존재하는 상품의 현재/전기 지표. 이름은 현재 기준으로만 얻을 수 있다. */
   products: BriefProductDelta[];
-  /** 기기(PC/모바일)별 검색광고 성과. 실패 시 빈 배열 — 기기 후보만 생략. */
-  byDevice: NamedMetrics[];
-  /** 파워링크 소재별 성과(label=제목). 실패 시 빈 배열 — 소재 후보만 생략. */
-  plAds: NamedMetrics[];
-  /** 시간대(24구간)별 검색광고 성과. 실패 시 빈 배열 — 시간대 후보만 생략. */
-  byHour: NamedMetrics[];
-  /** 지역(시도)별 검색광고 성과. 실패 시 빈 배열 — 지역 후보만 생략. */
-  byRegion: NamedMetrics[];
+  /** 파워링크 소재별 성과(그룹 정보 포함, label=제목). 실패 시 빈 배열 — 소재 후보만 생략. */
+  plAds: BriefAdRow[];
+  /** 광고그룹별 차원 성과(지면/성별/연령/기기/시간대/지역/일자). 실패한 차원만 비어 있다. */
+  groups: BriefGroupData[];
+  /** "캠페인 > 그룹" 라벨 → id. 키워드 계열 후보의 scope id 보강 + 바로가기 재료. */
+  groupIds: Map<string, { campaignId: string; adgroupId: string }>;
 }
 
+// 세그먼트 attribute 정찰 메모(2026-07-17): `pcMblTp`(라벨 "PC"/"모바일"), `hh24`("00시~01시"
+// 24구간), `regnNo`(시도명), `x-ad-customer-id` cross-account 정상.
+/** BriefGroupData의 차원 배열 필드 이름 ↔ advanced-report attribute 매핑. */
+const GROUP_DIMS = [
+  ["byPlacement", "mediaNm"],
+  ["byGender", "criterionGenderNm"],
+  ["byAge", "criterionAgeTpNm"],
+  ["byDevice", "pcMblTp"],
+  ["byHour", "hh24"],
+  ["byRegion", "regnNo"],
+  ["byDay", "ymd"],
+] as const;
+type GroupDimField = (typeof GROUP_DIMS)[number][0];
+
 /**
- * 한 차원 세그먼트 성과 — F-Report 엑셀엔 안 쓰여 F-Brief 전용으로 여기서 수집.
- * 2026-07-17 라이브 정찰: `pcMblTp`(라벨 "PC"/"모바일"), `hh24`(라벨 "00시~01시" 24구간),
- * `x-ad-customer-id` cross-account 정상.
+ * 광고그룹별 차원 성과 수집 — 캠페인/그룹 차원을 함께 분해해 그룹별 지면/성별/연령/기기/
+ * 시간대/지역/일자를 얻는다. 계정 합산은 그룹 특성이 섞여 부정확해 전 차원을 이 단위로만
+ * 판정한다(2026-07-20 캠페인>그룹 개편). entity 셀은 "[이름](id)" — 이름을 못 얻은 그룹은
+ * 광고주에게 id를 보여줄 수 없어 제외(상품 후보와 동일 규칙).
+ * 차원 하나가 실패하면 그 차원 후보만 생략하고 나머지는 계속.
  */
-async function fetchSegment(customerId: number, range: DateRange, attr: string): Promise<NamedMetrics[]> {
-  const res = await fetchAdvancedReport({ attributes: [attr], range, customerId });
-  const idx = colIndex(res.head);
-  return res.rows.map((r) => ({ label: r[idx[attr]] ?? "", metrics: rowMetrics(r, idx) }))
-    .filter((n) => n.label !== "");
+async function fetchGroupDims(customerId: number, range: DateRange): Promise<BriefGroupData[]> {
+  const byGroup = new Map<string, BriefGroupData>();
+  await Promise.all(GROUP_DIMS.map(async ([field, attr]) => {
+    let res;
+    try {
+      res = await fetchAdvancedReport({
+        attributes: ["nccCampaignId", "nccAdgroupId", attr],
+        range,
+        customerId,
+        maxRows: 30000,
+        filters: [{ type: "bound", field: "impCnt", operator: "gt", value: 0 }],
+      });
+    } catch (e) {
+      console.warn(`[dv-ads/brief] 그룹별 ${attr} 조회 실패 — 해당 차원 후보만 생략`, e);
+      return;
+    }
+    const idx = colIndex(res.head);
+    for (const r of res.rows) {
+      const camp = parseEntity(r[idx["nccCampaignId"]] ?? "");
+      const grp = parseEntity(r[idx["nccAdgroupId"]] ?? "");
+      const rawLabel = r[idx[attr]] ?? "";
+      const label = field === "byDay" ? ymdToIso(rawLabel) : rawLabel;
+      if (!label || !camp.id || !grp.id || !camp.name || !grp.name) continue;
+      let g = byGroup.get(grp.id);
+      if (!g) {
+        g = { campaign: camp.name, group: grp.name, nccCampaignId: camp.id, nccAdgroupId: grp.id };
+        byGroup.set(grp.id, g);
+      }
+      const arr = (g[field as GroupDimField] ??= []);
+      arr.push({ label, metrics: rowMetrics(r, idx) });
+    }
+  }));
+  return [...byGroup.values()];
 }
 
 /**
@@ -68,7 +110,7 @@ interface RawTextAd { nccAdId?: string; ad?: { headline?: string } }
  * `ncc/ads?ids=` 벌크 조회 동작 확인). label은 headline — 제목 못 얻은 소재는 광고주에게
  * `nad-...`를 보여줄 수 없어 제외한다(상품 후보와 동일 규칙).
  */
-async function fetchPlAds(customerId: number, range: DateRange): Promise<NamedMetrics[]> {
+async function fetchPlAds(customerId: number, range: DateRange): Promise<BriefAdRow[]> {
   const res = await fetchAdvancedReport({
     attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "nccAdId"],
     range,
@@ -79,11 +121,23 @@ async function fetchPlAds(customerId: number, range: DateRange): Promise<NamedMe
       { type: "bound", field: "impCnt", operator: "gt", value: 0 },
     ],
   });
-  const adRows = buildProductAdRows(res, "파워링크"); // label = 소재ID
+  // 그룹 정보를 유지해야 해서(캠페인>그룹 개편) buildProductAdRows(소재ID로 접음)를 안 쓰고
+  // 직접 파싱한다. 이름 못 얻은 캠페인/그룹/소재는 제외(광고주에게 id 노출 불가).
+  const idx = colIndex(res.head);
+  interface RawAdRow { campaign: string; group: string; campaignId: string; adgroupId: string; adId: string; metrics: ReportMetrics }
+  const adRows: RawAdRow[] = [];
+  for (const r of res.rows) {
+    const camp = parseEntity(r[idx["nccCampaignId"]] ?? "");
+    const grp = parseEntity(r[idx["nccAdgroupId"]] ?? "");
+    const ad = parseEntity(r[idx["nccAdId"]] ?? "");
+    const adId = ad.id || ad.name; // 소재 셀은 이름 없이 id만 올 수 있다
+    if (!camp.id || !grp.id || !camp.name || !grp.name || !adId) continue;
+    adRows.push({ campaign: camp.name, group: grp.name, campaignId: camp.id, adgroupId: grp.id, adId, metrics: rowMetrics(r, idx) });
+  }
   if (adRows.length === 0) return [];
 
   const { authFetch } = await import("@/features/multi-account/multi-account-data");
-  const ids = adRows.map((r) => r.label);
+  const ids = [...new Set(adRows.map((r) => r.adId))];
   const chunks: string[][] = [];
   for (let i = 0; i < ids.length; i += 80) chunks.push(ids.slice(i, i + 80));
   const titleById = new Map<string, string>();
@@ -99,7 +153,12 @@ async function fetchPlAds(customerId: number, range: DateRange): Promise<NamedMe
     }
   });
   return adRows
-    .map((r) => ({ label: titleById.get(r.label) ?? "", metrics: r.metrics }))
+    .map((r) => ({
+      campaign: r.campaign, group: r.group,
+      nccCampaignId: r.campaignId, nccAdgroupId: r.adgroupId,
+      label: titleById.get(r.adId) ?? "",
+      metrics: r.metrics,
+    }))
     .filter((r) => r.label !== "");
 }
 
@@ -109,27 +168,20 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
   // 담당자/작성일은 엑셀 표지 전용이라 문구엔 안 쓰인다. 빈 값으로 넘긴다.
   // 전기 상품은 F-Brief만 필요하다 — collectReportData를 건드리지 않고 여기서 1회 더 부른다.
   // 두 수집을 동시에 출발시켜 왕복을 더하지 않는다. 실패해도 상품 후보만 생략.
-  const [data, prevAdRows, byDevice, byHour, byRegion, plAds] = await Promise.all([
+  const [data, prevAdRows, groups, plAds] = await Promise.all([
     collectReportData(target, range, { authorName: "", createdDate: "" }),
     fetchPrevProducts(cid, previousRange(range)).catch((e) => {
       console.warn("[dv-ads/brief] 전기 상품 조회 실패 — 상품 후보만 생략", e);
       return [] as NamedMetrics[];
     }),
-    fetchSegment(cid, range, "pcMblTp").catch((e) => {
-      console.warn("[dv-ads/brief] 기기별 조회 실패 — 기기 후보만 생략", e);
-      return [] as NamedMetrics[];
-    }),
-    fetchSegment(cid, range, "hh24").catch((e) => {
-      console.warn("[dv-ads/brief] 시간대별 조회 실패 — 시간대 후보만 생략", e);
-      return [] as NamedMetrics[];
-    }),
-    fetchSegment(cid, range, "regnNo").catch((e) => {
-      console.warn("[dv-ads/brief] 지역별 조회 실패 — 지역 후보만 생략", e);
-      return [] as NamedMetrics[];
+    // 차원별 실패는 fetchGroupDims 내부에서 개별 처리 — 전체 실패만 여기서 잡는다.
+    fetchGroupDims(cid, range).catch((e) => {
+      console.warn("[dv-ads/brief] 그룹별 차원 조회 실패 — 세그먼트 후보 생략", e);
+      return [] as BriefGroupData[];
     }),
     fetchPlAds(cid, range).catch((e) => {
       console.warn("[dv-ads/brief] 파워링크 소재 조회 실패 — 소재 후보만 생략", e);
-      return [] as NamedMetrics[];
+      return [] as BriefAdRow[];
     }),
   ]);
 
@@ -144,7 +196,13 @@ export async function collectBriefData(target: ReportTarget, range: DateRange): 
     }))
     .filter((p) => p.label !== "");
 
-  return { ...data, range, advertiserName: target.name, products, byDevice, byHour, byRegion, plAds };
+  // "캠페인 > 그룹" 라벨 → id 맵 — 키워드 계열 후보의 scope id 보강(추가 호출 없음).
+  const groupIds = new Map<string, { campaignId: string; adgroupId: string }>();
+  for (const g of groups) {
+    groupIds.set(`${g.campaign} > ${g.group}`, { campaignId: g.nccCampaignId, adgroupId: g.nccAdgroupId });
+  }
+
+  return { ...data, range, advertiserName: target.name, products, groups, groupIds, plAds };
 }
 
 /** 기간 일수. "지난 30일 동안" 같은 표현에 쓴다. */
@@ -219,7 +277,7 @@ export function buildSummarySpec(data: BriefData): BriefTableSpec {
     ],
   }));
   return {
-    title: `${data.advertiserName} · ${rangeText(data.range)}`,
+    title: `${data.advertiserName} - ${rangeText(data.range)}`,
     columns: ["구분", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
     rows,
   };

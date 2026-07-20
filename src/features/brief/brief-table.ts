@@ -8,26 +8,32 @@
  * 설계: docs/superpowers/specs/2026-07-16-f-brief-design.md §9
  */
 
-import { type BriefTableSpec, type BriefTableRow, type RoasBand } from "./brief-rules";
+import { type BriefTableSpec, type BriefTableRow } from "./brief-rules";
 
 /** 행 수 상한. 초과분은 "외 N개"로 접되 **잘린 사실을 표에 명시**한다(조용한 절단 금지). */
 export const MAX_TABLE_ROWS = 20;
 
 const PAD = 16;
-const ROW_H = 30;
+const ROW_H = 32;
 const HEAD_H = 34;
 const TITLE_H = 34;
 const FONT = "Pretendard, -apple-system, sans-serif";
 
-// 행 배경 — DESIGN.md Semantic (State Colors)를 10% 투명도로 재사용.
-// success #16a34a / warning #d97706. DV 주황은 쓰지 않는다(3% 규칙).
-const BAND_BG: Record<RoasBand, string> = {
-  green: "rgba(22, 163, 74, 0.10)",
-  yellow: "rgba(217, 119, 6, 0.10)",
-  none: "transparent",
-};
+// 문제 행 배경 — DESIGN.md state-error #DC2626을 7% 투명도로. 문제인 행만 칠한다.
+const PROBLEM_BG = "rgba(220, 38, 38, 0.07)";
 
-/** 열 너비 — 각 열의 최장 텍스트를 실측해 정한다. 첫 열(라벨)은 넓게, 지표는 우측 정렬. */
+/** 첫 열(라벨) 최대 폭 — 긴 "캠페인 > 그룹" 라벨이 표를 무한정 넓히지 않게 말줄임. */
+const LABEL_MAX_W = 280;
+
+/** maxW를 넘는 텍스트를 "..."로 줄인다. */
+function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number): string {
+  if (ctx.measureText(text).width <= maxW) return text;
+  let t = text;
+  while (t.length > 1 && ctx.measureText(`${t}...`).width > maxW) t = t.slice(0, -1);
+  return `${t}...`;
+}
+
+/** 열 너비 — 각 열의 최장 텍스트를 실측해 정한다. 첫 열(라벨)은 상한 내에서, 지표는 우측 정렬. */
 function measureCols(ctx: CanvasRenderingContext2D, spec: BriefTableSpec, rows: BriefTableRow[]): number[] {
   const widths: number[] = [];
   for (let c = 0; c < spec.columns.length; c++) {
@@ -37,6 +43,7 @@ function measureCols(ctx: CanvasRenderingContext2D, spec: BriefTableSpec, rows: 
     for (const r of rows) {
       max = Math.max(max, ctx.measureText(r.cells[c] ?? "").width);
     }
+    if (c === 0) max = Math.min(max, LABEL_MAX_W);
     widths.push(Math.ceil(max) + 20);
   }
   return widths;
@@ -87,7 +94,7 @@ export async function renderTablePng(spec: BriefTableSpec): Promise<Blob> {
   // 헤더
   ctx.fillStyle = "#f4f5f7";
   ctx.fillRect(PAD, y, w - PAD * 2, HEAD_H);
-  ctx.fillStyle = "#171717";
+  ctx.fillStyle = "#666666";
   ctx.font = `600 13px ${FONT}`;
   let x = PAD;
   for (let c = 0; c < spec.columns.length; c++) {
@@ -100,15 +107,16 @@ export async function renderTablePng(spec: BriefTableSpec): Promise<Blob> {
   // 본문
   ctx.font = `400 13px ${FONT}`;
   for (const r of rows) {
-    if (r.band && r.band !== "none") {
-      ctx.fillStyle = BAND_BG[r.band];
+    if (r.problem) {
+      ctx.fillStyle = PROBLEM_BG;
       ctx.fillRect(PAD, y, w - PAD * 2, ROW_H);
     }
     ctx.fillStyle = "#171717";
     x = PAD;
     for (let c = 0; c < spec.columns.length; c++) {
       ctx.textAlign = c === 0 ? "left" : "right";
-      ctx.fillText(r.cells[c] ?? "", c === 0 ? x + 10 : x + cols[c] - 10, y + ROW_H / 2);
+      const text = c === 0 ? ellipsize(ctx, r.cells[c] ?? "", cols[c] - 20) : r.cells[c] ?? "";
+      ctx.fillText(text, c === 0 ? x + 10 : x + cols[c] - 10, y + ROW_H / 2);
       x += cols[c];
     }
     // 행 구분선
