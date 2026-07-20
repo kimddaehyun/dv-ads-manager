@@ -10,6 +10,8 @@ F-MultiAccount popover에서 진입. 기간을 고르면 계정의 매체별 성
 - `report-data.ts` — SA stats 수집·지표 합산(`ReportMetrics`). `report-gfa.ts`/`report-gfa-detail.ts` — GFA(성과형 디스플레이) 수집.
 - `report-period.ts` — 기간 계산(`DateRange`). `report-variable.ts` — 가변 영역(상품별 등) 채우기. `report-fill.ts` — 고정 시트 채우기. `report-excel.ts` — xlsx zip 열기/쓰기 저수준.
 
+- 진행 오버레이(`showProgress`)는 `dvads-progress-backdrop` 마커 클래스로 scroll-lock에 걸린다(스타일 없음) — 클래스명 바꾸면 배경 스크롤 잠금이 풀린다.
+
 ## 테스트·양식
 
 - **node 단독 테스트**: `node --experimental-strip-types --import ./scripts/ts-resolve.mjs scripts/test-report-*.ts` — chrome 없이 fill/변수/표시 로직 검증. `ts-resolve.mjs`가 확장자 없는 상대 import와 `@/` 별칭을 해석해 준다.

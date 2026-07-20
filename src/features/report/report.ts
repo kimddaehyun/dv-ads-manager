@@ -57,11 +57,16 @@ export function showProgress(text: string, onCancel?: () => void): void {
   const cancelBtn = overlayEl.querySelector<HTMLElement>(".dvads-auto-overlay-cancel");
   if (cancelBtn) cancelBtn.style.display = onCancel ? "" : "none";
   overlayEl.style.display = "";
+  // "backdrop" 마커 — scroll-lock.ts의 셀렉터에 걸려 배경 스크롤이 잠긴다 (스타일 없음).
+  overlayEl.classList.add("dvads-progress-backdrop");
   const t = overlayEl.querySelector<HTMLElement>(".dvads-auto-overlay-text");
   if (t) t.textContent = text;
 }
 export function hideProgress(): void {
-  if (overlayEl) overlayEl.style.display = "none";
+  if (overlayEl) {
+    overlayEl.style.display = "none";
+    overlayEl.classList.remove("dvads-progress-backdrop");
+  }
   onProgressCancel = null;
 }
 
