@@ -205,7 +205,7 @@ export function PopupView({
                 </div>
                 {state === "ok" && refresh.kind !== "idle" && refresh.kind !== "loading" && (
                   <p
-                    className={`mt-2 text-[11px] ${
+                    className={`mt-2 text-xs ${
                       refresh.kind === "ok" ? "text-gray-500" : "text-red-600"
                     }`}
                   >

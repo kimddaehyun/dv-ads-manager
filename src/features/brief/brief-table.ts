@@ -78,7 +78,7 @@ export async function renderTablePng(spec: BriefTableSpec): Promise<Blob> {
 
   // 제목
   ctx.fillStyle = "#171717";
-  ctx.font = `600 15px ${FONT}`;
+  ctx.font = `600 16px ${FONT}`;
   ctx.textBaseline = "middle";
   ctx.fillText(spec.title, PAD, PAD + TITLE_H / 2);
 

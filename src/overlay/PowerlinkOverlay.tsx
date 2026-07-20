@@ -90,7 +90,7 @@ function KeywordRow({ kw, showBadge }: { kw: DemoKeyword; showBadge: boolean }) 
           <div className="flex items-center gap-2.5">
             <span className="text-gray-900">{kw.keyword}</span>
             {kw.subTag && (
-              <span className="inline-block px-1.5 py-0.5 text-[10px] bg-gray-100 text-gray-500 rounded">
+              <span className="inline-block px-1.5 py-0.5 text-xs bg-gray-100 text-gray-500 rounded">
                 {kw.subTag}
               </span>
             )}
