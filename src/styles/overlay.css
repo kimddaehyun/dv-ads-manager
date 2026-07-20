@@ -61,7 +61,7 @@
   width: 16px; height: 16px; border-radius: 3px;
 }
 .dvads-page-banner .right {
-  font-size: 11px;
+  font-size: 12px;
   opacity: 0.8;
 }
 .dvads-page-banner a {
@@ -227,7 +227,7 @@
   margin-bottom: 10px;
 }
 .dvads-expand-hdr .meta {
-  font-size: 11px;
+  font-size: 12px;
   color: #666666;
 }
 .dvads-expand-hdr .refresh-btn {
@@ -235,7 +235,7 @@
   align-items: center;
   gap: 4px;
   padding: 4px 8px;
-  font-size: 11px;
+  font-size: 12px;
   color: #666666;
   background: transparent;
   border: 0;
@@ -461,7 +461,7 @@
   border: 0;
   border-radius: 6px;
   font-family: inherit;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   user-select: none;
@@ -485,7 +485,7 @@
   display: flex;
   justify-content: space-between;
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: 12px;
   color: #666666;
 }
 .dvads-shop-table {
@@ -498,7 +498,7 @@
   text-align: right;
   font-feature-settings: "tnum";
 }
-.dvads-shop-table th { color: #666666; font-weight: 500; font-size: 10px; }
+.dvads-shop-table th { color: #666666; font-weight: 500; font-size: 12px; }
 .dvads-shop-table td { color: #171717; }
 .dvads-shop-table th:first-child,
 .dvads-shop-table td:first-child {
@@ -1215,7 +1215,7 @@ td.dvads-period-delta-down {
   height: 24px;
   line-height: 24px;
   padding: 0 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: #525252;
   background: #fafafa;
   border-top: 1px solid #ECEEF0;
@@ -1560,7 +1560,7 @@ td.dvads-period-delta-down {
   position: absolute;
   left: 10px;
   bottom: -16px;
-  font-size: 11px;
+  font-size: 12px;
   color: #dc2626;
   pointer-events: none;
   white-space: nowrap;
@@ -2220,7 +2220,7 @@ td.dvads-period-delta-down {
 .dvads-multi-tr.dvads-multi-tr-contract-warning .dvads-multi-name::after {
   content: " ⚠";
   color: #DC2626;
-  font-size: 11px;
+  font-size: 12px;
 }
 .dvads-multi-tr.dvads-multi-tr-contract-expired td:first-child::before {
   content: "";
@@ -2248,31 +2248,17 @@ td.dvads-period-delta-down {
   cursor: help;
 }
 
-/* 통합 알림 cue — 비즈머니/브랜드검색 어느 쪽이든 임계 도달 시 행 좌측 빨간 세로 선.
-   "이 계정에 뭔가 알림이 떴음"이라는 단일 시각 신호. 정적(펄스 없음). */
-.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child {
-  position: relative;
-}
-.dvads-multi-tr.dvads-multi-tr-threshold-alert td:first-child::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background: #DC2626;
-}
 
-/* ─── 변경이력 알림 칩 ────────────────────────────────────────────────── */
+/* ─── 계정 이슈 배지 ──────────────────────────────────────────────────── */
 
-/* 통합 칩 하나. 알림이 없으면 칩이 display:none이라 줄 자체가 사라진다. */
+/* 통합 배지 하나(종 + 개수). 이슈가 없으면 display:none이라 줄 자체가 사라진다.
+   수정/알림만 있으면 회색, 예산 소진 포함이면 빨강(급함).
+   이름 셀 클릭(계정 이동)과 겹치므로 클릭은 JS에서 stopPropagation. */
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
-/* 계정명 셀 안 아이콘 칩(종 + 개수) — 수정만 있으면 회색, 예산 소진 포함이면 빨강(급함).
-   이름 셀 클릭(계정 이동)과 겹치므로 클릭은 JS에서 stopPropagation. */
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip {
   display: inline-flex;
   align-items: center;
@@ -2284,7 +2270,7 @@ td.dvads-period-delta-down {
   background: #EEF0F2;
   color: #4B5563;
   font-family: inherit;
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
   cursor: pointer;
@@ -2374,7 +2360,7 @@ td.dvads-period-delta-down {
   background: transparent;
   padding: 0;
   font-family: inherit;
-  font-size: 11.5px;
+  font-size: 12px;
   color: #6B7280;
   cursor: pointer;
 }
@@ -2400,7 +2386,7 @@ td.dvads-period-delta-down {
   gap: 8px;
 }
 .dvads-change-kind {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: #4B5563;
   overflow: hidden;
@@ -2408,13 +2394,13 @@ td.dvads-period-delta-down {
   white-space: nowrap;
 }
 .dvads-change-when {
-  font-size: 11px;
+  font-size: 12px;
   color: #9CA3AF;
   flex-shrink: 0;
 }
 .dvads-change-target {
   margin-top: 2px;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2422,13 +2408,13 @@ td.dvads-period-delta-down {
 }
 .dvads-change-summary {
   margin-top: 1px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: #6B7280;
   word-break: break-all;
 }
 .dvads-change-more {
   padding: 8px 12px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: #9CA3AF;
   text-align: center;
 }
@@ -2466,7 +2452,7 @@ td.dvads-period-delta-down {
   justify-content: space-between;
 }
 .dvads-actor-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
 }
 .dvads-actor-close {
@@ -2996,7 +2982,7 @@ td.dvads-period-delta-down {
 }
 /* 계정 컬럼 보조 "원래 ..." 라인 — 별칭 있는 경우 원본 이름 표시. */
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-name + .dvads-multi-no {
-  font-size: 11px;
+  font-size: 12px;
   color: #9CA3AF;
   margin-top: 2px;
 }
@@ -3011,7 +2997,7 @@ td.dvads-period-delta-down {
   padding: 12px 12px;
   text-align: left;
   color: #6B7280;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 /* ID 컬럼 — 좌측 정렬, tabular-nums, 보조 색상. 상태와 동일 폭(130px). */
 .dvads-multi-table th.dvads-multi-th-search-id,
@@ -3227,7 +3213,7 @@ td.dvads-period-delta-down {
   max-width: 220px;
 }
 .dvads-multi-group-count {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: #9CA3AF;
   flex-shrink: 0;
@@ -3271,7 +3257,7 @@ td.dvads-period-delta-down {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .dvads-rename-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: #171717;
   margin-bottom: 14px;
@@ -3359,7 +3345,7 @@ td.dvads-period-delta-down {
   background: #DC2626;
 }
 .dvads-confirmdel-msg {
-  font-size: 13.5px;
+  font-size: 14px;
   color: #4B5563;
   line-height: 1.55;
   margin: 2px 0 18px;
@@ -3433,7 +3419,7 @@ td.dvads-period-delta-down {
 .dvads-groupmove-name {
   flex: 1;
   min-width: 0;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
   overflow: hidden;
@@ -3452,7 +3438,7 @@ td.dvads-period-delta-down {
   background: transparent;
   border-radius: 6px;
   font-family: inherit;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   color: #6B7280;
   cursor: pointer;
@@ -3519,7 +3505,7 @@ td.dvads-period-delta-down {
   padding: 14px 20px 6px;
 }
 .dvads-agency-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: #171717;
 }
@@ -3529,7 +3515,7 @@ td.dvads-period-delta-down {
   padding: 0;
   margin: 0;
   font: inherit;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: #6B7280;
   cursor: pointer;
@@ -3765,7 +3751,7 @@ td.dvads-period-delta-down {
   transition: color 120ms ease;
 }
 .dvads-agency-no {
-  font-size: 11px;
+  font-size: 12px;
   color: #9CA3AF;
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
@@ -3845,7 +3831,7 @@ td.dvads-period-delta-down {
   white-space: nowrap;
 }
 .dvads-multi-no {
-  font-size: 11px;
+  font-size: 12px;
   color: #9CA3AF;
   font-variant-numeric: tabular-nums;
 }
@@ -3890,7 +3876,7 @@ td.dvads-period-delta-down {
 .dvads-multi-row-bot {
   display: flex;
   gap: 12px;
-  font-size: 11px;
+  font-size: 12px;
   color: #6B7280;
   padding-left: 22px;
   flex-wrap: wrap;
@@ -3909,7 +3895,7 @@ td.dvads-period-delta-down {
   align-items: center;
 }
 .dvads-multi-contract {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: #6B7280;
 }
@@ -3920,7 +3906,7 @@ td.dvads-period-delta-down {
   color: #9CA3AF;
 }
 .dvads-multi-row-error {
-  font-size: 11px;
+  font-size: 12px;
   color: #DC2626;
   padding-left: 22px;
 }
@@ -3978,13 +3964,13 @@ td.dvads-period-delta-down {
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 .dvads-input-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: #171717;
   margin-bottom: 6px;
 }
 .dvads-input-desc {
-  font-size: 12.5px;
+  font-size: 13px;
   color: #6B7280;
   margin-bottom: 14px;
   line-height: 1.5;
@@ -4230,7 +4216,7 @@ td.dvads-period-delta-down {
   padding: 2px 8px;
   border-radius: 999px;
   background: #F3F4F6;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 500;
   color: #525252;
 }

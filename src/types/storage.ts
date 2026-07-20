@@ -241,6 +241,11 @@ export interface MultiAccountSnapshot {
   /** 비즈머니 잔액 = refundableAmt + nonRefundableAmt (원). 수집 실패 시 null */
   bizMoney: number | null;
   /**
+   * 광고주센터 알림 피드 중 프로모션(type=PROMOTION) 제외분 = 계정 이슈.
+   * 미수집(구 캐시)이면 undefined, 수집 실패면 빈 배열.
+   */
+  issues?: { type: string; title: string }[];
+  /**
    * BRAND_SEARCH 등 기간 계약. 광고그룹별 currentTimeContract + nextTimeContract 모두 row로
    * 포함 — 캠페인 단위 max(endDate)로 "후속 계약 마련됨" 판정 가능.
    * 계약 없으면 빈 배열.

@@ -188,6 +188,7 @@ async function autoUpdateActiveAccount() {
       bizMoney: payload.bizMoney,
       yesterday: payload.yesterday,
       contracts: payload.contracts,
+      issues: payload.issues,
       fetched_at: new Date().toISOString(),
     };
     await saveSnapshot(snap);
@@ -2955,8 +2956,8 @@ function renderTableRow(
     scheduleHideBrandTooltip();
   });
 
-  // 변경이력 알림 칩(계정 이슈 아이콘) — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게
-  // 전파를 끊는다. 클릭하면 예산/수정 통합 "계정 이슈" 패널이 뜬다.
+  // 알림 배지(종 + 개수) — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게
+  // 전파를 끊는다. 클릭하면 예산/수정/알림 통합 "계정 이슈" 패널이 뜬다.
   const changeChip = tr.querySelector<HTMLButtonElement>(".dvads-multi-change-chip");
   changeChip?.addEventListener("click", (e) => {
     e.stopPropagation();
@@ -3223,6 +3224,7 @@ async function refreshRow(
       bizMoney: payload.bizMoney,
       yesterday: payload.yesterday,
       contracts: payload.contracts,
+      issues: payload.issues,
       fetched_at: new Date().toISOString(),
     };
     await saveSnapshot(snap);
@@ -3361,9 +3363,6 @@ function startChangeWatchTimer(): void {
 }
 
 // 통합 칩 아이콘(종 모양) — 예산 소진이 하나라도 있으면 빨강(급함), 아니면 회색.
-const CHANGE_CHIP_ICON =
-  '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
-
 function paintChangeWatchRow(adAccountNo: number, state: ChangeWatchState | null): void {
   if (!popoverEl) return;
   const counts = {
@@ -3372,22 +3371,9 @@ function paintChangeWatchRow(adAccountNo: number, state: ChangeWatchState | null
   };
   const total = counts.budget + counts.external;
   for (const row of findRows(adAccountNo)) {
-    row.dataset.alertChange = total > 0 ? "1" : "0";
-    const chip = row.querySelector<HTMLButtonElement>(".dvads-multi-change-chip");
-    if (chip) {
-      if (total > 0) {
-        chip.innerHTML = `${CHANGE_CHIP_ICON}<span>${total}</span>`;
-        chip.title =
-          counts.budget > 0
-            ? "예산을 다 써서 멈춘 광고가 있어요"
-            : "우리가 아닌 다른 사람이 광고를 수정했어요";
-        chip.classList.toggle("is-budget", counts.budget > 0);
-        chip.style.display = "";
-      } else {
-        chip.style.display = "none";
-      }
-    }
-    syncAlertBar(row);
+    row.dataset.statusChangeCount = String(total);
+    row.dataset.statusChangeBudget = String(counts.budget);
+    syncIssueChip(row);
   }
   scheduleHeadColSync();
 }
@@ -3881,24 +3867,40 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
     delete row.dataset.brandDday;
   }
 
-  // 통합 알림 cue — 비즈/브랜드/변경이력 어느 쪽이든 알림이 뜨면 행 좌측 빨간 세로 선.
-  // "이 계정에 뭔가 알림이 떴음"이라는 단일 시각 신호로 통일.
-  row.dataset.alertBiz = bizAlert ? "1" : "0";
-  row.dataset.alertBrand = brandAlert ? "1" : "0";
-  syncAlertBar(row);
+  // 알림 배지 재료 — 광고주센터 알림(프로모션·추천 제외분). 실제 그리기는 syncIssueChip.
+  const issues = snap.issues ?? [];
+  row.dataset.statusIssueCount = String(issues.length);
+  row.dataset.statusIssueTitles = issues.map((i) => i.title).join("\n");
+  syncIssueChip(row);
 }
 
+const CHANGE_CHIP_ICON =
+  '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
+
 /**
- * 좌측 알림 선은 서로 다른 시점에 도는 두 경로가 칠한다 — 스냅샷 paint(비즈/브랜드)와
- * 변경이력 스캔. 각자 classList.toggle을 하면 나중에 칠한 쪽이 앞선 쪽 결과를 지운다.
- * 그래서 각 경로는 자기 판정만 dataset에 남기고, 실제 선은 여기서 합쳐 칠한다.
+ * 알림 배지(종 + 개수)는 서로 다른 시점에 도는 두 경로가 칠한다 — 스냅샷 paint(알림 피드)와
+ * 변경이력 스캔(예산/수정). 각 경로는 dataset에 자기 판정만 남기고 여기서 합쳐 그린다.
+ * 개수 = 변경이력 unread + 광고주센터 알림 이슈. 0이면 배지 숨김.
  */
-function syncAlertBar(row: HTMLTableRowElement) {
-  const on =
-    row.dataset.alertBiz === "1" ||
-    row.dataset.alertBrand === "1" ||
-    row.dataset.alertChange === "1";
-  row.classList.toggle("dvads-multi-tr-threshold-alert", on);
+function syncIssueChip(row: HTMLTableRowElement) {
+  const chip = row.querySelector<HTMLButtonElement>(".dvads-multi-change-chip");
+  if (!chip) return;
+  const naver = Number(row.dataset.statusIssueCount ?? "0");
+  const change = Number(row.dataset.statusChangeCount ?? "0");
+  const budget = Number(row.dataset.statusChangeBudget ?? "0");
+  const total = naver + change;
+  if (total === 0) {
+    chip.style.display = "none";
+    return;
+  }
+  chip.innerHTML = `${CHANGE_CHIP_ICON}<span>${total}</span>`;
+  chip.classList.toggle("is-budget", budget > 0);
+  chip.style.display = "";
+  const lines: string[] = [];
+  if (budget > 0) lines.push("예산을 다 써서 멈춘 광고가 있어요");
+  if (change - budget > 0) lines.push("우리가 아닌 다른 사람이 광고를 수정했어요");
+  if (row.dataset.statusIssueTitles) lines.push(row.dataset.statusIssueTitles);
+  chip.title = lines.join("\n");
 }
 
 // ─── 변경이력 알림 상세 패널 ─────────────────────────────────────────────
@@ -3970,13 +3972,18 @@ async function openChangeWatchPanel(
     return;
   }
   closeChangeWatchPanel();
-  const state = await loadChangeWatchState(entry.adAccountNo);
+  const [state, snap] = await Promise.all([
+    loadChangeWatchState(entry.adAccountNo),
+    loadSnapshot(entry.adAccountNo),
+  ]);
   // 예산/수정을 한 목록으로 — 최신이 위.
   const unread = [
     ...unreadChangeWatchEvents(state, "budget"),
     ...unreadChangeWatchEvents(state, "external"),
   ].sort((a, b) => b.ts - a.ts);
-  if (!popoverEl || !anchor.isConnected || unread.length === 0) return;
+  // 광고주센터 알림 이슈(소재 보류 등) — 읽음 개념 없이 네이버가 내리는 동안 유지.
+  const naverIssues = snap?.issues ?? [];
+  if (!popoverEl || !anchor.isConnected || (unread.length === 0 && naverIssues.length === 0)) return;
 
   const panel = document.createElement("div");
   panel.className = "dvads dvads-change-panel";
@@ -3997,7 +4004,25 @@ async function openChangeWatchPanel(
   const renderList = (tab: ChangePanelTab) => {
     list.textContent = "";
     const shown = filterChangeEvents(unread, tab);
-    if (shown.length === 0) {
+    // 광고주센터 알림 이슈는 "전체" 탭 맨 위에 — 변경이력과 달리 읽음 처리 대상이 아니다.
+    if (tab === "all") {
+      for (const iss of naverIssues) {
+        const item = document.createElement("div");
+        item.className = "dvads-change-item";
+        const who = document.createElement("span");
+        who.className = "dvads-change-kind";
+        who.textContent = "알림";
+        const top = document.createElement("div");
+        top.className = "dvads-change-item-top";
+        top.append(who);
+        const summary = document.createElement("div");
+        summary.className = "dvads-change-summary";
+        summary.textContent = iss.title;
+        item.append(top, summary);
+        list.appendChild(item);
+      }
+    }
+    if (shown.length === 0 && (tab !== "all" || naverIssues.length === 0)) {
       const empty = document.createElement("div");
       empty.className = "dvads-change-more";
       empty.textContent = "표시할 알림이 없어요";

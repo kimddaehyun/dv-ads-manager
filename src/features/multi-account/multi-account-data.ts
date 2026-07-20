@@ -574,6 +574,23 @@ export interface AccountSnapshotPayload {
   bizMoney: number | null;
   yesterday: MultiAccountSnapshot["yesterday"];
   contracts: MultiAccountSnapshot["contracts"];
+  issues: NonNullable<MultiAccountSnapshot["issues"]>;
+}
+
+/**
+ * 광고주센터 알림 피드에서 계정 이슈만 추출 — 프로모션(PROMOTION)과 개선 제안(RECOMMENDATION)은
+ * 버린다. 전 계정 스캔(2026-07-20, 200개) 기준 이슈성 알림은 INFORMATION(소재 보류 등).
+ * bmgate처럼 URL-aware — adAccountNo만 바꾸면 cross-account 응답.
+ */
+async function fetchAccountIssues(
+  adAccountNo: number,
+): Promise<NonNullable<MultiAccountSnapshot["issues"]>> {
+  const res = await authFetch<{ items?: { type?: string; title?: string }[] }>(
+    `/apis/insight/v1/adAccounts/${adAccountNo}/messages`,
+  );
+  return (res.items ?? [])
+    .filter((m) => m.type !== "PROMOTION" && m.type !== "RECOMMENDATION" && !!m.title)
+    .map((m) => ({ type: m.type ?? "", title: m.title! }));
 }
 
 /**
@@ -597,6 +614,12 @@ export async function collectAccount(
 
   // 비즈머니는 플랫폼 무관 — 항상 수집.
   const bizMoneyP = fetchBizMoney(adAccountNo);
+
+  // 계정 이슈 알림 — 플랫폼 무관. 실패해도 빈 배열로 흘림(상태 컬럼만 "정상" 표시).
+  const issuesP = fetchAccountIssues(adAccountNo).catch((e) => {
+    console.warn("[dv-ads/multi-account] 알림 조회 실패", e);
+    return [] as NonNullable<MultiAccountSnapshot["issues"]>;
+  });
 
   // 디스플레이(GFA) — 켜져 있을 때만. SA와 독립이라 병렬 시작.
   const gfaP: Promise<YesterdayMetrics | null> = platforms.da
@@ -643,10 +666,10 @@ export async function collectAccount(
     });
   }
 
-  const [bizMoney, gfaYesterday] = await Promise.all([bizMoneyP, gfaP]);
+  const [bizMoney, gfaYesterday, issues] = await Promise.all([bizMoneyP, gfaP, issuesP]);
   const yesterday = combineYesterday(saYesterday, gfaYesterday);
 
-  return { bizMoney, yesterday, contracts };
+  return { bizMoney, yesterday, contracts, issues };
 }
 
 /**
