@@ -2418,6 +2418,9 @@ td.dvads-period-delta-down {
 .dvads-change-item {
   padding: 12px;
 }
+/* 대상 id를 아는 알림 — 클릭하면 해당 캠페인/광고그룹 화면으로 이동 */
+.dvads-change-item.is-link { cursor: pointer; }
+.dvads-change-item.is-link:hover { background: rgba(0, 0, 0, 0.03); }
 .dvads-change-item + .dvads-change-item {
   border-top: 1px solid #F3F4F6;
 }
@@ -4732,8 +4735,8 @@ td.dvads-period-delta-down {
 /* 첫 열은 이름 — 왼쪽 정렬 */
 .dvads-brief-pick-detail-table th:first-child,
 .dvads-brief-pick-detail-table td:first-child { text-align: left; padding-right: 28px; }
-.dvads-brief-pick-detail-table tr.dvads-brief-band-green td { background: rgba(22, 163, 74, 0.07); }
-.dvads-brief-pick-detail-table tr.dvads-brief-band-yellow td { background: rgba(217, 119, 6, 0.09); }
+/* 문제(후보 발화) 행만 강조 — state-error 7% */
+.dvads-brief-pick-detail-table tr.dvads-brief-row-problem td { background: rgba(220, 38, 38, 0.07); }
 /* 실제 checkbox는 숨기고(접근성 유지) 우측 원형 체크가 상태를 그린다 */
 .dvads-brief-pick-row input[type="checkbox"] {
   position: absolute; width: 1px; height: 1px; opacity: 0;

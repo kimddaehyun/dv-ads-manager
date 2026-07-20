@@ -4085,6 +4085,22 @@ async function openChangeWatchPanel(
       summary.className = "dvads-change-summary";
       summary.textContent = displaySummary(ev.summary);
       item.append(top, target, summary);
+      // 대상 id를 아는 알림은 클릭 시 해당 캠페인/광고그룹 화면으로 이동 —
+      // 소재/키워드 수정도 소속 광고그룹 페이지로 간다(그룹이 더 구체적이라 우선).
+      const dest = ev.adgroupId
+        ? `/manage/ad-accounts/${entry.adAccountNo}/sa/adgroups/${ev.adgroupId}`
+        : ev.campaignId
+          ? `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns/${ev.campaignId}`
+          : null;
+      if (dest) {
+        item.classList.add("is-link");
+        item.title = "해당 화면으로 이동";
+        item.addEventListener("click", () => {
+          closeChangeWatchPanel();
+          closePopover();
+          location.assign(dest);
+        });
+      }
       list.appendChild(item);
     }
     if (shown.length > MAX_SHOWN) {

@@ -285,6 +285,10 @@ export interface ChangeWatchEvent {
   target: string;
   /** 사람이 읽는 한 줄 요약 (예: "일예산 10,000원 -> 15,000원") */
   summary: string;
+  /** 대상 캠페인 ncc id (`cmp-...`). 클릭 이동용 — 없으면 이동 불가(과거 저장분 포함). */
+  campaignId?: string;
+  /** 대상 광고그룹 ncc id (`grp-...`). 소재/키워드 수정도 소속 그룹 페이지로 이동한다. */
+  adgroupId?: string;
 }
 
 /**

@@ -22,6 +22,8 @@ export interface RawHistoryObject {
   displayName?: string;
   data?: {
     heroes?: {
+      nccCampaignId?: string;
+      nccAdgroupId?: string;
       nccCampaignName?: string;
       nccAdgroupName?: string;
       before?: Record<string, unknown>;
@@ -144,6 +146,20 @@ function lockedBudget(obj: RawHistoryObject): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+/**
+ * 대상의 캠페인/광고그룹 id 추출 — 알림 클릭 시 해당 페이지 이동용.
+ * obj.id 자체가 대상 id(`cmp-`/`grp-` prefix)이고, 소재/키워드 수정은 heroes에 실린
+ * 상위 id로 폴백한다. 못 얻으면 undefined — 이동 없이 표시만.
+ */
+function entityIds(obj: RawHistoryObject): { campaignId?: string; adgroupId?: string } {
+  const heroes = obj.data?.heroes;
+  const id = obj.id ?? "";
+  return {
+    campaignId: id.startsWith("cmp-") ? id : heroes?.nccCampaignId,
+    adgroupId: id.startsWith("grp-") ? id : heroes?.nccAdgroupId,
+  };
+}
+
 export function rowTime(row: RawHistoryRow): number {
   const iso = row["@timestamp"];
   if (iso) {
@@ -220,6 +236,7 @@ export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): Cha
           summary: budget
             ? `${lockScope} 일 예산 ${budget.toLocaleString("ko-KR")}원 도달`
             : `${lockScope} 일 예산 도달`,
+          ...entityIds(obj),
         });
       });
       continue;
@@ -242,6 +259,7 @@ export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): Cha
         actor,
         target,
         summary: diff ? `${what} - ${diff}` : `${what} 변경`,
+        ...entityIds(obj),
       });
     });
   }
