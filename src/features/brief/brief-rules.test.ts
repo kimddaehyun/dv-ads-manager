@@ -722,8 +722,9 @@ describe("targets 스냅샷", () => {
       ] }],
     });
     const c = out.find((c) => c.kind === "zeroConvKeyword")!;
+    // 라벨은 그룹 경로 접두 — 같은 키워드가 여러 그룹에 있을 때 이력 추적 오매칭 방지.
     expect(c.targets).toEqual([
-      { label: "가방", cost: 20_000, revenue: 0, purchaseConv: 0, clicks: 10, impressions: 100 },
+      { label: "C > G > 가방", cost: 20_000, revenue: 0, purchaseConv: 0, clicks: 10, impressions: 100 },
     ]);
   });
 

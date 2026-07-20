@@ -456,7 +456,8 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           columns: KW_COLUMNS,
           rows: zeroConv.map((r) => kwRow(r, targetRoas, true)),
         },
-        targets: zeroConv.map((r) => toTarget(r.keyword, r.metrics)),
+        // 라벨에 그룹 경로 접두 — 같은 키워드가 여러 그룹에 있을 때 이력 추적 오매칭 방지(코덱스 리뷰 P2).
+        targets: zeroConv.map((r) => toTarget(`${gName} > ${r.keyword}`, r.metrics)),
         selected: false,
       });
     }
@@ -485,7 +486,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             columns: KW_COLUMNS,
             rows: below.map((r) => kwRow(r, targetRoas, true)),
           },
-          targets: below.map((r) => toTarget(r.keyword, r.metrics)),
+          targets: below.map((r) => toTarget(`${gName} > ${r.keyword}`, r.metrics)),
           selected: false,
         });
       }
@@ -518,7 +519,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
               return { ...base, cells: [...base.cells, `${r.rank}위`] };
             }),
           },
-          targets: lowRank.map((r) => toTarget(r.keyword, r.metrics)),
+          targets: lowRank.map((r) => toTarget(`${gName} > ${r.keyword}`, r.metrics)),
           selected: false,
         });
       }
@@ -593,7 +594,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           비용합계: zeroPlace.reduce((s, p) => s + p.metrics.cost, 0),
         },
         table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(zeroPlace.map((p) => p.label))),
-        targets: zeroPlace.map((p) => toTarget(p.label, p.metrics)),
+        targets: zeroPlace.map((p) => toTarget(`${gName} > ${p.label}`, p.metrics)),
         selected: false,
       });
     }
@@ -616,7 +617,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             비용합계: lowPlace.reduce((s, p) => s + p.metrics.cost, 0),
           },
           table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(lowPlace.map((p) => p.label))),
-          targets: lowPlace.map((p) => toTarget(p.label, p.metrics)),
+          targets: lowPlace.map((p) => toTarget(`${gName} > ${p.label}`, p.metrics)),
           selected: false,
         });
       }
@@ -684,7 +685,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             ],
           })),
         },
-        targets: lowCtr.map((a) => toTarget(a.label, a.metrics)),
+        targets: lowCtr.map((a) => toTarget(`${scope.campaign} > ${scope.group} > ${a.label}`, a.metrics)),
         selected: false,
       });
     }

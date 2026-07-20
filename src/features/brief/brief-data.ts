@@ -65,6 +65,12 @@ async function fetchGroupDims(customerId: number, range: DateRange): Promise<Bri
       console.warn(`[dv-ads/brief] 그룹별 ${attr} 조회 실패 — 해당 차원 후보만 생략`, e);
       return;
     }
+    // maxRows에 걸려 잘린 차원은 통째로 버린다 — 부분 데이터로 skew를 계산하면
+    // 뒤쪽 그룹 이슈가 조용히 사라지거나 반쪽 세그먼트로 오판한다(코덱스 리뷰 P1).
+    if (res.rows.length < res.totalResults) {
+      console.warn(`[dv-ads/brief] 그룹별 ${attr} 잘림(${res.rows.length}/${res.totalResults}행) — 해당 차원 후보 생략`);
+      return;
+    }
     const idx = colIndex(res.head);
     for (const r of res.rows) {
       const camp = parseEntity(r[idx["nccCampaignId"]] ?? "");
@@ -127,6 +133,8 @@ async function fetchPlAds(customerId: number, range: DateRange): Promise<BriefAd
   interface RawAdRow { campaign: string; group: string; campaignId: string; adgroupId: string; adId: string; metrics: ReportMetrics }
   const adRows: RawAdRow[] = [];
   for (const r of res.rows) {
+    // 서버 필터가 조용히 실패할 수 있어 로컬 캠페인 타입 가드 유지(buildProductAdRows와 동일 규칙).
+    if ((r[idx["nccCampaignTp"]] ?? "").trim() !== "파워링크") continue;
     const camp = parseEntity(r[idx["nccCampaignId"]] ?? "");
     const grp = parseEntity(r[idx["nccAdgroupId"]] ?? "");
     const ad = parseEntity(r[idx["nccAdId"]] ?? "");
