@@ -22,7 +22,7 @@ function actionSummary(rec: BriefHistoryRecord): string {
   if (rec.actions.length === 0) return "조치 없음";
   return rec.actions
     .map((a) => `${String(a.facts["기준"] ?? a.kind)}${a.action ? ` - ${ACTION_LABEL[a.action] ?? "조정"}` : ""}`)
-    .join(" · ");
+    .join(", ");
 }
 
 export function openBriefHistoryPanel(adAccountNo: number, advertiserName: string, onBack: () => void): void {
