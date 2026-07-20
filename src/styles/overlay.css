@@ -4699,6 +4699,7 @@ td.dvads-period-delta-down {
   background: rgba(230, 120, 59, 0.07);
   box-shadow: inset 0 0 0 1px #E6783B;
 }
+.dvads-brief-pick-item.is-selected .dvads-brief-pick-title { color: #E6783B; }
 /* 펼침 영역도 같은 덩어리 — 클릭으로 선택 토글 */
 .dvads-brief-pick-detail { cursor: pointer; }
 .dvads-brief-pick-row {
@@ -4799,7 +4800,15 @@ td.dvads-period-delta-down {
 .dvads-brief-pick-listhead {
   font: 600 14px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
   margin-bottom: -8px;
+  display: flex; align-items: center;
 }
+/* 오른쪽 끝 모두 선택/선택 해제 토글 — 텍스트 버튼 */
+.dvads-brief-pick-selectall {
+  margin-left: auto; padding: 0;
+  background: none; border: 0; cursor: pointer;
+  font: 500 13px/1.5 Pretendard, -apple-system, sans-serif; color: #6b7280;
+}
+.dvads-brief-pick-selectall:hover { color: #171717; }
 .dvads-brief-pick-listhead-count { color: #171717; }
 .dvads-brief-adv-sub { margin-top: 12px; }
 .dvads-brief-adv-sub-title {

@@ -592,11 +592,16 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     action: state.actions[i],
   }));
 
-  const rowsByIdx: Array<{ refresh: () => void }> = [];
+  const rowsByIdx: Array<{ refresh: () => void; setSelected: (on: boolean) => void }> = [];
 
   const updateComposeEnabled = () => {
     composeBtn.disabled = !picks.some((p) => p.selected && !isHiddenKind(p.kind));
-    listHeadCount.textContent = `${picks.filter((p) => !isHiddenKind(p.kind)).length}개`;
+    const visible = picks.filter((p) => !isHiddenKind(p.kind));
+    listHeadCount.textContent = `${visible.length}개`;
+    // 전부 골라져 있으면 "선택 해제", 아니면 "모두 선택"으로 라벨이 바뀐다.
+    selectAllBtn.textContent =
+      visible.length > 0 && visible.every((p) => p.selected) ? "선택 해제" : "모두 선택";
+    selectAllBtn.style.display = visible.length ? "" : "none";
   };
   const isHiddenKind = (kind: string): boolean =>
     (kind === PREV_HISTORY_KIND && !state.includePrevHistory) ||
@@ -605,10 +610,24 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   // 목록 소제목 — 몇 개 찾았고 몇 개 골랐는지, 스크롤 중에도 헷갈리지 않게.
   const listHead = document.createElement("div");
   listHead.className = "dvads-brief-pick-listhead";
-  listHead.append("발견한 이슈 ");
+  const listHeadLabel = document.createElement("span");
+  listHeadLabel.append("발견한 이슈 ");
   const listHeadCount = document.createElement("span");
   listHeadCount.className = "dvads-brief-pick-listhead-count";
-  listHead.appendChild(listHeadCount);
+  listHeadLabel.appendChild(listHeadCount);
+  listHead.appendChild(listHeadLabel);
+
+  // 오른쪽 끝 모두 선택/선택 해제 토글 — 라벨은 updateComposeEnabled가 상태 따라 갱신.
+  const selectAllBtn = document.createElement("button");
+  selectAllBtn.type = "button";
+  selectAllBtn.className = "dvads-brief-pick-selectall";
+  selectAllBtn.addEventListener("click", () => {
+    const visible = picks.filter((p) => !isHiddenKind(p.kind));
+    const turnOn = !(visible.length > 0 && visible.every((p) => p.selected));
+    rowsByIdx.forEach((r) => r.setSelected(turnOn));
+    updateComposeEnabled();
+  });
+  listHead.appendChild(selectAllBtn);
   body.appendChild(listHead);
 
   const list = document.createElement("div");
@@ -702,7 +721,14 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       }
       updateComposeEnabled();
     };
-    rowsByIdx.push({ refresh });
+    // 모두 선택/선택 해제용 — 숨긴 이슈는 켜지 않는다(보내면 안 되는 후보).
+    const setSelected = (on: boolean) => {
+      if (on && isHiddenKind(pick.kind)) return;
+      pick.selected = on;
+      cb.checked = on;
+      item.classList.toggle("is-selected", on);
+    };
+    rowsByIdx.push({ refresh, setSelected });
   });
   body.appendChild(list);
 
