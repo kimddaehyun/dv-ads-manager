@@ -10,13 +10,13 @@ cd "$CLAUDE_PROJECT_DIR" || exit 0
 STATE=".claude/.post-work-state"        # 마지막으로 후처리를 마친 코드 지문
 FLAG=".claude/.post-work-inprogress"    # 직전 멈춤에서 후처리를 지시했음 — 이번엔 마무리만
 
-# 코드 지문: 추적 중인 코드 경로의 (커밋/스테이지 내용 + 작업 트리 diff) 해시.
-# docs/·*.md만 바뀌면 지문이 안 변한다.
+# 코드 지문: 추적 중인 "로직" 경로의 (커밋/스테이지 내용 + 작업 트리 diff) 해시.
+# 문서(md)와 스타일(css)만 바뀌면 지문이 안 변한다 — 단순 UI 수정에는 리뷰를 안 돌린다.
 CODE_PATHS=(src manifest.config.ts supabase/functions package.json)
 fingerprint() {
   {
-    git ls-files -s -- "${CODE_PATHS[@]}" 2>/dev/null
-    git diff -- "${CODE_PATHS[@]}" 2>/dev/null
+    git ls-files -s -- "${CODE_PATHS[@]}" 2>/dev/null | grep -v -E '\.css$'
+    git diff -- "${CODE_PATHS[@]}" ':(exclude)*.css' 2>/dev/null
   } | shasum | cut -d' ' -f1
 }
 CUR="$(fingerprint)"
