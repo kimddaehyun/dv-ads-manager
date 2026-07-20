@@ -3952,7 +3952,15 @@ function filterChangeEvents(events: ChangeWatchEvent[], tab: ChangePanelTab): Ch
 // ── 과거 알림(id 미저장) 클릭 이동 — 대상 이름으로 캠페인/그룹 id를 찾는다 ──
 // 이동 정보 저장(campaignId/adgroupId)은 도입 이후 알림에만 있어, 그 전 알림은 이름 매칭으로
 // 폴백한다. 계정당 1회만 조회하고 캐시(popover 세션 동안 유지).
-const ISSUE_DEST_CAMPAIGN_TYPES = ["WEB_SITE", "SHOPPING", "BRAND_SEARCH", "POWER_CONTENTS", "PLACE"];
+// API campaignType → SPA URL의 campaigns-by/{TYPE}. 캠페인 상세 URL 패턴은 미확인이라
+// (추정 `/sa/campaigns/{id}`는 404, 2026-07-20) 검증된 유형별 목록 페이지로 보낸다.
+const ISSUE_DEST_CAMPAIGN_TYPES: Array<{ api: string; spa: string }> = [
+  { api: "WEB_SITE", spa: "WEB_SITE" },
+  { api: "SHOPPING", spa: "SHOPPING_NS" },
+  { api: "BRAND_SEARCH", spa: "BRAND" },
+  { api: "POWER_CONTENTS", spa: "POWER_CONTENTS" },
+  { api: "PLACE", spa: "PLACE" },
+];
 const issueDestCache = new Map<number, Promise<Map<string, string>>>();
 
 function legacyIssueDests(entry: MultiAccountDirectoryEntry): Promise<Map<string, string>> {
@@ -3964,22 +3972,25 @@ function legacyIssueDests(entry: MultiAccountDirectoryEntry): Promise<Map<string
     if (cid == null) return map;
     const base = `/manage/ad-accounts/${entry.adAccountNo}/sa`;
     const campaignLists = await Promise.allSettled(
-      ISSUE_DEST_CAMPAIGN_TYPES.map((tp) =>
+      ISSUE_DEST_CAMPAIGN_TYPES.map((t) =>
         authFetch<Array<{ nccCampaignId?: string; name?: string }>>(
-          `/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=${tp}`,
+          `/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=${t.api}`,
           undefined,
           cid,
         ),
       ),
     );
-    const campaigns: Array<{ id: string; name: string }> = [];
-    for (const r of campaignLists) {
+    const campaigns: Array<{ id: string; name: string; spa: string }> = [];
+    for (let i = 0; i < campaignLists.length; i++) {
+      const r = campaignLists[i];
       if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
       for (const row of r.value) {
-        if (row?.nccCampaignId && row.name) campaigns.push({ id: row.nccCampaignId, name: row.name });
+        if (row?.nccCampaignId && row.name) {
+          campaigns.push({ id: row.nccCampaignId, name: row.name, spa: ISSUE_DEST_CAMPAIGN_TYPES[i].spa });
+        }
       }
     }
-    for (const c of campaigns) if (!map.has(c.name)) map.set(c.name, `${base}/campaigns/${c.id}`);
+    for (const c of campaigns) map.set(c.name, `${base}/campaigns-by/${c.spa}`);
     const groupLists = await Promise.allSettled(
       campaigns.map((c) =>
         authFetch<Array<{ nccAdgroupId?: string; name?: string }>>(
@@ -3989,10 +4000,11 @@ function legacyIssueDests(entry: MultiAccountDirectoryEntry): Promise<Map<string
         ),
       ),
     );
+    // 그룹을 나중에 넣어 같은 이름이면 그룹이 이긴다 — 그룹 상세가 더 구체적인 화면.
     for (const r of groupLists) {
       if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
       for (const row of r.value) {
-        if (row?.nccAdgroupId && row.name && !map.has(row.name)) {
+        if (row?.nccAdgroupId && row.name) {
           map.set(row.name, `${base}/adgroups/${row.nccAdgroupId}`);
         }
       }
@@ -4093,14 +4105,14 @@ async function openChangeWatchPanel(
       // 클릭 시 해당 캠페인/광고그룹 화면으로 이동 — 소재/키워드 수정도 소속 광고그룹
       // 페이지로 간다(그룹이 더 구체적이라 우선). id가 저장 안 된 과거 알림은 대상 이름으로
       // id를 찾아 이동(legacyIssueDests).
+      // 그룹 id는 상세 URL 패턴이 검증돼 바로 사용. 캠페인은 상세 URL 패턴이 확인 안 돼
+      // (추정 경로 404) 이름 매칭 맵을 거쳐 유형별 목록 페이지로 보낸다.
       const staticDest = ev.adgroupId
         ? `/manage/ad-accounts/${entry.adAccountNo}/sa/adgroups/${ev.adgroupId}`
-        : ev.campaignId
-          ? `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns/${ev.campaignId}`
-          : null;
+        : null;
       if (staticDest || ev.target) {
         item.classList.add("is-link");
-        item.title = "해당 화면으로 이동";
+        item.title = "해당 화면으로 이동 (새 탭)";
         item.addEventListener("click", () => {
           void (async () => {
             const dest = staticDest ?? (await legacyIssueDests(entry)).get(ev.target) ?? null;
@@ -4108,9 +4120,7 @@ async function openChangeWatchPanel(
               showToast({ message: "이동할 화면을 찾지 못했어요", variant: "error" });
               return;
             }
-            closeChangeWatchPanel();
-            closePopover();
-            location.assign(dest);
+            window.open(dest, "_blank", "noopener");
           })();
         });
       }
