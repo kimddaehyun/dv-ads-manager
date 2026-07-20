@@ -156,7 +156,7 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
   const token = ++runToken;
   const stale = () => token !== runToken;
   closePopover();
-  showProgress("보고 재료를 모으는 중...", cancelRun);
+  showProgress("측정 재료를 모으는 중...", cancelRun);
   try {
     const metaMap = await loadAllUserMeta();
     const meta = metaMap[target.adAccountNo];

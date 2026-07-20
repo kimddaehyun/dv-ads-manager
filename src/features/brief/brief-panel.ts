@@ -298,7 +298,7 @@ export function pickRowText(c: BriefCandidate): { title: string; sub: string } {
     case "regionBidSkew": {
       const dim = String(f["기준"] ?? "").split(" 간 ")[0] || "구간";
       return {
-        title: `${dim} 효율 격차`,
+        title: `${dim} 효율 비교`,
         sub: `${f["좋은쪽"]} ${f["좋은쪽수익률"]} vs ${f["나쁜쪽"]} ${f["나쁜쪽수익률"]}`,
       };
     }
@@ -386,7 +386,7 @@ const TONE_OPTIONS: Array<{ value: BriefTone; label: string }> = [
 /** 이슈 기준 직접 설정 입력 — 라벨은 비개발자 기준. */
 const THRESHOLD_FIELDS: Array<{ key: keyof BriefThresholds; label: string; unit: string; step?: string }> = [
   { key: "costFloor", label: "이슈로 볼 최소 광고비", unit: "원" },
-  { key: "skewRatio", label: "격차 기준 (좋은 쪽이 나쁜 쪽의 몇 배)", unit: "배", step: "0.1" },
+  { key: "skewRatio", label: "비교 기준 (좋은 쪽이 나쁜 쪽의 몇 배)", unit: "배", step: "0.1" },
   { key: "lowCtrPct", label: "낮은 클릭률 기준", unit: "%", step: "0.1" },
   { key: "adImpFloor", label: "소재 판단 최소 노출", unit: "회" },
   { key: "lowRankFloor", label: "낮은 순위 기준", unit: "위" },
@@ -678,6 +678,14 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       chev.setAttribute("aria-expanded", open ? "true" : "false");
     });
     row.appendChild(chev);
+
+    // 행+펼침 영역은 한 덩어리 — 펼친 데이터 영역을 눌러도 선택 토글.
+    // (표 숫자를 드래그로 긁는 경우는 선택 텍스트가 있으면 토글하지 않는다)
+    detail.addEventListener("click", () => {
+      if (window.getSelection()?.toString()) return;
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event("change"));
+    });
 
     item.appendChild(row);
     item.appendChild(detail);

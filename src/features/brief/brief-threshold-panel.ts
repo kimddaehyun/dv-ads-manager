@@ -18,7 +18,7 @@ const PRESET_DESC: Record<BriefSensitivity, string> = {
 /** 직접 설정 입력 필드 정의 — 라벨은 비개발자 기준. */
 const FIELDS: Array<{ key: keyof BriefThresholds; label: string; unit: string; step?: string }> = [
   { key: "costFloor", label: "이슈로 볼 최소 광고비", unit: "원" },
-  { key: "skewRatio", label: "격차 기준 (좋은 쪽이 나쁜 쪽의 몇 배)", unit: "배", step: "0.1" },
+  { key: "skewRatio", label: "비교 기준 (좋은 쪽이 나쁜 쪽의 몇 배)", unit: "배", step: "0.1" },
   { key: "lowCtrPct", label: "낮은 클릭률 기준", unit: "%", step: "0.1" },
   { key: "adImpFloor", label: "소재 판단 최소 노출", unit: "회" },
   { key: "lowRankFloor", label: "낮은 순위 기준", unit: "위" },

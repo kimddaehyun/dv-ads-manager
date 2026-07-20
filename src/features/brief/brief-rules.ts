@@ -328,7 +328,7 @@ function skewCandidate(
   return {
     kind,
     facts: {
-      기준: `${dim} 간 수익률 격차 ${th.skewRatio}배 이상 - 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
+      기준: `${dim} 간 수익률 차이 ${th.skewRatio}배 이상 - 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
       좋은쪽: skew.best.label,
       좋은쪽수익률: `${roasPct(skew.best.metrics).toFixed(0)}%`,
       나쁜쪽: skew.worst.label,
