@@ -4506,6 +4506,40 @@ td.dvads-period-delta-down {
   background: #ffffff;
   box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
 }
+/* 목표 ROAS 입력 (F-Brief) — 담당자명과 같은 자리, 끝에 % 고정 표기 */
+.dvads-rdp-roas-wrap {
+  display: inline-flex;
+  align-items: center;
+  width: 160px;
+  height: 32px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #F3F4F6;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-rdp-roas-wrap:focus-within {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
+}
+.dvads-rdp-roas {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  outline: none;
+}
+.dvads-rdp-roas::placeholder {
+  color: #9CA3AF;
+}
+.dvads-rdp-roas-suffix {
+  flex: none;
+  font-size: 13px;
+  color: #9CA3AF;
+}
 .dvads-rdp-foot-btns {
   margin-left: auto;
   display: flex;

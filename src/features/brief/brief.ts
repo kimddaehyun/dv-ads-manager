@@ -104,11 +104,19 @@ export function openBriefFlow(anchor: HTMLElement, target: ReportTarget): void {
     return;
   }
   if (running) return;
-  openReportDatePicker({
-    anchor,
-    subText: target.name,
-    showAuthor: false, // 문구에 담당자명이 안 들어간다
-    onConfirm: (range) => void run(target, range),
+  // anchor 위치는 지금(동기) 캡처 — meta 로드(await) 사이 메뉴 재렌더로 anchor가 떨어질 수 있다.
+  const anchorRect = anchor.getBoundingClientRect();
+  void loadAllUserMeta().then((metaMap) => {
+    if (running) return;
+    openReportDatePicker({
+      anchor,
+      anchorRect,
+      subText: target.name,
+      showAuthor: false, // 문구에 담당자명이 안 들어간다
+      showRoas: true, // 대신 목표 ROAS를 여기서 받는다(광고주별 저장)
+      roasInitial: metaMap[target.adAccountNo]?.targetRoas ?? null,
+      onConfirm: (range, _author, roas) => void run(target, range, roas),
+    });
   });
 }
 
@@ -144,7 +152,7 @@ function rebuildCandidates(ctx: BriefContext): void {
   ctx.candidates = next;
 }
 
-async function run(target: ReportTarget, range: DateRange): Promise<void> {
+async function run(target: ReportTarget, range: DateRange, pickedRoas: number | null): Promise<void> {
   if (running) return;
   running = true;
   const token = ++runToken;
@@ -154,7 +162,12 @@ async function run(target: ReportTarget, range: DateRange): Promise<void> {
   try {
     const metaMap = await loadAllUserMeta();
     const meta = metaMap[target.adAccountNo];
-    const targetRoas = meta?.targetRoas;
+    // 목표 ROAS는 기간 선택창 입력이 원본 — 바뀌었으면 광고주별로 조용히 저장(실패해도 진행).
+    const targetRoas = pickedRoas ?? undefined;
+    if ((meta?.targetRoas ?? null) !== pickedRoas) {
+      void updateUserMeta(target.adAccountNo, { targetRoas })
+        .catch((e) => console.warn("[dv-ads/brief] 목표 수익률 저장 실패", e));
+    }
 
     // 기간 경계(ms, KST) — 변경이력 조회 창과 "기간 시작 전/중" 판정에 쓴다.
     const sinceMs = Date.parse(`${range.since}T00:00:00+09:00`);

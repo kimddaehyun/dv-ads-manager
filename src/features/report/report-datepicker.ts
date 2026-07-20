@@ -51,7 +51,10 @@ export interface OpenDatePickerOpts {
   subText: string;
   /** 담당자 입력란 표시 여부. 기본 true. F-Brief는 문구에 담당자명이 안 들어가 false. */
   showAuthor?: boolean;
-  onConfirm: (range: DateRange, author: string) => void;
+  /** 목표 ROAS 입력란 표시(F-Brief). 값은 초기값(미설정이면 null). */
+  roasInitial?: number | null;
+  showRoas?: boolean;
+  onConfirm: (range: DateRange, author: string, targetRoas: number | null) => void;
 }
 
 export function closeReportDatePicker(): void {
@@ -95,6 +98,10 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     </div>
     <div class="dvads-rdp-foot">
       <input type="text" class="dvads-rdp-author" placeholder="담당자명" />
+      <span class="dvads-rdp-roas-wrap">
+        <input type="text" class="dvads-rdp-roas" placeholder="목표 ROAS" inputmode="numeric" />
+        <span class="dvads-rdp-roas-suffix" aria-hidden="true">%</span>
+      </span>
       <div class="dvads-rdp-foot-btns">
         <button type="button" class="dvads-rdp-cancel">취소</button>
         <button type="button" class="dvads-rdp-confirm">확인</button>
@@ -109,6 +116,14 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   const fieldStart = el.querySelector<HTMLInputElement>('.dvads-rdp-field[data-field="start"]')!;
   const fieldEnd = el.querySelector<HTMLInputElement>('.dvads-rdp-field[data-field="end"]')!;
   const authorInput = el.querySelector<HTMLInputElement>(".dvads-rdp-author")!;
+  const roasWrap = el.querySelector<HTMLElement>(".dvads-rdp-roas-wrap")!;
+  const roasInput = el.querySelector<HTMLInputElement>(".dvads-rdp-roas")!;
+
+  if (opts.showRoas) {
+    if (opts.roasInitial != null) roasInput.value = String(opts.roasInitial);
+  } else {
+    roasWrap.style.display = "none";
+  }
 
   if (opts.showAuthor === false) {
     // 담당자 미사용(F-Brief) — 입력란만 숨기고 onConfirm의 author는 빈 문자열로 나간다.
@@ -352,22 +367,27 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   }
   function confirmReport(): void {
     const author = authorInput.value.trim();
+    // 목표 ROAS — 숫자만 취하고 0 이하/무효는 미설정(null) 취급.
+    const roasNum = Number(roasInput.value.replace(/[^\d.]/g, ""));
+    const targetRoas = Number.isFinite(roasNum) && roasNum > 0 ? roasNum : null;
     const range: DateRange = { since: iso(start), until: iso(end) };
     if (author) void chrome.storage.local.set({ [AUTHOR_KEY]: author });
     finish();
-    opts.onConfirm(range, author);
+    opts.onConfirm(range, author, targetRoas);
   }
   el.querySelector(".dvads-rdp-cancel")?.addEventListener("click", finish);
   el.querySelector(".dvads-rdp-confirm")?.addEventListener("click", confirmReport);
   // 담당자명 칸에서 Enter -> 확인과 동일. 핸들러가 없으면 Enter가 호스트 페이지로
   // 전파돼 엉뚱한 동작을 부른다(`e.stopPropagation`). 한글 조합 중 Enter는 무시.
-  authorInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && !e.isComposing) {
-      e.preventDefault();
-      e.stopPropagation();
-      confirmReport();
-    }
-  });
+  for (const input of [authorInput, roasInput]) {
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) {
+        e.preventDefault();
+        e.stopPropagation();
+        confirmReport();
+      }
+    });
+  }
 
   // ── mount + 위치 + 리스너 ──
   // ★ anchor 위치는 지금(동기) 캡처한다. 호출원이 keepOpen 메뉴라 onClick 직후 메뉴가
