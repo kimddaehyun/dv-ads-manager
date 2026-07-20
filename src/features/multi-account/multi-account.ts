@@ -2717,11 +2717,6 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       disabled: !hasSelection,
       onClick: () => void openChangeWatchDialogFor(Array.from(selectedAccountNos)),
     },
-    {
-      label: "목표 수익률",
-      disabled: !hasSelection,
-      onClick: () => openTargetRoasDialogFor(Array.from(selectedAccountNos)),
-    },
     { separator: true },
     // 광고 유형 필터 — 둘 중 하나만/둘 다 선택. 선택에 따라 어제 데이터가 SA/GFA/합산으로 바뀐다.
     {
@@ -3075,17 +3070,8 @@ function renderTableRow(
               });
           },
         },
-        {
-          label: "세팅안 생성",
-          onClick: async () => {
-            const { openSetupFlow } = await import("@/features/setup/setup");
-            void openSetupFlow({
-              adAccountNo: entry.adAccountNo,
-              masterCustomerId: entry.masterCustomerId,
-              name: meta?.displayName?.trim() || entry.name,
-            });
-          },
-        },
+        // "세팅안 생성"은 완성 전이라 잠시 메뉴에서 제거(2026-07-20) — openSetupFlow는 유지,
+        // 완성되면 여기 메뉴만 되살리면 된다.
         {
           label: "대행권 점검",
           onClick: () => void runAgencyCheck([entry.adAccountNo]),
@@ -3102,10 +3088,6 @@ function renderTableRow(
         {
           label: "변경이력 알림",
           onClick: () => void openChangeWatchDialogFor([entry.adAccountNo]),
-        },
-        {
-          label: "목표 수익률",
-          onClick: () => openTargetRoasDialogFor([entry.adAccountNo]),
         },
         { separator: true },
         {
@@ -3486,38 +3468,6 @@ async function openBizMoneyDialogFor(nos: number[]) {
       if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
-    } : undefined,
-  });
-}
-
-/**
- * 목표 광고수익률(%) 설정 — F-Brief 보고 문구에서 키워드를 초록/노랑/무색으로 분류하는 기준.
- * 비즈머니 알림과 같은 입력 패턴(단일=prefill, 다중=일괄). 알림이 아니라 설정값이라 배지 갱신은 없다.
- * 빈 값으로 확인하면 updateUserMetaMany가 undefined로 저장 → 미설정(자동 추정 안 함).
- */
-async function openTargetRoasDialogFor(nos: number[]) {
-  if (nos.length === 0) return;
-  const metaMap = await loadAllUserMeta();
-  const initial = nos.length === 1 ? (metaMap[nos[0]]?.targetRoas ?? null) : null;
-  const anyConfigured = nos.some((no) => metaMap[no]?.targetRoas != null);
-  const showClear = nos.length === 1 ? initial != null : anyConfigured;
-  openInputDialog({
-    title: "목표 수익률 설정",
-    description: nos.length === 1
-      ? "광고 성과 측정에서 키워드를 목표 대비 초록/노랑/무색으로 분류하는 기준입니다."
-      : `선택된 ${nos.length}개 계정에 일괄 적용`,
-    initialValue: initial,
-    suffix: "%",
-    placeholder: "800",
-    onConfirm: async (value) => {
-      const result = await withServerSave(() => updateUserMetaMany(nos, { targetRoas: value }));
-      if (result === undefined) return;
-      if (popoverEl) await renderListView(popoverEl);
-    },
-    onClear: showClear ? async () => {
-      const result = await withServerSave(() => updateUserMetaMany(nos, { targetRoas: undefined }));
-      if (result === undefined) return;
-      if (popoverEl) await renderListView(popoverEl);
     } : undefined,
   });
 }
