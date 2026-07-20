@@ -9,6 +9,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/scripts/post-work-review.sh",
+            "statusMessage": "코드 변경 후처리 확인 중"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

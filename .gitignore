@@ -19,3 +19,7 @@ ads-naver-home.png
 dashboard.png
 .claude/.md-cleanup-stamp
 supabase/.temp/
+
+# Stop hook 상태 파일 (기기별)
+.claude/.post-work-state
+.claude/.post-work-inprogress
