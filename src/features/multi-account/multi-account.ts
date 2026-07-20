@@ -2908,8 +2908,8 @@ function renderTableRow(
     <td class="dvads-multi-td-cb">${checkboxHTML(false, `${displayName} 선택`)}</td>
     <td class="dvads-multi-td-name">
       <div class="dvads-multi-name-line">
-        <button class="dvads-multi-issue-badge" type="button" style="display:none" aria-label="계정 이슈"></button>
         <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
+        <button class="dvads-multi-issue-badge" type="button" style="display:none" aria-label="계정 이슈"></button>
       </div>
       <div class="dvads-multi-no">${subLine}</div>
     </td>
