@@ -350,6 +350,11 @@ function findOperationChip(): HTMLElement | null {
     if (el.children.length > 0) continue; // leaf만
     const text = (el.textContent ?? "").trim();
     if (text !== "운영 관리") continue;
+    // 계정 목록 드롭다운 등 헤더 밖의 "운영 관리" 텍스트 배제 — span 자체가 헤더 영역
+    // (top<120)에 실제로 보여야 앵커 후보. 이 검증이 없으면 드롭다운이 열렸을 때
+    // 아래 fallback(el.parentElement)이 목록 안 요소를 앵커로 잡아 버튼이 목록에 들어간다.
+    const sr = el.getBoundingClientRect();
+    if (sr.width === 0 || sr.height === 0 || sr.top < 0 || sr.top >= 120) continue;
     let chipParent: HTMLElement | null = el.parentElement;
     for (let i = 0; i < 6 && chipParent; i++, chipParent = chipParent.parentElement) {
       const r = chipParent.getBoundingClientRect();
