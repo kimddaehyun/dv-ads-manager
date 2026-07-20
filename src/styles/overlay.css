@@ -31,6 +31,13 @@
   visibility: hidden !important;
 }
 
+/* backdrop 다이얼로그 내부 스크롤이 끝까지 닿아도 페이지로 이어지지 않게(스크롤 연쇄 차단).
+   페이지 스크롤 잠금 자체는 scroll-lock.ts가 담당. */
+.dvads[class*="backdrop"],
+.dvads[class*="backdrop"] * {
+  overscroll-behavior: contain;
+}
+
 /* ─── 페이지 banner (페이지 상단 고정 안내) ─── */
 .dvads-page-banner {
   display: flex;

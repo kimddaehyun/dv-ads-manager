@@ -40,6 +40,7 @@ import { initAssetBulk } from "@/features/asset-bulk/asset-bulk";
 import { initShoppingImageImport } from "@/features/asset-bulk/shopping-image-import";
 import { attachTooltip } from "@/shared/tooltip";
 import { requireApproved } from "@/shared/auth-gate";
+import { initScrollLock } from "@/shared/scroll-lock";
 
 declare const __APP_VERSION__: string;
 console.log(`[dv-ads] content script loaded · v${__APP_VERSION__}`);
@@ -1194,6 +1195,9 @@ async function main(): Promise<void> {
   // 페이지 확정 모달 감지 시작 — 승인된 사용자만 우리 UI(팝오버/토스트)를 recede 처리할
   // 필요가 있다.
   watchPageConfirmModal();
+
+  // dvads backdrop 다이얼로그가 떠 있는 동안 페이지 스크롤 잠금 (전 기능 공통).
+  initScrollLock();
 
   // F-PoP — 전후 비교 모듈. 6개 매체 페이지에서 우측 상단 날짜 picker 옆에
   // 버튼 주입 + 캡처된 stats fetch replay. F001과 독립적으로 동작.
