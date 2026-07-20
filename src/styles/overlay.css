@@ -2265,15 +2265,18 @@ td.dvads-period-delta-down {
 
 /* ─── 변경이력 알림 칩 ────────────────────────────────────────────────── */
 
-/* 예산/수정 두 칩을 나란히. 둘 다 없으면 각 칩이 display:none이라 줄 자체가 사라진다. */
+/* 통합 칩 하나. 알림이 없으면 칩이 display:none이라 줄 자체가 사라진다. */
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
 }
-/* 계정명 셀 안 작은 칩 — 수정은 회색, 예산 소진은 빨강(급함).
+/* 계정명 셀 안 아이콘 칩(종 + 개수) — 수정만 있으면 회색, 예산 소진 포함이면 빨강(급함).
    이름 셀 클릭(계정 이동)과 겹치므로 클릭은 JS에서 stopPropagation. */
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   margin-top: 4px;
   padding: 1px 6px;
   border: 0;
@@ -2285,6 +2288,9 @@ td.dvads-period-delta-down {
   font-weight: 500;
   line-height: 1.5;
   cursor: pointer;
+}
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip svg {
+  flex-shrink: 0;
 }
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip:hover {
   background: #E1E4E8;
@@ -2300,14 +2306,13 @@ td.dvads-period-delta-down {
 
 /* ─── 변경이력 상세 패널 ──────────────────────────────────────────────── */
 
-/* 칩 클릭 시 뜨는 목록. 호스트 페이지와 분리되도록 오버레이 규약(주황 1.5px + 10px)을 따른다. */
+/* 칩 클릭 시 뜨는 목록. 테두리 없이 그림자만으로 분리한다. */
 .dvads-change-panel {
   position: fixed;
   z-index: 2147483647;
   width: 320px;
   max-width: 92vw;
   background: #ffffff;
-  border: 1.5px solid #E6783B;
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18), 0 2px 8px rgba(0, 0, 0, 0.10);
   font-family: "Pretendard Variable", Pretendard, system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
@@ -2326,16 +2331,56 @@ td.dvads-period-delta-down {
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
-  border-bottom: 1px solid #ECEEF0;
 }
 .dvads-change-panel-title {
   font-size: 13px;
   font-weight: 600;
 }
-.dvads-change-panel-read.dvads-btn {
-  height: 26px;
-  padding: 0 10px;
+/* 탭 줄 — 좌측 탭들 + 우측 "모두 읽음" 텍스트 버튼. */
+.dvads-change-panel-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 12px;
+  border-bottom: 1px solid #ECEEF0;
+}
+.dvads-change-panel-tablist {
+  display: flex;
+  gap: 12px;
+}
+.dvads-change-panel-tab {
+  border: 0;
+  background: transparent;
+  padding: 7px 0 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #6B7280;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.dvads-change-panel-tab:hover {
+  color: #171717;
+}
+.dvads-change-panel-tab.is-active {
+  color: #E6783B;
+  font-weight: 600;
+  border-bottom-color: #E6783B;
+}
+.dvads-change-panel-read {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
   font-size: 11.5px;
+  color: #6B7280;
+  cursor: pointer;
+}
+.dvads-change-panel-read:hover {
+  color: #171717;
+  text-decoration: underline;
 }
 .dvads-change-panel-list {
   max-height: 320px;
@@ -2344,11 +2389,6 @@ td.dvads-period-delta-down {
 }
 .dvads-change-item {
   padding: 8px 12px;
-  border-left: 3px solid transparent;
-}
-.dvads-change-item.is-budget {
-  border-left-color: #DC2626;
-  background: #FEF6F6;
 }
 .dvads-change-item + .dvads-change-item {
   border-top: 1px solid #F3F4F6;
@@ -2366,9 +2406,6 @@ td.dvads-period-delta-down {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.dvads-change-item.is-budget .dvads-change-kind {
-  color: #DC2626;
 }
 .dvads-change-when {
   font-size: 11px;

@@ -2909,8 +2909,7 @@ function renderTableRow(
       <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
       <div class="dvads-multi-no">${subLine}</div>
       <div class="dvads-multi-change-chips">
-        <button class="dvads-multi-change-chip is-budget" type="button" data-kind="budget" style="display:none"></button>
-        <button class="dvads-multi-change-chip" type="button" data-kind="external" style="display:none"></button>
+        <button class="dvads-multi-change-chip" type="button" style="display:none" aria-label="계정 이슈"></button>
       </div>
     </td>
     <td class="dvads-multi-td-num" data-k="bizMoney">-</td>
@@ -2956,14 +2955,12 @@ function renderTableRow(
     scheduleHideBrandTooltip();
   });
 
-  // 변경이력 알림 칩(예산/수정 각각) — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게
-  // 전파를 끊는다. 칩마다 자기 종류만 목록으로 띄운다.
-  tr.querySelectorAll<HTMLButtonElement>(".dvads-multi-change-chip").forEach((chip) => {
-    chip.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const kind = chip.dataset.kind === "budget" ? "budget" : "external";
-      void openChangeWatchPanel(entry, chip, kind);
-    });
+  // 변경이력 알림 칩(계정 이슈 아이콘) — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게
+  // 전파를 끊는다. 클릭하면 예산/수정 통합 "계정 이슈" 패널이 뜬다.
+  const changeChip = tr.querySelector<HTMLButtonElement>(".dvads-multi-change-chip");
+  changeChip?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void openChangeWatchPanel(entry, changeChip);
   });
 
   // 체크박스 wire — 선택 토글 + 헤더 카운트 동기화.
@@ -3363,15 +3360,9 @@ function startChangeWatchTimer(): void {
   void changeWatchTick();
 }
 
-// 종류별 칩 문구 — 예산은 지금 조치가 필요한 일, 수정은 확인이 필요한 일이라 따로 센다.
-const CHIP_TEXT = {
-  budget: (n: number) => `예산 ${n}`,
-  external: (n: number) => `수정 ${n}`,
-} as const;
-const CHIP_TITLE = {
-  budget: "예산을 다 써서 멈춘 광고가 있어요",
-  external: "우리가 아닌 다른 사람이 광고를 수정했어요",
-} as const;
+// 통합 칩 아이콘(종 모양) — 예산 소진이 하나라도 있으면 빨강(급함), 아니면 회색.
+const CHANGE_CHIP_ICON =
+  '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
 
 function paintChangeWatchRow(adAccountNo: number, state: ChangeWatchState | null): void {
   if (!popoverEl) return;
@@ -3379,19 +3370,23 @@ function paintChangeWatchRow(adAccountNo: number, state: ChangeWatchState | null
     budget: unreadChangeWatchEvents(state, "budget").length,
     external: unreadChangeWatchEvents(state, "external").length,
   };
+  const total = counts.budget + counts.external;
   for (const row of findRows(adAccountNo)) {
-    row.dataset.alertChange = counts.budget + counts.external > 0 ? "1" : "0";
-    row.querySelectorAll<HTMLButtonElement>(".dvads-multi-change-chip").forEach((chip) => {
-      const kind = chip.dataset.kind === "budget" ? "budget" : "external";
-      const n = counts[kind];
-      if (n > 0) {
-        chip.textContent = CHIP_TEXT[kind](n);
-        chip.title = CHIP_TITLE[kind];
+    row.dataset.alertChange = total > 0 ? "1" : "0";
+    const chip = row.querySelector<HTMLButtonElement>(".dvads-multi-change-chip");
+    if (chip) {
+      if (total > 0) {
+        chip.innerHTML = `${CHANGE_CHIP_ICON}<span>${total}</span>`;
+        chip.title =
+          counts.budget > 0
+            ? "예산을 다 써서 멈춘 광고가 있어요"
+            : "우리가 아닌 다른 사람이 광고를 수정했어요";
+        chip.classList.toggle("is-budget", counts.budget > 0);
         chip.style.display = "";
       } else {
         chip.style.display = "none";
       }
-    });
+    }
     syncAlertBar(row);
   }
   scheduleHeadColSync();
@@ -3908,8 +3903,9 @@ function syncAlertBar(row: HTMLTableRowElement) {
 
 // ─── 변경이력 알림 상세 패널 ─────────────────────────────────────────────
 //
-// 행의 "이력 N" 칩 클릭 → 무엇이 언제 누구에 의해 바뀌었는지 목록 + [모두 확인].
-// 확인을 누르면 그 시점까지를 읽음 처리해 다음부터는 새 이력만 알린다.
+// 행의 아이콘 칩 클릭 → "계정 이슈" 패널. 예산/수정을 한 목록으로 합치고
+// 탭(전체/예산/수정/기타)으로 거른다. [모두 읽음]을 누르면 그 시점까지를
+// 읽음 처리해 다음부터는 새 이력만 알린다.
 
 let changePanelEl: HTMLDivElement | null = null;
 let changePanelKey: string | null = null;
@@ -3947,80 +3943,127 @@ function formatEventTime(ts: number): string {
   return `${mm}/${dd} ${hh}:${mi}`;
 }
 
+// 탭 필터 — "기타"는 예산/수정 어느 쪽도 아닌 종류(현재는 없지만 종류가 늘 때를 대비).
+const CHANGE_PANEL_TABS = [
+  { id: "all", label: "전체" },
+  { id: "budget", label: "예산" },
+  { id: "external", label: "수정" },
+  { id: "etc", label: "기타" },
+] as const;
+type ChangePanelTab = (typeof CHANGE_PANEL_TABS)[number]["id"];
+
+function filterChangeEvents(events: ChangeWatchEvent[], tab: ChangePanelTab): ChangeWatchEvent[] {
+  if (tab === "all") return events;
+  if (tab === "budget") return events.filter((e) => e.kind === "budget");
+  if (tab === "external") return events.filter((e) => e.kind === "external");
+  return events.filter((e) => e.kind !== "budget" && e.kind !== "external");
+}
+
 async function openChangeWatchPanel(
   entry: MultiAccountDirectoryEntry,
   anchor: HTMLElement,
-  kind: ChangeWatchEvent["kind"],
 ): Promise<void> {
-  // 같은 칩을 다시 누르면 닫기(토글). 계정+종류 단위라 예산→수정으로 바로 갈아탈 수 있다.
-  const key = `${entry.adAccountNo}:${kind}`;
+  // 같은 칩을 다시 누르면 닫기(토글).
+  const key = String(entry.adAccountNo);
   if (changePanelKey === key) {
     closeChangeWatchPanel();
     return;
   }
   closeChangeWatchPanel();
   const state = await loadChangeWatchState(entry.adAccountNo);
-  const unread = unreadChangeWatchEvents(state, kind);
+  // 예산/수정을 한 목록으로 — 최신이 위.
+  const unread = [
+    ...unreadChangeWatchEvents(state, "budget"),
+    ...unreadChangeWatchEvents(state, "external"),
+  ].sort((a, b) => b.ts - a.ts);
   if (!popoverEl || !anchor.isConnected || unread.length === 0) return;
 
   const panel = document.createElement("div");
   panel.className = "dvads dvads-change-panel";
   panel.innerHTML = `
     <div class="dvads-change-panel-head">
-      <span class="dvads-change-panel-title"></span>
-      <button class="dvads-change-panel-read dvads-btn dvads-btn-primary" type="button">모두 확인</button>
+      <span class="dvads-change-panel-title">계정 이슈</span>
+    </div>
+    <div class="dvads-change-panel-tabs">
+      <div class="dvads-change-panel-tablist" role="tablist"></div>
+      <button class="dvads-change-panel-read" type="button">모두 읽음</button>
     </div>
     <div class="dvads-change-panel-list"></div>
   `;
-  panel.querySelector<HTMLElement>(".dvads-change-panel-title")!.textContent =
-    kind === "budget" ? `예산 소진 ${unread.length}건` : `외부 수정 ${unread.length}건`;
 
   const list = panel.querySelector<HTMLDivElement>(".dvads-change-panel-list")!;
-  // 아주 많으면 스크롤보다 상한이 낫다 — 확인을 누르면 어차피 전부 읽음 처리된다.
+  // 아주 많으면 스크롤보다 상한이 낫다 — 읽음을 누르면 어차피 전부 읽음 처리된다.
   const MAX_SHOWN = 50;
-  for (const ev of unread.slice(0, MAX_SHOWN)) {
-    const item = document.createElement("div");
-    item.className = "dvads-change-item" + (ev.kind === "budget" ? " is-budget" : "");
-    const who = document.createElement("span");
-    who.className = "dvads-change-kind";
-    who.textContent = ev.kind === "budget" ? "예산 소진" : ev.actor;
-    const when = document.createElement("span");
-    when.className = "dvads-change-when";
-    when.textContent = formatEventTime(ev.ts);
-    const top = document.createElement("div");
-    top.className = "dvads-change-item-top";
-    top.append(who, when);
-    const target = document.createElement("div");
-    target.className = "dvads-change-target";
-    target.textContent = ev.target || "-";
-    const summary = document.createElement("div");
-    summary.className = "dvads-change-summary";
-    summary.textContent = ev.summary;
-    item.append(top, target, summary);
-    list.appendChild(item);
+  const renderList = (tab: ChangePanelTab) => {
+    list.textContent = "";
+    const shown = filterChangeEvents(unread, tab);
+    if (shown.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "dvads-change-more";
+      empty.textContent = "표시할 알림이 없어요";
+      list.appendChild(empty);
+      return;
+    }
+    for (const ev of shown.slice(0, MAX_SHOWN)) {
+      const item = document.createElement("div");
+      item.className = "dvads-change-item";
+      const who = document.createElement("span");
+      who.className = "dvads-change-kind";
+      who.textContent = ev.kind === "budget" ? "예산 소진" : ev.actor;
+      const when = document.createElement("span");
+      when.className = "dvads-change-when";
+      when.textContent = formatEventTime(ev.ts);
+      const top = document.createElement("div");
+      top.className = "dvads-change-item-top";
+      top.append(who, when);
+      const target = document.createElement("div");
+      target.className = "dvads-change-target";
+      target.textContent = ev.target || "-";
+      const summary = document.createElement("div");
+      summary.className = "dvads-change-summary";
+      summary.textContent = ev.summary;
+      item.append(top, target, summary);
+      list.appendChild(item);
+    }
+    if (shown.length > MAX_SHOWN) {
+      const more = document.createElement("div");
+      more.className = "dvads-change-more";
+      more.textContent = `외 ${shown.length - MAX_SHOWN}건 더 있어요`;
+      list.appendChild(more);
+    }
+  };
+
+  const tablist = panel.querySelector<HTMLDivElement>(".dvads-change-panel-tablist")!;
+  for (const t of CHANGE_PANEL_TABS) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "dvads-change-panel-tab" + (t.id === "all" ? " is-active" : "");
+    btn.textContent = t.label;
+    btn.addEventListener("click", () => {
+      tablist
+        .querySelectorAll(".dvads-change-panel-tab")
+        .forEach((el) => el.classList.toggle("is-active", el === btn));
+      renderList(t.id);
+    });
+    tablist.appendChild(btn);
   }
-  if (unread.length > MAX_SHOWN) {
-    const more = document.createElement("div");
-    more.className = "dvads-change-more";
-    more.textContent = `외 ${unread.length - MAX_SHOWN}건 더 있어요`;
-    list.appendChild(more);
-  }
+  renderList("all");
 
   panel.addEventListener("click", (e) => e.stopPropagation());
   panel.querySelector<HTMLButtonElement>(".dvads-change-panel-read")?.addEventListener("click", () => {
     void (async () => {
       const cur = await loadChangeWatchState(entry.adAccountNo);
       if (cur) {
-        // 이 종류만 확인 처리 — 화면에 뜬 것뿐 아니라 저장된 같은 종류 전체 중 최신 시각까지.
-        const readUpTo = cur.events
-          .filter((e) => e.kind === kind)
-          .reduce((m, e) => Math.max(m, e.ts), readUpToFor(cur, kind));
-        // 확인한 건 다시 안 뜨므로 목록에서도 비운다 (저장소 절약). 다른 종류는 그대로 둔다.
+        // 두 종류 모두 저장된 전체 중 최신 시각까지 읽음 처리하고 목록을 비운다 (저장소 절약).
+        const upTo = (k: ChangeWatchEvent["kind"]) =>
+          cur.events
+            .filter((e) => e.kind === k)
+            .reduce((m, e) => Math.max(m, e.ts), readUpToFor(cur, k));
         const next: ChangeWatchState = {
           ...cur,
-          read_budget_up_to: kind === "budget" ? readUpTo : readUpToFor(cur, "budget"),
-          read_external_up_to: kind === "external" ? readUpTo : readUpToFor(cur, "external"),
-          events: cur.events.filter((e) => e.kind !== kind || e.ts > readUpTo),
+          read_budget_up_to: upTo("budget"),
+          read_external_up_to: upTo("external"),
+          events: [],
         };
         await saveChangeWatchState(next);
         paintChangeWatchRow(entry.adAccountNo, next);
