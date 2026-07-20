@@ -2907,11 +2907,11 @@ function renderTableRow(
   tr.innerHTML = `
     <td class="dvads-multi-td-cb">${checkboxHTML(false, `${displayName} 선택`)}</td>
     <td class="dvads-multi-td-name">
-      <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
-      <div class="dvads-multi-no">${subLine}</div>
-      <div class="dvads-multi-change-chips">
-        <button class="dvads-multi-change-chip" type="button" style="display:none" aria-label="계정 이슈"></button>
+      <div class="dvads-multi-name-line">
+        <button class="dvads-multi-issue-badge" type="button" style="display:none" aria-label="계정 이슈"></button>
+        <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
       </div>
+      <div class="dvads-multi-no">${subLine}</div>
     </td>
     <td class="dvads-multi-td-num" data-k="bizMoney">-</td>
     <td class="dvads-multi-td-num" data-k="impressions">-</td>
@@ -2956,12 +2956,11 @@ function renderTableRow(
     scheduleHideBrandTooltip();
   });
 
-  // 알림 배지(종 + 개수) — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게
-  // 전파를 끊는다. 클릭하면 예산/수정/알림 통합 "계정 이슈" 패널이 뜬다.
-  const changeChip = tr.querySelector<HTMLButtonElement>(".dvads-multi-change-chip");
-  changeChip?.addEventListener("click", (e) => {
+  // 이슈 카운트 배지 — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게 전파를 끊는다.
+  const issueBadge = tr.querySelector<HTMLButtonElement>(".dvads-multi-issue-badge");
+  issueBadge?.addEventListener("click", (e) => {
     e.stopPropagation();
-    void openChangeWatchPanel(entry, changeChip);
+    void openChangeWatchPanel(entry, issueBadge);
   });
 
   // 체크박스 wire — 선택 토글 + 헤더 카운트 동기화.
@@ -2989,6 +2988,10 @@ function renderTableRow(
       ariaLabel: `${displayName} 작업 메뉴`,
       items: [
         { label: "바로가기", onClick: goTo },
+        {
+          label: "계정 이슈",
+          onClick: () => void openChangeWatchPanel(entry, actionTrigger),
+        },
         {
           label: "이름 수정",
           onClick: () => openRenameDialog(entry, () => replaceListRow(tr, entry)),
@@ -3362,7 +3365,7 @@ function startChangeWatchTimer(): void {
   void changeWatchTick();
 }
 
-// 통합 칩 아이콘(종 모양) — 예산 소진이 하나라도 있으면 빨강(급함), 아니면 회색.
+// 변경이력 unread 개수를 dataset에 남기고 syncIssueChip으로 행 표시(⋯ 개수/배경) 갱신.
 function paintChangeWatchRow(adAccountNo: number, state: ChangeWatchState | null): void {
   if (!popoverEl) return;
   const counts = {
@@ -3874,33 +3877,35 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
   syncIssueChip(row);
 }
 
-const CHANGE_CHIP_ICON =
-  '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>';
-
 /**
- * 알림 배지(종 + 개수)는 서로 다른 시점에 도는 두 경로가 칠한다 — 스냅샷 paint(알림 피드)와
+ * 계정 이슈 표시는 서로 다른 시점에 도는 두 경로가 칠한다 — 스냅샷 paint(알림 피드)와
  * 변경이력 스캔(예산/수정). 각 경로는 dataset에 자기 판정만 남기고 여기서 합쳐 그린다.
- * 개수 = 변경이력 unread + 광고주센터 알림 이슈. 0이면 배지 숨김.
+ * 개수 = 변경이력 unread + 광고주센터 알림 이슈. 이슈가 있으면 계정명 왼쪽에 빨간 원형
+ * 개수 배지 + 행 배경 연한 빨강 — 확인(패널 [모두 읽음])하면 배지가 사라진다.
  */
 function syncIssueChip(row: HTMLTableRowElement) {
-  const chip = row.querySelector<HTMLButtonElement>(".dvads-multi-change-chip");
-  if (!chip) return;
+  const badge = row.querySelector<HTMLButtonElement>(".dvads-multi-issue-badge");
+  if (!badge) return;
   const naver = Number(row.dataset.statusIssueCount ?? "0");
   const change = Number(row.dataset.statusChangeCount ?? "0");
   const budget = Number(row.dataset.statusChangeBudget ?? "0");
   const total = naver + change;
+  row.classList.toggle("dvads-multi-tr-issues", total > 0);
   if (total === 0) {
-    chip.style.display = "none";
+    badge.style.display = "none";
+    badge.textContent = "";
     return;
   }
-  chip.innerHTML = `${CHANGE_CHIP_ICON}<span>${total}</span>`;
-  chip.classList.toggle("is-budget", budget > 0);
-  chip.style.display = "";
+  const text = total > 99 ? "99+" : String(total);
+  badge.textContent = text;
+  badge.style.display = "";
+  badge.classList.toggle("is-two-digit", text.length === 2);
+  badge.classList.toggle("is-three-digit", text.length >= 3);
   const lines: string[] = [];
   if (budget > 0) lines.push("예산을 다 써서 멈춘 광고가 있어요");
   if (change - budget > 0) lines.push("우리가 아닌 다른 사람이 광고를 수정했어요");
   if (row.dataset.statusIssueTitles) lines.push(row.dataset.statusIssueTitles);
-  chip.title = lines.join("\n");
+  badge.title = lines.join("\n");
 }
 
 // ─── 변경이력 알림 상세 패널 ─────────────────────────────────────────────
@@ -3924,8 +3929,6 @@ function onChangePanelPointer(e: MouseEvent): void {
   if (!changePanelEl) return;
   const t = e.target as HTMLElement | null;
   if (!t || changePanelEl.contains(t)) return;
-  // 칩 클릭은 아래 openChangeWatchPanel이 토글로 처리 — 여기서 닫으면 곧바로 다시 열려 깜빡인다.
-  if (t.closest?.(".dvads-multi-change-chip")) return;
   closeChangeWatchPanel();
 }
 
@@ -3983,7 +3986,9 @@ async function openChangeWatchPanel(
   ].sort((a, b) => b.ts - a.ts);
   // 광고주센터 알림 이슈(소재 보류 등) — 읽음 개념 없이 네이버가 내리는 동안 유지.
   const naverIssues = snap?.issues ?? [];
-  if (!popoverEl || !anchor.isConnected || (unread.length === 0 && naverIssues.length === 0)) return;
+  if (!popoverEl || !anchor.isConnected) return;
+  // 이슈가 하나도 없어도 패널은 연다 — 케밥에서 눌렀을 때 아무 반응 없으면 고장으로 보인다.
+  const isEmpty = unread.length === 0 && naverIssues.length === 0;
 
   const panel = document.createElement("div");
   panel.className = "dvads dvads-change-panel";
@@ -4059,7 +4064,15 @@ async function openChangeWatchPanel(
   };
 
   const tablist = panel.querySelector<HTMLDivElement>(".dvads-change-panel-tablist")!;
-  for (const t of CHANGE_PANEL_TABS) {
+  // 이슈 0건이면 탭/읽음 버튼은 의미가 없어 통째로 감추고 안내 한 줄만 보여준다.
+  if (isEmpty) {
+    panel.querySelector(".dvads-change-panel-tabs")?.remove();
+    const empty = document.createElement("div");
+    empty.className = "dvads-change-more";
+    empty.textContent = "해당 계정에 이슈가 없습니다";
+    list.appendChild(empty);
+  }
+  for (const t of isEmpty ? [] : CHANGE_PANEL_TABS) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "dvads-change-panel-tab" + (t.id === "all" ? " is-active" : "");
@@ -4072,7 +4085,7 @@ async function openChangeWatchPanel(
     });
     tablist.appendChild(btn);
   }
-  renderList("all");
+  if (!isEmpty) renderList("all");
 
   panel.addEventListener("click", (e) => e.stopPropagation());
   panel.querySelector<HTMLButtonElement>(".dvads-change-panel-read")?.addEventListener("click", () => {
