@@ -60,6 +60,7 @@ import {
 } from "@/features/multi-account/multi-account-storage";
 import {
   fetchAllDirectory,
+  authFetch,
   collectAccount,
   yesterdayKST,
   fetchAgencyOperation,
@@ -3948,6 +3949,60 @@ function filterChangeEvents(events: ChangeWatchEvent[], tab: ChangePanelTab): Ch
   return events.filter((e) => e.kind !== "budget" && e.kind !== "external");
 }
 
+// ── 과거 알림(id 미저장) 클릭 이동 — 대상 이름으로 캠페인/그룹 id를 찾는다 ──
+// 이동 정보 저장(campaignId/adgroupId)은 도입 이후 알림에만 있어, 그 전 알림은 이름 매칭으로
+// 폴백한다. 계정당 1회만 조회하고 캐시(popover 세션 동안 유지).
+const ISSUE_DEST_CAMPAIGN_TYPES = ["WEB_SITE", "SHOPPING", "BRAND_SEARCH", "POWER_CONTENTS", "PLACE"];
+const issueDestCache = new Map<number, Promise<Map<string, string>>>();
+
+function legacyIssueDests(entry: MultiAccountDirectoryEntry): Promise<Map<string, string>> {
+  const cached = issueDestCache.get(entry.adAccountNo);
+  if (cached) return cached;
+  const p = (async () => {
+    const map = new Map<string, string>();
+    const cid = entry.masterCustomerId;
+    if (cid == null) return map;
+    const base = `/manage/ad-accounts/${entry.adAccountNo}/sa`;
+    const campaignLists = await Promise.allSettled(
+      ISSUE_DEST_CAMPAIGN_TYPES.map((tp) =>
+        authFetch<Array<{ nccCampaignId?: string; name?: string }>>(
+          `/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=${tp}`,
+          undefined,
+          cid,
+        ),
+      ),
+    );
+    const campaigns: Array<{ id: string; name: string }> = [];
+    for (const r of campaignLists) {
+      if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
+      for (const row of r.value) {
+        if (row?.nccCampaignId && row.name) campaigns.push({ id: row.nccCampaignId, name: row.name });
+      }
+    }
+    for (const c of campaigns) if (!map.has(c.name)) map.set(c.name, `${base}/campaigns/${c.id}`);
+    const groupLists = await Promise.allSettled(
+      campaigns.map((c) =>
+        authFetch<Array<{ nccAdgroupId?: string; name?: string }>>(
+          `/apis/sa/api/ncc/adgroups?nccCampaignId=${encodeURIComponent(c.id)}&recordSize=1001`,
+          undefined,
+          cid,
+        ),
+      ),
+    );
+    for (const r of groupLists) {
+      if (r.status !== "fulfilled" || !Array.isArray(r.value)) continue;
+      for (const row of r.value) {
+        if (row?.nccAdgroupId && row.name && !map.has(row.name)) {
+          map.set(row.name, `${base}/adgroups/${row.nccAdgroupId}`);
+        }
+      }
+    }
+    return map;
+  })();
+  issueDestCache.set(entry.adAccountNo, p);
+  return p;
+}
+
 async function openChangeWatchPanel(
   entry: MultiAccountDirectoryEntry,
   anchor: HTMLElement,
@@ -4035,20 +4090,28 @@ async function openChangeWatchPanel(
       summary.className = "dvads-change-summary";
       summary.textContent = displaySummary(ev.summary);
       item.append(top, target, summary);
-      // 대상 id를 아는 알림은 클릭 시 해당 캠페인/광고그룹 화면으로 이동 —
-      // 소재/키워드 수정도 소속 광고그룹 페이지로 간다(그룹이 더 구체적이라 우선).
-      const dest = ev.adgroupId
+      // 클릭 시 해당 캠페인/광고그룹 화면으로 이동 — 소재/키워드 수정도 소속 광고그룹
+      // 페이지로 간다(그룹이 더 구체적이라 우선). id가 저장 안 된 과거 알림은 대상 이름으로
+      // id를 찾아 이동(legacyIssueDests).
+      const staticDest = ev.adgroupId
         ? `/manage/ad-accounts/${entry.adAccountNo}/sa/adgroups/${ev.adgroupId}`
         : ev.campaignId
           ? `/manage/ad-accounts/${entry.adAccountNo}/sa/campaigns/${ev.campaignId}`
           : null;
-      if (dest) {
+      if (staticDest || ev.target) {
         item.classList.add("is-link");
         item.title = "해당 화면으로 이동";
         item.addEventListener("click", () => {
-          closeChangeWatchPanel();
-          closePopover();
-          location.assign(dest);
+          void (async () => {
+            const dest = staticDest ?? (await legacyIssueDests(entry)).get(ev.target) ?? null;
+            if (!dest) {
+              showToast({ message: "이동할 화면을 찾지 못했어요", variant: "error" });
+              return;
+            }
+            closeChangeWatchPanel();
+            closePopover();
+            location.assign(dest);
+          })();
         });
       }
       list.appendChild(item);
