@@ -8,8 +8,8 @@
 - **판별은 `actorId`(항상 `0`/`locker-sa`)가 아니라 `actorDisplayName`으로.** 표기가 제각각(`dvcompany:naver`/`김아라`/`GW10500`/`SYSTEM`)이라 설정 UI가 **선택한 계정의** 최근 이력에서 실제 변경자를 긁어 칩으로 고르게 한다(켜기 전에도 후보가 보여야 하므로 스캔 대상은 "켠 계정"이 아니라 "선택한 계정").
 - **SYSTEM도 하드코딩 제외가 아니라 칩 후보** — 시스템 변경도 알림받을지 사용자가 정한다. 빈 `actorDisplayName`만 무조건 제외(예산 잠금 계열이라 ①에서 처리).
 - 켜기/끄기와 제외 변경자 선택은 **한 다이얼로그**(`openChangeWatchDialogFor`, ⋮ > "변경이력 알림"). **계정별 opt-in**(`MultiAccountUserMeta.changeWatch`) — 계정 선택 후 켜야 동작(광고주 직접 운영 계정은 외부 수정이 정상이라 소음).
-- 상태는 `change_watch_state:<no>`에 저장. 조회 창은 고정 기간이 아니라 `scanned_until`(직전 점검 시각) 이후 증분 — 누락도 중복도 없음.
-- **확인 시각은 예산/수정 종류별로 분리**(`read_budget_up_to`/`read_external_up_to`) — 하나로 두면 예산만 확인했는데 더 오래된 수정 알림까지 같이 사라진다. 확인한 알림은 events에서 즉시 제거(storage 할당량은 입찰가 캐시와 공유).
+- **상태는 Supabase `change_watch_state` 테이블이 원본, 로컬 `change_watch_state:<no>`는 캐시**(2026-07-20 이전). 단 수집 결과라 서버 쓰기 실패는 warn 후 로컬만 반영 — 점검이 끊기면 알림 자체가 죽는다. 내려받기(`refreshFromServer` → `mergeChangeWatchFromServer`)는 **덮어쓰기 금지, id 합집합 + 확인/점검 시각 max 병합** (아직 못 올린 로컬 알림 보호). 조회 창은 고정 기간이 아니라 `scanned_until`(직전 점검 시각) 이후 증분 — 누락도 중복도 없음.
+- **확인 시각은 예산/수정 종류별로 분리**(`read_budget_up_to`/`read_external_up_to`) — 하나로 두면 예산만 확인했는데 더 오래된 수정 알림까지 같이 사라진다. **[모두 읽음]은 읽음 기준만 올리고 events는 지우지 않는다** — 계정별 이력으로 `CHANGE_WATCH_KEEP_MS`(60일)까지 보관하고 그 뒤 자동 정리(2026-07-20 개편, 그 전엔 확인 즉시 삭제). 배지 개수만 읽음 기준으로 줄고 패널 목록은 그대로 남는다.
 - 알람/알림 권한 없이 콘텐츠 스크립트가 30분 주기 + popover 진입 시 점검 — 탭 닫으면 멈추지만 `scanned_until` 덕에 다시 열 때 이어받음. 정찰 결과는 메모리 `project_f_changewatch_endpoints`.
 
 ## Gotchas

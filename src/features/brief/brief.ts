@@ -27,7 +27,6 @@ import { collectBriefData, buildSummaryText, buildSummarySpec, fetchPowerlinkBid
 import { rangeText } from "@/features/report/report-period";
 import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate, type BriefTargetSnapshot, type BriefRuleInput, type BriefThresholds } from "./brief-rules";
 import { resolveThresholds, type BriefSensitivity } from "./brief-thresholds";
-import { openBriefThresholdDialog } from "./brief-threshold-panel";
 import { composeBlocks, toPrevReport, type ComposedBlock } from "./brief-compose";
 import { renderBriefPanel, renderBriefPickPanel, closeBriefPanel, type BriefBlock, type BriefPickState } from "./brief-panel";
 import { saveBriefHistory, fetchBriefHistory, candidatesToActions, type BriefHistoryRecord, type BriefTone, type BriefSentStatus } from "./brief-history";
@@ -35,7 +34,6 @@ import { buildFollowUpCandidate, currentTargetMap } from "./brief-followup";
 import { openBriefHistoryPanel } from "./brief-history-panel";
 import { fetchBriefChangeEvents, type BriefChangeFetchResult } from "./brief-change-data";
 import { evaluateChangeImpacts, buildChangeHistoryCandidates } from "./brief-change-rules";
-import { openBriefToneDialog } from "./brief-tone-panel";
 
 let running = false;
 let runToken = 0;
@@ -275,27 +273,23 @@ function showSelection(ctx: BriefContext, initial?: Partial<BriefPickState>): vo
       ? "변경이력 알림에서 우리 팀 작업자를 등록하면 쓸 수 있어요"
       : undefined,
     initial,
-    onToneSettings: () => openBriefToneDialog(),
-    onThresholdSettings: () => {
-      openBriefThresholdDialog({
-        sensitivity: ctx.sensitivity,
-        custom: ctx.customThresholds,
-        totalCost: ctx.data.model.totalCurrent.cost,
-        onClose: () => showSelection(ctx, initial),
-        onSave: (sensitivity, custom) => {
-          ctx.sensitivity = sensitivity;
-          ctx.customThresholds = custom;
-          // 광고주별 저장 — 실패해도 이번 세션 재계산은 진행.
-          void updateUserMeta(ctx.target.adAccountNo, {
-            briefSensitivity: sensitivity,
-            briefThresholds: sensitivity === "custom" ? custom : undefined,
-          }).catch((e) => console.warn("[dv-ads/brief] 이슈 기준 저장 실패", e));
-          rebuildCandidates(ctx);
-          // 후보 구성이 바뀌어 선택 인덱스는 무효 — 유형·톤만 유지하고 새로 고른다.
-          showSelection(ctx, { reportType: initial?.reportType, tone: initial?.tone });
-          showToast({ message: "이슈 기준을 바꿨어요. 목록을 다시 만들었어요", variant: "success" });
-        },
-      });
+    thresholds: {
+      sensitivity: ctx.sensitivity,
+      custom: ctx.customThresholds,
+      totalCost: ctx.data.model.totalCurrent.cost,
+      onChange: (sensitivity, custom) => {
+        ctx.sensitivity = sensitivity;
+        ctx.customThresholds = custom;
+        // 광고주별 저장 — 실패해도 이번 세션 재계산은 진행.
+        void updateUserMeta(ctx.target.adAccountNo, {
+          briefSensitivity: sensitivity,
+          briefThresholds: sensitivity === "custom" ? custom : undefined,
+        }).catch((e) => console.warn("[dv-ads/brief] 이슈 기준 저장 실패", e));
+        rebuildCandidates(ctx);
+        // 후보 구성이 바뀌어 선택 인덱스는 무효 — 유형·톤만 유지하고 새로 고른다.
+        showSelection(ctx, { reportType: initial?.reportType, tone: initial?.tone, advOpen: true });
+        showToast({ message: "이슈 기준을 바꿨어요. 목록을 다시 만들었어요", variant: "success" });
+      },
     },
     onShowHistory: () => {
       closeBriefPanel();
@@ -318,7 +312,7 @@ async function composeAndShow(
   selected: BriefCandidate[],
   state: BriefPickState,
 ): Promise<void> {
-  showProgress("보고 문구를 만드는 중...");
+  showProgress("광고 성과를 측정하는 중...");
   let aiBlocks: ComposedBlock[] = [];
   if (selected.length > 0 || state.memo !== "") {
     try {

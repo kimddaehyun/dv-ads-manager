@@ -15,7 +15,17 @@ import type {
   ChangeWatchState,
   ChangeWatchEvent,
 } from "@/types/storage";
-import { pullAll, pushMeta, pushGroups, deleteMeta } from "@/shared/server-store";
+import {
+  pullAll,
+  pushMeta,
+  pushGroups,
+  deleteMeta,
+  pullChangeWatchStates,
+  pushChangeWatchState,
+  deleteChangeWatchStates,
+  pullUserSettings,
+  pushUserSettings,
+} from "@/shared/server-store";
 
 const USER_META_KEY = "multi_account_user_meta";
 const ADDED_LIST_KEY = "multi_account_added_list";
@@ -410,7 +420,10 @@ export async function loadPlatformFilter(): Promise<PlatformFilter> {
   return { sa: raw.sa !== false, da: raw.da !== false };
 }
 
+// 사용자 설정 3종(광고 유형 필터·대행권 기준 번호·알림 제외 변경자)은 서버가 원본 —
+// 서버 저장이 성공해야 로컬 캐시를 갱신한다(실패 시 throw, 호출부가 withServerSave로 처리).
 export async function savePlatformFilter(filter: PlatformFilter): Promise<void> {
+  await pushUserSettings({ platformSa: filter.sa, platformDa: filter.da });
   await chrome.storage.local.set({ [PLATFORM_FILTER_KEY]: filter });
 }
 
@@ -428,6 +441,7 @@ export async function loadAgencyIdentity(): Promise<number[]> {
 }
 
 export async function saveAgencyIdentity(directManagerNos: number[]): Promise<void> {
+  await pushUserSettings({ agencyManagerNos: directManagerNos });
   await chrome.storage.local.set({ [AGENCY_IDENTITY_KEY]: { directManagerNos } });
 }
 
@@ -444,10 +458,10 @@ export const CHANGE_WATCH_TTL_MS = 30 * 60 * 1000; // 30분
 /** 최초 점검 시 거슬러 올라갈 기간. 이전 이력이 한꺼번에 쏟아지지 않게 제한. */
 export const CHANGE_WATCH_BOOTSTRAP_MS = 3 * 24 * 60 * 60 * 1000; // 3일
 /**
- * 확인 안 한 알림 보관 기간. 확인한 알림은 다시 표시되지 않으므로 즉시 버리고(저장소 절약),
- * 확인 안 한 것도 이보다 오래되면 정리한다 — 2주 지난 걸 계속 붙들고 알릴 이유가 없다.
+ * 알림 보관 기간. 확인(모두 읽음) 여부와 무관하게 계정별로 이 기간만큼 이력을 남긴다 —
+ * 확인했다고 지워버리면 "그때 무슨 일이 있었는지" 되짚을 수 없다. 지나면 자동 정리.
  */
-export const CHANGE_WATCH_KEEP_MS = 14 * 24 * 60 * 60 * 1000; // 14일
+export const CHANGE_WATCH_KEEP_MS = 60 * 24 * 60 * 60 * 1000; // 60일
 
 export async function loadChangeWatchIdentity(): Promise<string[]> {
   const r = await chrome.storage.local.get(CHANGE_WATCH_IDENTITY_KEY);
@@ -458,6 +472,7 @@ export async function loadChangeWatchIdentity(): Promise<string[]> {
 }
 
 export async function saveChangeWatchIdentity(actors: string[]): Promise<void> {
+  await pushUserSettings({ changeWatchActors: actors });
   await chrome.storage.local.set({ [CHANGE_WATCH_IDENTITY_KEY]: { actors } });
 }
 
@@ -484,13 +499,28 @@ export async function loadChangeWatchStateMany(
   return result;
 }
 
+/**
+ * 서버(change_watch_state)가 원본, 로컬은 캐시. 다만 이건 사용자 입력이 아니라 수집 결과라
+ * 서버 쓰기가 실패해도 로컬 저장까지 막지는 않는다 — 점검이 통째로 헛돌면 알림 자체가 끊긴다.
+ * 서버에 못 올린 분은 다음 점검(30분)이나 [모두 읽음] 때 같은 행을 다시 upsert하며 따라잡는다.
+ */
 export async function saveChangeWatchState(state: ChangeWatchState): Promise<void> {
   const key = CHANGE_WATCH_PREFIX + String(state.adAccountNo);
+  try {
+    await pushChangeWatchState(state);
+  } catch (e) {
+    console.warn("[dv-ads/change-watch] 서버 저장 실패 - 로컬에만 반영", state.adAccountNo, e);
+  }
   await chrome.storage.local.set({ [key]: state });
 }
 
 export async function clearChangeWatchStates(adAccountNos: number[]): Promise<void> {
   if (adAccountNos.length === 0) return;
+  try {
+    await deleteChangeWatchStates(adAccountNos);
+  } catch (e) {
+    console.warn("[dv-ads/change-watch] 서버 삭제 실패", adAccountNos, e);
+  }
   await chrome.storage.local.remove(
     adAccountNos.map((no) => CHANGE_WATCH_PREFIX + String(no)),
   );
@@ -535,4 +565,78 @@ export async function refreshFromServer(): Promise<void> {
   await saveAllUserMeta(server.metaMap);
   await saveGroups(server.groups);
   await saveAddedList(server.addedList);
+  await mergeChangeWatchFromServer();
+  await pullUserSettingsToLocal();
+}
+
+/**
+ * 사용자 설정(알림 제외 변경자·대행권 기준 번호·광고 유형 필터·리포트 담당자)을 서버에서
+ * 로컬 캐시로 내려받는다. 서버에 행이 없으면(이 기능 도입 전 사용자) **로컬을 그대로 두고
+ * 한 번 올려준다** — 안 그러면 이미 설정해 둔 값이 기본값으로 리셋된 것처럼 보인다.
+ */
+async function pullUserSettingsToLocal(): Promise<void> {
+  const server = await pullUserSettings();
+  if (!server) {
+    const [actors, managerNos, filter] = await Promise.all([
+      loadChangeWatchIdentity(),
+      loadAgencyIdentity(),
+      loadPlatformFilter(),
+    ]);
+    const author = await loadReportAuthor();
+    await pushUserSettings({
+      changeWatchActors: actors,
+      agencyManagerNos: managerNos,
+      platformSa: filter.sa,
+      platformDa: filter.da,
+      reportAuthor: author,
+    });
+    return;
+  }
+  await chrome.storage.local.set({
+    [CHANGE_WATCH_IDENTITY_KEY]: { actors: server.changeWatchActors },
+    [AGENCY_IDENTITY_KEY]: { directManagerNos: server.agencyManagerNos },
+    [PLATFORM_FILTER_KEY]: { sa: server.platformSa, da: server.platformDa },
+    [REPORT_AUTHOR_KEY]: server.reportAuthor,
+  });
+}
+
+// 리포트 담당자명 — 입력 위치는 F-Report 날짜 선택기지만, 사용자 설정 묶음이라 여기서 관리.
+export const REPORT_AUTHOR_KEY = "report_last_author";
+
+export async function loadReportAuthor(): Promise<string> {
+  const r = await chrome.storage.local.get(REPORT_AUTHOR_KEY);
+  const v = r[REPORT_AUTHOR_KEY];
+  return typeof v === "string" ? v : "";
+}
+
+export async function saveReportAuthor(author: string): Promise<void> {
+  await pushUserSettings({ reportAuthor: author });
+  await chrome.storage.local.set({ [REPORT_AUTHOR_KEY]: author });
+}
+
+/**
+ * 서버의 계정 이슈 이력을 로컬과 합친다. 다른 PC에서 점검한 결과를 이어받되, 이쪽에서
+ * 방금 잡아 아직 못 올린 알림도 지우지 않도록 **덮어쓰기가 아니라 병합**한다 —
+ * 알림은 id로 합집합, 확인 시각/점검 시각은 더 나중 것을 채택한다.
+ */
+async function mergeChangeWatchFromServer(): Promise<void> {
+  const states = await pullChangeWatchStates();
+  if (states.length === 0) return;
+  const local = await loadChangeWatchStateMany(states.map((s) => s.adAccountNo));
+  const patch: Record<string, ChangeWatchState> = {};
+  for (const remote of states) {
+    const mine = local.get(remote.adAccountNo);
+    const byId = new Map<string, ChangeWatchEvent>();
+    for (const e of mine?.events ?? []) byId.set(e.id, e);
+    for (const e of remote.events) byId.set(e.id, e);
+    patch[CHANGE_WATCH_PREFIX + String(remote.adAccountNo)] = {
+      adAccountNo: remote.adAccountNo,
+      events: [...byId.values()].sort((a, b) => b.ts - a.ts),
+      scanned_until: Math.max(remote.scanned_until, mine?.scanned_until ?? 0),
+      read_budget_up_to: Math.max(remote.read_budget_up_to, mine?.read_budget_up_to ?? 0),
+      read_external_up_to: Math.max(remote.read_external_up_to, mine?.read_external_up_to ?? 0),
+      fetched_at: remote.fetched_at,
+    };
+  }
+  await chrome.storage.local.set(patch);
 }

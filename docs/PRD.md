@@ -130,19 +130,30 @@ Chrome 확장의 진입점 3개(콘텐츠 스크립트 / 팝업 / 옵션) 기준
 | **역할** | 본 확장 사용에 필요한 검색광고 API 자격증명 1쌍을 등록·관리 |
 | **진입 경로** | 설치 직후 자동 열림(권장), 또는 팝업의 "옵션 열기" 링크, 또는 `chrome://extensions`의 옵션 버튼 |
 | **사용자 행동** | customerId + accessLicense + secretKey 입력. 이후 ads.naver.com에서 오버레이 활성 확인 |
-| **주요 기능** | • **자격증명 입력 폼** (F011): customerId·accessLicense·secretKey 입력, 비밀값 마스킹 + 가시화 토글, 저장·수정·삭제. 자격증명이 등록돼 있으면 마스킹된 상태로 표시 + 수정 버튼<br>• 검증/저장 실패·네트워크 에러 시 친화적 메시지로 변환 표시<br>• 자격증명은 `chrome.storage.local`에만 저장, 외부 전송 X |
+| **주요 기능** | • **자격증명 입력 폼** (F011): customerId·accessLicense·secretKey 입력, 비밀값 마스킹 + 가시화 토글, 저장·수정·삭제. 자격증명이 등록돼 있으면 마스킹된 상태로 표시 + 수정 버튼<br>• 검증/저장 실패·네트워크 에러 시 친화적 메시지로 변환 표시<br>• 자격증명은 서버(`credentials`)에 저장하고 로컬은 캐시, secretKey는 `credentials-vault` 암호화 경유 |
 | **다음 이동** | 저장 완료 시 안내 후 새 탭에서 `ads.naver.com`을 열도록 가이드 |
 
 ---
 
 ## 🗄️ 데이터 모델
 
-본 확장은 서버 DB를 보유하지 않는다. 모든 사용자 데이터는 `chrome.storage.local`에만 보관된다.
+**저장 위치 원칙 (2026-07-20 개정 — 그 전엔 "서버 DB 없음, 전부 로컬")**: 사용자가 **직접 설정한 값은 서버(Supabase)가 원본**, 확장이 **자동 수집한 결과는 로컬(`chrome.storage.local`) 캐시**다. 서버에 쓰는 항목은 쓰기 성공 시에만 로컬을 갱신하고, RLS로 본인 행 + `approved` 상태에서만 접근된다.
+
+| 구분 | 항목 | 저장 위치 |
+|------|------|-----------|
+| 계정·설정 (서버 원본) | 회원 정보(`profiles`), 검색광고 자격증명(`credentials`), 계정 메타(`account_meta` — 별칭·즐겨찾기·숨김·알림 임계값·목표 ROAS), 계정 그룹(`account_groups`), 사용자 설정(`user_settings` — 알림 제외 변경자·대행권 기준 관리계정 번호·광고 유형 필터·리포트 담당자명) | Supabase + 로컬 캐시 |
+| 이슈 이력 (서버 보관, 2026-07-20 이전) | 계정 이슈 이력(`change_watch_state` — 예산 소진·외부 수정 알림, 60일 보관 후 자동 정리) | Supabase + 로컬 캐시 |
+| 자동 수집 (로컬 전용) | 입찰가/검색량/성과 캐시, 계정 스냅샷(어제 지표·비즈머니·계약·알림) | `chrome.storage.local` |
+
+로컬 전용 항목은 **브라우저 프로필 단위**로만 남는다 — 기기·프로필을 바꾸면 다시 수집되며 공유되지 않는다(성능용 캐시라 유실돼도 재수집된다).
+
+계정 이슈 이력만은 예외로 서버에 보관한다 — 기기를 바꿔도 남아야 하고 같은 계정을 보는 사람끼리 이어져야 하기 때문. 다만 사용자 입력이 아니라 수집 결과라 **서버 쓰기 실패가 점검을 막지 않는다**(로컬에는 반영하고 다음 점검이 따라잡는다). 서버 이력을 내려받을 때는 덮어쓰지 않고 **알림 id 합집합 + 확인 시각 max로 병합**해, 아직 못 올린 이쪽 알림이 지워지지 않게 한다.
 
 **데이터 전송 원칙 (2026-07-16 개정)**: 광고 데이터는 **네이버와 사내 서버(Supabase Edge Function) 외로 나가지 않는다.** F-Brief(보고 문구) AI 문장 생성 시 AE가 체크한 사실(facts)만 사내 Edge Function 1개를 경유해 Gemini로 전달되며, **서버는 어떤 데이터도 저장·로깅하지 않는다** (에러 로그도 상태코드만). 리포트 전체를 보내는 일은 없다.
 
-### SearchadCredentials (chrome.storage.local 키: `searchadCredentials`)
+### SearchadCredentials (서버 `credentials` 테이블 + 로컬 캐시 키: `searchadCredentials`)
 > 자격증명 1쌍. `src/shared/searchad.ts`의 `loadCredentials`/`saveCredentials`/`clearCredentials`로 관리.
+> **secretKey는 평문 저장 금지** — Edge Function `credentials-vault`를 거쳐 암호화한 뒤 저장한다(`src/shared/vault.ts`).
 
 | 필드 | 설명 | 타입 |
 |------|------|------|
@@ -190,7 +201,8 @@ Chrome 확장의 진입점 3개(콘텐츠 스크립트 / 팝업 / 옵션) 기준
 - ~~**F002/F003 데이터 소스**~~ — ⏸️ 보류 (2026-05-19). Spike B 정찰 결과(`admng_exp_keyword` + `ad-account v2` 비공식 endpoint)는 메모리 `project_spike_b_shopping_endpoints`에 보존 — 추후 다른 기능에서 재사용 가능.
 
 ### 💾 저장소
-- **`chrome.storage.local`** — 자격증명, 영속 캐시. 확장별 격리
+- **Supabase**(프로젝트 `gvyvrjncpwmcwycebrhf`) — 회원·자격증명·계정 메타·계정 그룹·사용자 설정(`user_settings`)·계정 이슈 이력(`change_watch_state`)의 원본. RLS로 본인 행 + `approved`만 접근
+- **`chrome.storage.local`** — 위 항목의 로컬 캐시 + 자동 수집 결과(입찰가·성과 캐시, 계정 스냅샷). 확장별 격리
 - **`chrome.storage.session`(또는 메모리)** — ActiveAdvertiser 휘발성 상태
 
 ### 🚀 배포
@@ -230,6 +242,7 @@ v0.2 방향: AE 카톡 워크플로 분석 결과 "ROI 임계값 자동 분류 +
 ### Quota / Prune 정책 (MVP 후 보완)
 
 - `chrome.storage.local` 한계 5MB. 키워드 누적 시 LRU 또는 TTL prune 필요 — MVP 이후 백로그.
+- 계정 이슈 이력은 계정 수에 비례해 쌓이므로 보관 기간(60일)을 넘긴 항목은 점검 시 자동 정리한다.
 
 ---
 
@@ -246,6 +259,7 @@ v0.2 방향: AE 카톡 워크플로 분석 결과 "ROI 임계값 자동 분류 +
 - **2026-05-14 prd-validator 1차**: ⚠️ 조건부 통과 (Critical 0, Major 5). 기술 신뢰도 8/10. F001 데이터 소스·F012 권한·데이터 모델 명시 반영.
 - **2026-05-14 자격증명 모델 단순화**: 검색광고 API 응답이 시장 단위 추정치라 호출자 customerId와 무관하게 동일하다는 점을 반영. F011 다중 자격증명·F013 광고주 매칭 개념 제거. SearchadCredential 단일 객체 모델로 회귀.
 - **2026-05-15 인프라 분리 결정**: Supabase 프로젝트와 개인정보처리방침을 본 확장 전용으로 분리. 코어 라이브러리(`src/lib/*`)의 다른 확장 동기화 의무 폐기 — 본 repo 단독 진화.
+- **2026-07-20 저장 위치 원칙 명문화 + 이슈 이력 서버 이전**: "서버 DB 없음" 문장이 실제(F-Accounts 도입으로 Supabase 운영)와 어긋나 데이터 모델 절을 현행화. 설정값=서버 원본 / 자동 수집=로컬 캐시로 선을 긋고, 계정 이슈 이력은 기기 교체·공유 요구가 있어 `change_watch_state` 테이블로 이전(60일 보관, best-effort 쓰기 + 병합 내려받기). 로컬에 남아 있던 사용자 설정 4종(알림 제외 변경자·대행권 기준 번호·광고 유형 필터·리포트 담당자명)도 `user_settings`로 이전 — 특히 제외 변경자가 비면 외부 수정 알림이 조용히 꺼져 기기 교체 시 "알림이 안 온다"로 보였다.
 - **2026-05-15 라이선스 시스템 제거**: F010·Supabase RPC `verify_access`·`license.ts`·`supabase.ts`·`LicenseUi`·host_permissions의 `*.supabase.co`·`@supabase/supabase-js` 의존성 모두 제거. MVP는 자격증명 등록 여부만으로 기능 활성. 추후 유료화 검토 시 재도입.
 - **2026-05-19 F002/F003 보류 결정**: 광고관리자 자체 UI(특히 "제외키워드 추가" 모달)가 이미 키워드별 노출/클릭/비용/전환율을 정렬 + 1-클릭 추가까지 제공해 우리 inline 펼침의 차별화가 약함. AE 광고주 보고 카톡 워크플로 분석 결과 진짜 페인은 "키워드별 1~10위 입찰가 표시"가 아닌 "ROI 임계값 기반 자동 분류 + 일괄 액션" 모델로 확인 → 다음 brainstorming에서 새 기능 ID로 재정의. v0.1은 F001 + F011 + F012만으로 ship.
 - **남은 [UNCERTAIN]**: 없음 — F001은 Spike C 1·2차로 schema 확정, `chrome.tabs.query`는 host_permissions만으로 충분 확인.

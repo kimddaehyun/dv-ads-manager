@@ -218,8 +218,8 @@ export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): Cha
           actor: "",
           target: obj.displayName ?? "",
           summary: budget
-            ? `${lockScope} 일예산 ${budget.toLocaleString("ko-KR")}원을 다 써서 광고가 멈췄어요`
-            : `${lockScope} 예산을 다 써서 광고가 멈췄어요`,
+            ? `${lockScope} 일 예산 ${budget.toLocaleString("ko-KR")}원 도달`
+            : `${lockScope} 일 예산 도달`,
         });
       });
       continue;

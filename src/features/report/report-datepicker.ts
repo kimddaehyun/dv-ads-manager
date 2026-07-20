@@ -11,12 +11,11 @@
 
 import { rangeForPreset, PRESET_LABELS, type ReportPreset, type DateRange } from "@/features/report/report-period";
 import { registerMenuSibling, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
+// 담당자명은 사용자 설정 묶음(user_settings)의 일부 — 저장/조회는 multi-account-storage가 담당.
+import { loadReportAuthor, saveReportAuthor } from "@/features/multi-account/multi-account-storage";
 
 const PRESETS = Object.keys(PRESET_LABELS) as ReportPreset[];
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
-
-// 마지막 입력 담당자명 영속 키 (chrome.storage.local).
-const AUTHOR_KEY = "report_last_author";
 
 // 달력에 보여줄 월 범위: 오늘 기준 과거 18개월 ~ 미래 2개월.
 const MONTHS_BACK = 18;
@@ -130,9 +129,8 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     authorInput.style.display = "none";
   } else {
     // 마지막에 입력한 담당자명 복원 — 다음 리포트 생성 때 자동으로 채워둔다.
-    chrome.storage.local.get(AUTHOR_KEY).then((r) => {
-      const saved = r[AUTHOR_KEY];
-      if (typeof saved === "string" && saved && document.activeElement !== authorInput && !authorInput.value) {
+    void loadReportAuthor().then((saved) => {
+      if (saved && document.activeElement !== authorInput && !authorInput.value) {
         authorInput.value = saved;
       }
     });
@@ -371,7 +369,12 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     const roasNum = Number(roasInput.value.replace(/[^\d.]/g, ""));
     const targetRoas = Number.isFinite(roasNum) && roasNum > 0 ? roasNum : null;
     const range: DateRange = { since: iso(start), until: iso(end) };
-    if (author) void chrome.storage.local.set({ [AUTHOR_KEY]: author });
+    // 서버(user_settings)에도 반영 — 다른 PC에서도 담당자명이 채워지게. 실패해도 리포트 생성은 진행.
+    if (author) {
+      void saveReportAuthor(author).catch((e) =>
+        console.warn("[dv-ads/report] 담당자명 저장 실패", e),
+      );
+    }
     finish();
     opts.onConfirm(range, author, targetRoas);
   }

@@ -1,7 +1,11 @@
-// F-Accounts — Supabase 서버 스토어 (account_meta / account_groups CRUD).
+// F-Accounts — Supabase 서버 스토어 (account_meta / account_groups / change_watch_state CRUD).
 // 서버 먼저 반영하고, 성공 시 로컬 캐시(chrome.storage.local) 갱신은 호출부(Task 9) 책임.
 import { getSupabase } from "@/shared/supabase";
-import type { MultiAccountUserMeta, MultiAccountGroup } from "@/types/storage";
+import type {
+  MultiAccountUserMeta,
+  MultiAccountGroup,
+  ChangeWatchState,
+} from "@/types/storage";
 
 export type UserMetaMap = Record<number, MultiAccountUserMeta>;
 
@@ -173,4 +177,128 @@ export async function pushGroups(groups: MultiAccountGroup[]): Promise<void> {
   const rows = groups.map((g) => groupToRow(userId, g));
   const { error: upsertError } = await supabase.from("account_groups").upsert(rows, { onConflict: "id" });
   if (upsertError) throw upsertError;
+}
+
+// ─── 계정 이슈 이력 (change_watch_state) ───
+// 수집 결과라 설정값(account_meta)과 달리 사용자가 직접 입력하지 않는다. 서버가 원본이되
+// 쓰기 실패가 점검 자체를 막지 않도록 호출부는 best-effort로 밀어넣는다.
+
+/** change_watch_state 테이블 행 형태 (숫자 시각은 bigint → 문자열로 올 수 있음) */
+interface ChangeWatchRow {
+  user_id: string;
+  ad_account_no: number | string;
+  events: ChangeWatchState["events"];
+  scanned_until: number | string;
+  read_budget_up_to: number | string;
+  read_external_up_to: number | string;
+  fetched_at: string;
+}
+
+function rowToChangeWatch(row: ChangeWatchRow): ChangeWatchState {
+  return {
+    adAccountNo: Number(row.ad_account_no),
+    events: Array.isArray(row.events) ? row.events : [],
+    scanned_until: Number(row.scanned_until),
+    read_budget_up_to: Number(row.read_budget_up_to),
+    read_external_up_to: Number(row.read_external_up_to),
+    fetched_at: row.fetched_at,
+  };
+}
+
+/** 본인의 전 계정 이슈 이력 조회 (RLS가 본인 행만 반환) */
+export async function pullChangeWatchStates(): Promise<ChangeWatchState[]> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("change_watch_state").select("*");
+  if (error) throw error;
+  return ((data ?? []) as ChangeWatchRow[]).map(rowToChangeWatch);
+}
+
+/** 한 계정의 이슈 이력 upsert */
+export async function pushChangeWatchState(state: ChangeWatchState): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await currentUserId();
+  const { error } = await supabase.from("change_watch_state").upsert(
+    {
+      user_id: userId,
+      ad_account_no: state.adAccountNo,
+      events: state.events,
+      scanned_until: state.scanned_until,
+      read_budget_up_to: state.read_budget_up_to,
+      read_external_up_to: state.read_external_up_to,
+      fetched_at: state.fetched_at,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id,ad_account_no" },
+  );
+  if (error) throw error;
+}
+
+// ─── 사용자 설정 (user_settings) ───
+// 계정 단위가 아닌 사용자 단위 설정 묶음. 행은 사용자당 하나.
+
+export interface UserSettings {
+  /** 변경이력 알림에서 제외할 변경자 표시명 */
+  changeWatchActors: string[];
+  /** 대행권 점검 기준이 되는 관리 계정 번호 */
+  agencyManagerNos: number[];
+  /** 검색광고 / 디스플레이광고 표시 토글 */
+  platformSa: boolean;
+  platformDa: boolean;
+  /** 리포트 담당자명 (마지막 입력값) */
+  reportAuthor: string;
+}
+
+export const DEFAULT_USER_SETTINGS: UserSettings = {
+  changeWatchActors: [],
+  agencyManagerNos: [],
+  platformSa: true,
+  platformDa: true,
+  reportAuthor: "",
+};
+
+/** 사용자 설정 조회. 행이 없으면(첫 사용) null — 호출부가 기본값/로컬값을 유지한다. */
+export async function pullUserSettings(): Promise<UserSettings | null> {
+  const supabase = getSupabase();
+  const { data, error } = await supabase.from("user_settings").select("*").maybeSingle();
+  if (error) throw error;
+  if (!data) return null;
+  const row = data as {
+    change_watch_actors?: string[];
+    agency_manager_nos?: (number | string)[];
+    platform_sa?: boolean;
+    platform_da?: boolean;
+    report_author?: string;
+  };
+  return {
+    changeWatchActors: row.change_watch_actors ?? [],
+    agencyManagerNos: (row.agency_manager_nos ?? []).map(Number),
+    platformSa: row.platform_sa !== false,
+    platformDa: row.platform_da !== false,
+    reportAuthor: row.report_author ?? "",
+  };
+}
+
+/** 사용자 설정 부분 갱신 — 넘긴 항목만 덮어쓴다(다른 설정을 기본값으로 밀지 않게). */
+export async function pushUserSettings(patch: Partial<UserSettings>): Promise<void> {
+  const supabase = getSupabase();
+  const userId = await currentUserId();
+  const row: Record<string, unknown> = { user_id: userId, updated_at: new Date().toISOString() };
+  if (patch.changeWatchActors !== undefined) row.change_watch_actors = patch.changeWatchActors;
+  if (patch.agencyManagerNos !== undefined) row.agency_manager_nos = patch.agencyManagerNos;
+  if (patch.platformSa !== undefined) row.platform_sa = patch.platformSa;
+  if (patch.platformDa !== undefined) row.platform_da = patch.platformDa;
+  if (patch.reportAuthor !== undefined) row.report_author = patch.reportAuthor;
+  const { error } = await supabase.from("user_settings").upsert(row, { onConflict: "user_id" });
+  if (error) throw error;
+}
+
+/** 계정 삭제 시 그 계정의 이슈 이력도 함께 정리 */
+export async function deleteChangeWatchStates(adAccountNos: number[]): Promise<void> {
+  if (adAccountNos.length === 0) return;
+  const supabase = getSupabase();
+  const { error } = await supabase
+    .from("change_watch_state")
+    .delete()
+    .in("ad_account_no", adAccountNos);
+  if (error) throw error;
 }

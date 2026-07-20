@@ -297,7 +297,7 @@ export interface ChangeWatchEvent {
  */
 export interface ChangeWatchState {
   adAccountNo: number;
-  /** 아직 확인 안 한 알림만. 확인한 건 다시 안 뜨므로 저장하지 않는다 (CHANGE_WATCH_KEEP_MS 참조) */
+  /** 보관 기간(CHANGE_WATCH_KEEP_MS = 60일) 안의 알림 전부. 확인한 것도 남는다 — 배지 개수만 읽음 기준으로 줄어든다. */
   events: ChangeWatchEvent[];
   /** 이 시각(epoch ms)까지 조회 완료 — 다음 조회의 since */
   scanned_until: number;

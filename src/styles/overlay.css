@@ -2330,6 +2330,28 @@ td.dvads-period-delta-down {
   font-size: 13px;
   font-weight: 600;
 }
+/* 우상단 닫기 — 오버레이 다이얼로그 공통 X 버튼과 같은 크기·호버. */
+.dvads-change-panel-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -2px -4px -2px 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #9CA3AF;
+  font-family: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-change-panel-close:hover {
+  background: #F3F4F6;
+  color: #171717;
+}
 /* 탭 줄 — 좌측 탭들 + 우측 "모두 읽음" 텍스트 버튼. */
 .dvads-change-panel-tabs {
   display: flex;
@@ -2348,7 +2370,7 @@ td.dvads-period-delta-down {
   background: transparent;
   padding: 7px 0 6px;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   color: #6B7280;
   cursor: pointer;
@@ -2376,13 +2398,22 @@ td.dvads-period-delta-down {
   color: #171717;
   text-decoration: underline;
 }
+/* 목록 끝에 닿아도 뒤(계정 목록/페이지)로 스크롤이 새지 않게. */
 .dvads-change-panel-list {
+  overscroll-behavior: contain;
+  /* 탭을 바꿔 내용이 적어져도 패널이 확 쪼그라들지 않게 최소 높이 고정 — 높이가 널뛰면
+     패널이 앵커 기준으로 다시 자리를 잡아 화면에서 튀어 보인다. */
+  min-height: 320px;
   max-height: 320px;
   overflow-y: auto;
   padding: 4px 0;
 }
+/* 이슈 0건 패널은 안내 한 줄뿐이라 최소 높이를 풀어 작게 띄운다. */
+.dvads-change-panel.is-empty .dvads-change-panel-list {
+  min-height: 0;
+}
 .dvads-change-item {
-  padding: 8px 12px;
+  padding: 12px;
 }
 .dvads-change-item + .dvads-change-item {
   border-top: 1px solid #F3F4F6;
@@ -4574,6 +4605,7 @@ td.dvads-period-delta-down {
   background: rgba(0, 0, 0, 0.32);
   display: flex; align-items: center; justify-content: center;
 }
+.dvads-brief-card-wide { width: min(958px, calc(100vw - 32px)) !important; }
 .dvads-brief-card {
   width: min(560px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);
@@ -4643,18 +4675,57 @@ td.dvads-period-delta-down {
 
 /* F-Brief 후보 선택 화면 (AE선택 모드) — Selection Card 패턴 (DESIGN.md) */
 .dvads-brief-pick-list {
-  display: flex; flex-direction: column; gap: 8px; padding: 2px 0;
+  display: flex; flex-direction: column; padding: 2px 0;
+  border-top: 1px solid #eef0f3;
+}
+.dvads-brief-pick-item { border-bottom: 1px solid #eef0f3; }
+/* 고르면 행+펼친 표가 한 덩어리로 주황 면 */
+.dvads-brief-pick-item.is-selected {
+  background: rgba(230, 120, 59, 0.07); border-radius: 12px;
 }
 .dvads-brief-pick-row {
   display: flex; align-items: center; gap: 12px;
-  padding: 12px 14px; cursor: pointer;
-  background: #fff; border: 1.5px solid #e2e5ea; border-radius: 12px;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
+  padding: 22px 12px; cursor: pointer;
+  transition: background-color 0.15s ease;
+  border-radius: 12px;
 }
-.dvads-brief-pick-row:hover { background: #fafafa; }
-.dvads-brief-pick-row.is-selected {
-  border-color: #E6783B; background: rgba(230, 120, 59, 0.05);
+.dvads-brief-pick-row:hover { background: rgba(0, 0, 0, 0.02); }
+.dvads-brief-pick-item.is-selected .dvads-brief-pick-row:hover { background: none; }
+/* 아래 화살표 — 실제 데이터 펼치기 (선택과 별개) */
+.dvads-brief-pick-chev {
+  width: 24px; height: 24px; flex-shrink: 0; padding: 0;
+  background: none; border: 0; cursor: pointer; color: #9aa1ab;
+  display: flex; align-items: center; justify-content: center;
 }
+.dvads-brief-pick-chev:hover { color: #404040; }
+.dvads-brief-pick-chev svg { width: 18px; height: 18px; transition: transform 0.15s; }
+.dvads-brief-pick-item.is-expanded .dvads-brief-pick-chev svg { transform: rotate(180deg); }
+.dvads-brief-pick-detail { display: none; }
+.dvads-brief-pick-item.is-expanded .dvads-brief-pick-detail { display: block; }
+.dvads-brief-pick-detail-inner { padding: 0 12px 18px 56px; }
+.dvads-brief-pick-detail-basis {
+  font: 400 14px/1.5 Pretendard, -apple-system, sans-serif; color: #6b7280;
+  margin-bottom: 10px;
+}
+.dvads-brief-pick-detail-scroll { overflow-x: auto; }
+/* 칸에 안 들어가면 줄이지 말고 가로 스크롤 — 숫자가 겹쳐 보이면 안 된다 */
+.dvads-brief-pick-detail-table {
+  border-collapse: collapse; min-width: max-content;
+  font: 400 14px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+.dvads-brief-pick-detail-table th {
+  text-align: right; white-space: nowrap; color: #6b7280; font-weight: 500;
+  padding: 7px 18px 7px 0; border-bottom: 1px solid #e2e5ea;
+}
+.dvads-brief-pick-detail-table td {
+  padding: 7px 18px 7px 0; border-bottom: 1px solid #eef0f3;
+  white-space: nowrap; text-align: right;
+}
+/* 첫 열은 이름 — 왼쪽 정렬 */
+.dvads-brief-pick-detail-table th:first-child,
+.dvads-brief-pick-detail-table td:first-child { text-align: left; padding-right: 28px; }
+.dvads-brief-pick-detail-table tr.dvads-brief-band-green td { background: rgba(22, 163, 74, 0.07); }
+.dvads-brief-pick-detail-table tr.dvads-brief-band-yellow td { background: rgba(217, 119, 6, 0.09); }
 /* 실제 checkbox는 숨기고(접근성 유지) 우측 원형 체크가 상태를 그린다 */
 .dvads-brief-pick-row input[type="checkbox"] {
   position: absolute; width: 1px; height: 1px; opacity: 0;
@@ -4669,29 +4740,15 @@ td.dvads-period-delta-down {
 .dvads-brief-pick-icon-warning { background: rgba(217, 119, 6, 0.10);  color: #d97706; }
 .dvads-brief-pick-icon-success { background: rgba(22, 163, 74, 0.10);  color: #16a34a; }
 .dvads-brief-pick-icon-info    { background: rgba(0, 114, 245, 0.10);  color: #0072f5; }
-.dvads-brief-pick-check {
-  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
-  border: 1.5px solid #d1d5db; background: #fff;
-  display: flex; align-items: center; justify-content: center;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-.dvads-brief-pick-check svg {
-  width: 11px; height: 11px; display: block; color: #fff;
-  opacity: 0; transition: opacity 0.15s ease;
-}
-.dvads-brief-pick-row.is-selected .dvads-brief-pick-check {
-  border-color: #E6783B; background: #E6783B;
-}
-.dvads-brief-pick-row.is-selected .dvads-brief-pick-check svg { opacity: 1; }
 .dvads-brief-pick-label {
   flex: 1; min-width: 0;
   font: 400 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
 }
 .dvads-brief-pick-title {
-  font-weight: 600; font-size: 14px; color: #171717;
+  font-weight: 600; font-size: 16px; color: #171717;
 }
 .dvads-brief-pick-data {
-  margin-top: 2px; font-size: 12px; color: #6b7280;
+  margin-top: 4px; font-size: 14px; color: #6b7280;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .dvads-brief-pick-memo {
@@ -4701,11 +4758,51 @@ td.dvads-period-delta-down {
 }
 .dvads-brief-pick-memo:focus { outline: none; border-color: #E6783B; }
 
-/* F-Brief 선택 화면 옵션 영역 (보고 유형·톤·이력 토글) */
+/* F-Brief 선택 화면 옵션 영역 (보고 유형·톤·이력 토글) — 고급옵션 안에 접혀 있다 */
 .dvads-brief-pick-options {
-  display: flex; flex-direction: column; gap: 8px;
-  padding: 10px 0 12px; border-bottom: 1px solid #eef0f3; margin-bottom: 4px;
+  display: none; flex-direction: column; gap: 8px;
+  padding: 4px 0 14px;
 }
+.dvads-brief-adv.is-open .dvads-brief-pick-options { display: flex; }
+.dvads-brief-adv {
+  margin-top: 16px; border-top: 1px solid #eef0f3;
+}
+.dvads-brief-adv-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; padding: 16px 0; background: none; border: 0; cursor: pointer; text-align: left;
+}
+.dvads-brief-adv-text { display: flex; flex-direction: column; gap: 4px; }
+.dvads-brief-adv-title {
+  font: 600 15px/1.4 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+.dvads-brief-adv-desc {
+  font: 400 12px/1.5 Pretendard, -apple-system, sans-serif; color: #6b7280;
+}
+.dvads-brief-adv-chev { width: 20px; height: 20px; color: #6b7280; flex-shrink: 0; }
+.dvads-brief-adv-chev svg { width: 100%; height: 100%; transition: transform 0.15s; }
+.dvads-brief-adv.is-open .dvads-brief-adv-chev svg { transform: rotate(180deg); }
+.dvads-brief-pick-setting-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.dvads-brief-pick-listhead {
+  font: 600 14px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+  margin-bottom: -8px;
+}
+.dvads-brief-pick-listhead-count { color: #171717; }
+.dvads-brief-adv-sub { margin-top: 12px; }
+.dvads-brief-adv-sub-title {
+  font: 600 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+/* 네이버 광고관리자 하단 버튼 비율 — 좌우 반반, 높이 44px */
+.dvads-brief-foot .dvads-btn {
+  flex: 1; height: 44px; font-size: 14px; font-weight: 600;
+}
+/* 취소 계열은 옅은 회색 면 — 여백 위에 떠 있는 글자처럼 보이지 않게 */
+.dvads-brief-foot .dvads-btn:not(.dvads-btn-primary) {
+  background: #f4f5f7; border-color: #e2e5ea; color: #404040;
+}
+.dvads-brief-foot .dvads-btn:not(.dvads-btn-primary):hover {
+  background: #eceef1;
+}
+.dvads-brief-head-name { color: #E6783B; }
 .dvads-brief-pick-opt-row {
   display: flex; align-items: center; gap: 8px;
   font: 500 13px/1.5 Pretendard, -apple-system, sans-serif; color: #404040;

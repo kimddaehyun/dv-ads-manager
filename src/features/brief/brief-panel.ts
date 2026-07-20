@@ -11,6 +11,10 @@ import { renderTablePng, copyTablePng } from "./brief-table";
 import { showToast } from "@/shared/toast";
 import { wireBackdropDismiss } from "@/shared/dialog-dismiss";
 import { createDropdown, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
+import { type BriefThresholds } from "./brief-rules";
+import { resolveThresholds, SENSITIVITY_LABEL, type BriefSensitivity } from "./brief-thresholds";
+import { distillTone } from "./brief-compose";
+import { loadBriefTone, saveBriefTone } from "./brief-tone";
 
 export interface BriefTextBlock {
   type: "text";
@@ -74,7 +78,7 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
 
   const head = document.createElement("div");
   head.className = "dvads-brief-head";
-  head.textContent = `보고 문구 - ${opts.advertiserName}`;
+  head.textContent = `광고 성과 측정 - ${opts.advertiserName}`;
   card.appendChild(head);
 
   if (opts.notice) {
@@ -314,8 +318,8 @@ const ICON_SVGS: Record<string, string> = {
   down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l7 7 4-4 7 7"/><path d="M21 11v6h-6"/></svg>',
   // 상승 화살표 — 기회(잘되는데 순위 낮음)
   up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l7-7 4 4 7-7"/><path d="M21 13V7h-6"/></svg>',
-  // 저울 — 세그먼트 효율 격차
-  skew: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 21h8"/><path d="M5 6h14"/><path d="M5 6l-2 5a2.5 2.5 0 0 0 4.9 0z"/><path d="M19 6l-2 5a2.5 2.5 0 0 0 4.9 0z"/></svg>',
+  // 좌우 분할 원 — 세그먼트 효율 격차 (잘되는 쪽 vs 안되는 쪽)
+  skew: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" stroke="none" opacity=".18"/><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg>',
   // 커서 클릭 — 소재(클릭률)
   cursor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l7 17 2.5-7.5L21 11z"/></svg>',
 };
@@ -361,6 +365,8 @@ export interface BriefPickState {
   /** opts.candidates 기준 인덱스. */
   selectedIdx: number[];
   actions: Record<number, BriefAction | undefined>;
+  /** 고급옵션 펼침 여부 — 이슈 기준 변경으로 화면을 다시 그릴 때 접히지 않게. */
+  advOpen: boolean;
 }
 
 const REPORT_TYPE_OPTIONS: Array<{ value: BriefReportType; label: string }> = [
@@ -375,6 +381,16 @@ const TONE_OPTIONS: Array<{ value: BriefTone; label: string }> = [
   { value: "soft", label: "부드럽게" },
   { value: "professional", label: "전문적으로" },
   { value: "friendly", label: "친근하게" },
+];
+
+/** 이슈 기준 직접 설정 입력 — 라벨은 비개발자 기준. */
+const THRESHOLD_FIELDS: Array<{ key: keyof BriefThresholds; label: string; unit: string; step?: string }> = [
+  { key: "costFloor", label: "이슈로 볼 최소 광고비", unit: "원" },
+  { key: "skewRatio", label: "격차 기준 (좋은 쪽이 나쁜 쪽의 몇 배)", unit: "배", step: "0.1" },
+  { key: "lowCtrPct", label: "낮은 클릭률 기준", unit: "%", step: "0.1" },
+  { key: "adImpFloor", label: "소재 판단 최소 노출", unit: "회" },
+  { key: "lowRankFloor", label: "낮은 순위 기준", unit: "위" },
+  { key: "revenueDropFloor", label: "상품 매출 감소 기준", unit: "원" },
 ];
 
 /** 토글로 묶여 숨겨질 수 있는 이력성 후보 kind. */
@@ -392,12 +408,70 @@ export interface BriefPickOpts {
   initial?: Partial<BriefPickState>;
   /** "보고문 만들기" — 체크된 후보(액션 반영됨)와 화면 상태 전체를 넘긴다. */
   onCompose: (selected: BriefCandidate[], state: BriefPickState) => void;
-  /** "내 말투 설정" 버튼. */
-  onToneSettings?: () => void;
-  /** "이슈 기준" 버튼 — 민감도/직접 설정. */
-  onThresholdSettings?: () => void;
+  /** 이슈 기준 — 고급옵션 안에서 바로 조정(다이얼로그 없음). 바꾸면 호출부가 후보를 다시 만든다. */
+  thresholds?: {
+    sensitivity: BriefSensitivity;
+    custom: Partial<BriefThresholds>;
+    /** 자동 보정 재료 — 이 기간 총광고비. */
+    totalCost: number;
+    onChange: (sensitivity: BriefSensitivity, custom: Partial<BriefThresholds>) => void;
+  };
   /** "지난 보고" 버튼. */
   onShowHistory?: () => void;
+}
+
+/**
+ * 펼침 영역 — 이 이슈의 근거가 된 실제 데이터. 후보가 이미 들고 있는 표를 그대로 그린다
+ * (여기서 다시 계산하지 않는다 — 화면과 보고문의 숫자가 갈리면 안 된다).
+ */
+function buildPickDetail(pick: BriefCandidate): HTMLElement {
+  const wrap = document.createElement("div");
+  wrap.className = "dvads-brief-pick-detail-inner";
+
+  const basis = pick.facts?.기준;
+  if (typeof basis === "string") {
+    const b = document.createElement("div");
+    b.className = "dvads-brief-pick-detail-basis";
+    b.textContent = `기준 - ${basis}`;
+    wrap.appendChild(b);
+  }
+
+  if (!pick.table) {
+    const none = document.createElement("div");
+    none.className = "dvads-brief-pick-detail-basis";
+    none.textContent = "이 항목은 표로 보여줄 데이터가 없어요";
+    wrap.appendChild(none);
+    return wrap;
+  }
+
+  const scroll = document.createElement("div");
+  scroll.className = "dvads-brief-pick-detail-scroll";
+  const table = document.createElement("table");
+  table.className = "dvads-brief-pick-detail-table";
+  const thead = document.createElement("thead");
+  const htr = document.createElement("tr");
+  for (const c of pick.table.columns) {
+    const th = document.createElement("th");
+    th.textContent = c;
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr);
+  table.appendChild(thead);
+  const tbody = document.createElement("tbody");
+  for (const r of pick.table.rows) {
+    const tr = document.createElement("tr");
+    if (r.band) tr.classList.add(`dvads-brief-band-${r.band}`);
+    for (const cell of r.cells) {
+      const td = document.createElement("td");
+      td.textContent = cell;
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  wrap.appendChild(scroll);
+  return wrap;
 }
 
 export function renderBriefPickPanel(opts: BriefPickOpts): void {
@@ -406,11 +480,16 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   const backdrop = document.createElement("div");
   backdrop.className = "dvads dvads-brief-backdrop";
   const card = document.createElement("div");
-  card.className = "dvads-brief-card";
+  // 펼침 표가 들어가는 화면이라 결과 패널보다 넓게.
+  card.className = "dvads-brief-card dvads-brief-card-wide";
 
   const head = document.createElement("div");
   head.className = "dvads-brief-head";
-  head.textContent = `말할 내용 고르기 - ${opts.advertiserName}`;
+  head.append("광고 성과 측정 ");
+  const headName = document.createElement("span");
+  headName.className = "dvads-brief-head-name";
+  headName.textContent = opts.advertiserName;
+  head.appendChild(headName);
   card.appendChild(head);
 
   const body = document.createElement("div");
@@ -427,11 +506,12 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     memo: init.memo ?? "",
     selectedIdx: init.selectedIdx ?? [],
     actions: init.actions ?? {},
+    advOpen: init.advOpen ?? false,
   };
   if (!opts.prevHistoryAvailable) state.includePrevHistory = false;
   if (opts.changeDisabledReason != null) state.includeChangeHistory = false;
 
-  // ── 옵션 영역: 보고 유형 / 톤 / 이력 토글 2개 ──
+  // ── 고급옵션(접힘): 보고 유형 / 톤 / 이력 토글 2개 / 설정 버튼들 ──
   const optWrap = document.createElement("div");
   optWrap.className = "dvads-brief-pick-options";
 
@@ -504,7 +584,6 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     opts.changeDisabledReason,
     (on) => { state.includeChangeHistory = on; refreshRows(); },
   ));
-  body.appendChild(optWrap);
 
   // ── 후보 목록 — 원본을 건드리지 않고 사본에 선택/액션을 기록. ──
   const picks = opts.candidates.map((c, i) => ({
@@ -516,26 +595,41 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   const rowsByIdx: Array<{ refresh: () => void }> = [];
 
   const updateComposeEnabled = () => {
-    composeBtn.disabled = !picks.some((p) => p.selected && !isHiddenKind(p.kind)) && memoTa.value.trim() === "";
+    composeBtn.disabled = !picks.some((p) => p.selected && !isHiddenKind(p.kind));
+    listHeadCount.textContent = `${picks.filter((p) => !isHiddenKind(p.kind)).length}개`;
   };
   const isHiddenKind = (kind: string): boolean =>
     (kind === PREV_HISTORY_KIND && !state.includePrevHistory) ||
     (kind === CHANGE_HISTORY_KIND && !state.includeChangeHistory);
 
+  // 목록 소제목 — 몇 개 찾았고 몇 개 골랐는지, 스크롤 중에도 헷갈리지 않게.
+  const listHead = document.createElement("div");
+  listHead.className = "dvads-brief-pick-listhead";
+  listHead.append("발견한 이슈 ");
+  const listHeadCount = document.createElement("span");
+  listHeadCount.className = "dvads-brief-pick-listhead-count";
+  listHead.appendChild(listHeadCount);
+  body.appendChild(listHead);
+
   const list = document.createElement("div");
   list.className = "dvads-brief-pick-list";
 
   picks.forEach((pick) => {
+    // 행(선택) + 펼침 영역(실제 데이터)을 한 덩어리로 — 구분선은 덩어리 사이에만.
+    const item = document.createElement("div");
+    item.className = "dvads-brief-pick-item";
+
+    item.classList.toggle("is-selected", pick.selected);
+
     const row = document.createElement("label");
     row.className = "dvads-brief-pick-row";
-    row.classList.toggle("is-selected", pick.selected);
 
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = pick.selected;
     cb.addEventListener("change", () => {
       pick.selected = cb.checked;
-      row.classList.toggle("is-selected", cb.checked);
+      item.classList.toggle("is-selected", cb.checked);
       updateComposeEnabled();
     });
     row.appendChild(cb);
@@ -562,22 +656,41 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     }
     row.appendChild(main);
 
-    // 우측 원형 체크 — 선택 시 주황 채움 + 흰 체크
-    const check = document.createElement("span");
-    check.className = "dvads-brief-pick-check";
-    check.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>';
-    row.appendChild(check);
+    // 아래 화살표 — 누르면 이 이슈의 실제 데이터(표)를 펼친다. 선택과는 별개 동작이라
+    // label 안의 버튼 기본 동작(체크 토글)을 막는다.
+    const detail = document.createElement("div");
+    detail.className = "dvads-brief-pick-detail";
+    const chev = document.createElement("button");
+    chev.type = "button";
+    chev.className = "dvads-brief-pick-chev";
+    chev.setAttribute("aria-expanded", "false");
+    chev.setAttribute("aria-label", "실제 데이터 보기");
+    chev.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+    let detailBuilt = false;
+    chev.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!detailBuilt) {
+        detailBuilt = true;
+        detail.appendChild(buildPickDetail(pick));
+      }
+      const open = item.classList.toggle("is-expanded");
+      chev.setAttribute("aria-expanded", open ? "true" : "false");
+    });
+    row.appendChild(chev);
 
-    list.appendChild(row);
+    item.appendChild(row);
+    item.appendChild(detail);
+    list.appendChild(item);
 
     // 토글 off면 해당 이력성 후보는 숨김 + 체크 해제(보내면 안 된다).
     const refresh = () => {
       const hidden = isHiddenKind(pick.kind);
-      row.style.display = hidden ? "none" : "";
+      item.style.display = hidden ? "none" : "";
       if (hidden && pick.selected) {
         pick.selected = false;
         cb.checked = false;
-        row.classList.remove("is-selected");
+        item.classList.remove("is-selected");
       }
       updateComposeEnabled();
     };
@@ -585,43 +698,205 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   });
   body.appendChild(list);
 
-  // 자유 입력 — 데이터가 모르는 맥락(예: "6월 말부터 CPC 낮춰 운영 중").
-  const memoTa = document.createElement("textarea");
-  memoTa.className = "dvads-brief-pick-memo";
-  memoTa.placeholder = "추가로 전할 내용이 있다면 적어주세요";
-  memoTa.rows = 3;
-  memoTa.value = state.memo;
-  memoTa.addEventListener("input", () => updateComposeEnabled());
-  body.appendChild(memoTa);
+  // 고급옵션 안의 소제목 — 네이버는 항목마다 굵은 라벨 + 설명 한 줄.
+  const addSubHead = (title: string, desc: string) => {
+    const h = document.createElement("div");
+    h.className = "dvads-brief-adv-sub";
+    const t = document.createElement("div");
+    t.className = "dvads-brief-adv-sub-title";
+    t.textContent = title;
+    h.appendChild(t);
+    const d = document.createElement("div");
+    d.className = "dvads-brief-pick-sub";
+    d.style.margin = "2px 0 0";
+    d.textContent = desc;
+    h.appendChild(d);
+    optWrap.appendChild(h);
+  };
+
+  // ── 이슈 기준 — 프리셋 칩 + 직접 설정, 다이얼로그 없이 여기서 바로. ──
+  if (opts.thresholds) {
+    const th = opts.thresholds;
+    addSubHead("이슈 기준", "어느 정도 변화부터 이슈로 볼지 정합니다.");
+    let sensitivity: BriefSensitivity = th.sensitivity;
+
+    const chipRow = document.createElement("div");
+    chipRow.className = "dvads-brief-preset-row";
+    const customWrap = document.createElement("div");
+    customWrap.style.marginTop = "8px";
+    const inputs = new Map<keyof BriefThresholds, HTMLInputElement>();
+    for (const f of THRESHOLD_FIELDS) {
+      const row = document.createElement("div");
+      row.className = "dvads-brief-custom-row";
+      const label = document.createElement("span");
+      label.textContent = f.label;
+      row.appendChild(label);
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      if (f.step) input.step = f.step;
+      input.className = "dvads-brief-custom-input";
+      row.appendChild(input);
+      const unit = document.createElement("span");
+      unit.textContent = f.unit;
+      unit.className = "dvads-brief-custom-unit";
+      row.appendChild(unit);
+      customWrap.appendChild(row);
+      inputs.set(f.key, input);
+    }
+    // 직접 설정은 타이핑마다 목록을 다시 만들 수 없어(재계산) 적용 버튼으로 확정.
+    const applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.className = "dvads-btn";
+    applyBtn.style.marginTop = "8px";
+    applyBtn.textContent = "기준 적용";
+    applyBtn.addEventListener("click", () => {
+      const custom: Partial<BriefThresholds> = {};
+      for (const [key, input] of inputs) {
+        const v = Number(input.value);
+        if (Number.isFinite(v) && v > 0) custom[key] = v;
+      }
+      if (Object.keys(custom).length === 0) {
+        showToast({ message: "기준값을 입력해 주세요", variant: "error" });
+        return;
+      }
+      th.onChange("custom", custom);
+    });
+    customWrap.appendChild(applyBtn);
+
+    const chips = (Object.keys(SENSITIVITY_LABEL) as BriefSensitivity[]).map((s) => {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "dvads-brief-preset-chip";
+      chip.textContent = SENSITIVITY_LABEL[s];
+      chip.addEventListener("click", () => {
+        sensitivity = s;
+        refreshThreshold();
+        // 프리셋은 고르는 즉시 반영. 직접 설정만 값 입력 후 "기준 적용".
+        if (s !== "custom") {
+          th.onChange(s, {});
+        }
+      });
+      chipRow.appendChild(chip);
+      return { s, chip };
+    });
+    const refreshThreshold = () => {
+      for (const { s, chip } of chips) chip.classList.toggle("is-on", s === sensitivity);
+      customWrap.style.display = sensitivity === "custom" ? "" : "none";
+      if (sensitivity === "custom") {
+        const resolved = resolveThresholds({ sensitivity: "custom", custom: th.custom, totalCost: th.totalCost });
+        for (const [key, input] of inputs) {
+          if (input.value === "") input.value = String(resolved[key]);
+        }
+      }
+    };
+    optWrap.appendChild(chipRow);
+    optWrap.appendChild(customWrap);
+    refreshThreshold();
+  }
+
+  // ── 내 말투 — 채팅 붙여넣기 → 말투 규칙 생성 → 저장. 역시 여기서 바로. ──
+  addSubHead("내 말투", "실제로 보냈던 보고 채팅을 붙여넣으면 그 말투로 씁니다.");
+  const toneSamples = document.createElement("textarea");
+  toneSamples.className = "dvads-brief-tone-ta";
+  toneSamples.rows = 4;
+  toneSamples.placeholder = "예) 안녕하세요:) 지난 30일 동안 ...";
+  optWrap.appendChild(toneSamples);
+  const tonePrompt = document.createElement("textarea");
+  tonePrompt.className = "dvads-brief-tone-ta";
+  tonePrompt.rows = 4;
+  tonePrompt.style.marginTop = "8px";
+  tonePrompt.placeholder = "\"말투 만들기\"를 누르면 여기에 말투 규칙이 생겨요. 직접 고칠 수 있어요";
+  optWrap.appendChild(tonePrompt);
+  const toneBtnRow = document.createElement("div");
+  toneBtnRow.className = "dvads-brief-pick-setting-row";
+  const makeToneBtn = document.createElement("button");
+  makeToneBtn.type = "button";
+  makeToneBtn.className = "dvads-btn";
+  makeToneBtn.textContent = "말투 만들기";
+  makeToneBtn.addEventListener("click", () => {
+    const samples = toneSamples.value.trim();
+    if (samples.length < 50) {
+      showToast({ message: "채팅 이력을 조금 더 붙여넣어 주세요 (최소 두세 문장)", variant: "error" });
+      return;
+    }
+    makeToneBtn.disabled = true;
+    makeToneBtn.textContent = "만드는 중...";
+    void distillTone(samples)
+      .then((p) => { tonePrompt.value = p; })
+      .catch((e) => showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" }))
+      .finally(() => { makeToneBtn.disabled = false; makeToneBtn.textContent = "말투 만들기"; });
+  });
+  toneBtnRow.appendChild(makeToneBtn);
+  const saveToneBtn = document.createElement("button");
+  saveToneBtn.type = "button";
+  saveToneBtn.className = "dvads-btn";
+  saveToneBtn.textContent = "말투 저장";
+  saveToneBtn.addEventListener("click", () => {
+    const p = tonePrompt.value.trim();
+    if (!p) {
+      showToast({ message: "먼저 \"말투 만들기\"로 말투 규칙을 만들어 주세요", variant: "error" });
+      return;
+    }
+    saveToneBtn.disabled = true;
+    void saveBriefTone({ samples: toneSamples.value.trim(), tonePrompt: p })
+      .then(() => showToast({ message: "말투를 저장했어요. 다음 보고부터 내 말투로 만들어져요", variant: "success" }))
+      .catch((e) => showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" }))
+      .finally(() => { saveToneBtn.disabled = false; });
+  });
+  toneBtnRow.appendChild(saveToneBtn);
+  optWrap.appendChild(toneBtnRow);
+  void loadBriefTone().then((rec) => {
+    if (!rec) return;
+    if (toneSamples.value === "") toneSamples.value = rec.samples;
+    if (tonePrompt.value === "") tonePrompt.value = rec.tonePrompt;
+  });
+
+  // 지난 보고는 "설정"이 아니라 열람이라 화면 전환 — 버튼으로 남긴다.
+  if (opts.onShowHistory) {
+    addSubHead("지난 보고", "이 광고주에게 보냈던 지난 보고를 확인합니다.");
+    const histRow = document.createElement("div");
+    histRow.className = "dvads-brief-pick-setting-row";
+    const hist = document.createElement("button");
+    hist.type = "button";
+    hist.className = "dvads-btn";
+    hist.textContent = "지난 보고 보기";
+    hist.addEventListener("click", () => opts.onShowHistory?.());
+    histRow.appendChild(hist);
+    optWrap.appendChild(histRow);
+  }
+
+  // 네이버 광고관리자 "고급옵션" 아코디언과 동일한 구조 — 제목+설명 줄 클릭으로 펼침.
+  const adv = document.createElement("div");
+  adv.className = "dvads-brief-adv";
+  const advHead = document.createElement("button");
+  advHead.type = "button";
+  advHead.className = "dvads-brief-adv-head";
+  adv.classList.toggle("is-open", state.advOpen);
+  advHead.setAttribute("aria-expanded", state.advOpen ? "true" : "false");
+  const advText = document.createElement("span");
+  advText.className = "dvads-brief-adv-text";
+  advText.innerHTML =
+    '<span class="dvads-brief-adv-title">고급옵션</span>' +
+    '<span class="dvads-brief-adv-desc">고급옵션에서는 보고 유형·말투, 포함할 이력, 이슈 기준을 설정/수정할 수 있습니다.</span>';
+  advHead.appendChild(advText);
+  const advChev = document.createElement("span");
+  advChev.className = "dvads-brief-adv-chev";
+  advChev.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+  advHead.appendChild(advChev);
+  advHead.addEventListener("click", () => {
+    const open = adv.classList.toggle("is-open");
+    state.advOpen = open;
+    advHead.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  adv.appendChild(advHead);
+  adv.appendChild(optWrap);
+  body.appendChild(adv);
 
   card.appendChild(body);
 
   const foot = document.createElement("div");
   foot.className = "dvads-brief-foot";
-  if (opts.onThresholdSettings) {
-    const thBtn = document.createElement("button");
-    thBtn.type = "button";
-    thBtn.className = "dvads-btn";
-    thBtn.textContent = "이슈 기준";
-    thBtn.addEventListener("click", () => opts.onThresholdSettings?.());
-    foot.appendChild(thBtn);
-  }
-  if (opts.onToneSettings) {
-    const toneBtn = document.createElement("button");
-    toneBtn.type = "button";
-    toneBtn.className = "dvads-btn";
-    toneBtn.textContent = "내 말투";
-    toneBtn.addEventListener("click", () => opts.onToneSettings?.());
-    foot.appendChild(toneBtn);
-  }
-  if (opts.onShowHistory) {
-    const hist = document.createElement("button");
-    hist.type = "button";
-    hist.className = "dvads-btn";
-    hist.textContent = "지난 보고";
-    hist.addEventListener("click", () => opts.onShowHistory?.());
-    foot.appendChild(hist);
-  }
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.className = "dvads-btn";
@@ -631,14 +906,13 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   const composeBtn = document.createElement("button");
   composeBtn.type = "button";
   composeBtn.className = "dvads-btn dvads-btn-primary";
-  composeBtn.textContent = "보고문 만들기";
+  composeBtn.textContent = "생성";
   composeBtn.addEventListener("click", () => {
     const selected = picks.filter((p) => p.selected && !isHiddenKind(p.kind));
-    if (selected.length === 0 && !memoTa.value.trim()) {
+    if (selected.length === 0) {
       showToast({ message: "말할 내용을 하나 이상 골라 주세요", variant: "error" });
       return;
     }
-    state.memo = memoTa.value.trim();
     state.selectedIdx = picks.map((p, i) => (p.selected ? i : -1)).filter((i) => i >= 0);
     state.actions = Object.fromEntries(picks.map((p, i) => [i, p.action]));
     closeBriefPanel();
@@ -653,6 +927,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
 
   // 첫 렌더 반영 — 토글 초기 off면 후보 숨김, 선택 0개면 만들기 비활성.
   rowsByIdx.forEach((r) => r.refresh());
+  updateComposeEnabled(); // 후보가 0개면 위 루프가 비어 소제목이 안 채워진다.
 
   disposePanel = () => {
     closeAllOpenDropdowns();

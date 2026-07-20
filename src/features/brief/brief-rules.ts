@@ -165,11 +165,18 @@ export interface BriefProductDelta {
   prev: ReportMetrics;
 }
 
+/**
+ * 리포트가 자잘한 행을 접어 만든 합계 행("기타 키워드"·"기타 매체")은 실체가 없어
+ * 조치 대상이 될 수 없다 — 후보에서 제외한다(표에는 그대로 남는다).
+ */
+export const isFoldedRow = (label: string): boolean => /^기타(\s|$)/.test(label.trim());
+
 /** 그룹 계층(캠페인 > 그룹 > 키워드)을 행 목록으로 평탄화. 캠페인/그룹을 각 행에 붙인다. */
 export function flattenKeywords(groups: KeywordGroup[]): BriefKeywordRow[] {
   const out: BriefKeywordRow[] = [];
   for (const g of groups) {
     for (const k of g.keywords) {
+      if (isFoldedRow(k.keyword)) continue;
       out.push({ keyword: k.keyword, campaign: g.campaign, group: g.group, metrics: k.metrics });
     }
   }
@@ -487,7 +494,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
 
   // ③ 지면 비용 임계 이상인데 전환 0
   const zeroPlace = input.placements
-    .filter((p) => p.metrics.cost >= th.costFloor && p.metrics.purchaseConv === 0)
+    .filter((p) => p.metrics.cost >= th.costFloor && p.metrics.purchaseConv === 0 && !isFoldedRow(p.label))
     .sort(byCostDesc);
   if (zeroPlace.length > 0) {
     out.push({
@@ -508,7 +515,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   if (targetRoas != null && targetRoas > 0) {
     const lowPlace = input.placements
       .filter((p) => p.metrics.cost >= th.costFloor && p.metrics.purchaseConv > 0 &&
-        roasBand(roasPct(p.metrics), targetRoas) === "none")
+        roasBand(roasPct(p.metrics), targetRoas) === "none" && !isFoldedRow(p.label))
       .sort(byCostDesc);
     if (lowPlace.length > 0) {
       out.push({

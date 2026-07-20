@@ -455,6 +455,19 @@ async function openPopover() {
     if (inReportPicker(e.target as Node)) return;
     closePopover();
   };
+  // 스크롤 잠금 — 위에 뜬 창만 스크롤되고 그 아래 창(계정 목록·호스트 페이지)은 멈춘다.
+  // 계정 이슈 패널이 떠 있으면 패널 안에서만, 아니면 우리 오버레이 안에서만 스크롤 허용.
+  // passive:false여야 preventDefault가 먹는다.
+  const onWheelLock = (e: WheelEvent | TouchEvent) => {
+    const t = e.target as HTMLElement | null;
+    if (changePanelEl) {
+      if (!t?.closest?.(".dvads-change-panel")) e.preventDefault();
+      return;
+    }
+    if (!t?.closest?.('[class*="dvads"]')) e.preventDefault();
+  };
+  document.addEventListener("wheel", onWheelLock, { capture: true, passive: false });
+  document.addEventListener("touchmove", onWheelLock, { capture: true, passive: false });
   document.addEventListener("keydown", onKey);
   document.addEventListener("mousedown", onMouseDown, true);
   // 같은 클릭이 listener에 잡히지 않도록 다음 tick부터 등록
@@ -463,6 +476,8 @@ async function openPopover() {
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("mousedown", onMouseDown, true);
     document.removeEventListener("click", onClickOutside);
+    document.removeEventListener("wheel", onWheelLock, true);
+    document.removeEventListener("touchmove", onWheelLock, true);
   };
 
   // 햄버거 → close 아이콘 모핑 트리거 (CSS transition)
@@ -2145,7 +2160,7 @@ function openAgencyModal(
     const save = async () => {
       const ids = [...new Set((input.value.match(/\d+/g) ?? []).map(Number).filter((n) => n > 0))];
       ourIds = ids;
-      await saveAgencyIdentity(ids);
+      if ((await withServerSave(() => saveAgencyIdentity(ids))) === undefined) return;
       void startCheck();
     };
     wrap.querySelector<HTMLButtonElement>(".dvads-agency-id-save")?.addEventListener("click", () => void save());
@@ -3030,7 +3045,7 @@ function renderTableRow(
           },
         },
         {
-          label: "보고 문구",
+          label: "광고 성과 측정",
           keepOpen: true,
           onClick: (anchor) => {
             // "리포트 생성"과 동일 — keepOpen 메뉴라 onClick 직후 populate()가 anchor를 떼어낸다.
@@ -3051,7 +3066,7 @@ function renderTableRow(
               })
               .catch((e) => {
                 console.warn("[dv-ads/brief] 보고 문구 화면을 열지 못함", e);
-                showToast({ message: "보고 문구 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
+                showToast({ message: "광고 성과 측정 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
               });
           },
         },
@@ -3271,10 +3286,8 @@ async function refreshChangeWatchRow(
     const readBudget = readUpToFor(prev, "budget");
     const readExternal = readUpToFor(prev, "external");
     const cutoff = now - CHANGE_WATCH_KEEP_MS;
-    // 확인한 알림은 다시 표시될 일이 없으므로 버린다 — 안 그러면 매일 쌓이는 예산 소진 기록이
-    // 계정 수만큼 저장소를 잡아먹는다(입찰가 캐시와 같은 할당량을 나눠 쓴다).
-    const keep = (e: ChangeWatchState["events"][number]) =>
-      e.ts >= cutoff && e.ts > (e.kind === "budget" ? readBudget : readExternal);
+    // 확인한 알림도 보관 기간(60일) 동안은 남긴다 — 배지 개수만 읽음 기준으로 줄고 목록은 유지.
+    const keep = (e: ChangeWatchState["events"][number]) => e.ts >= cutoff;
     // id 기준 병합 — 실패 후 같은 구간을 다시 훑어도 알림이 두 번 쌓이지 않는다.
     const byId = new Map<string, ChangeWatchState["events"][number]>();
     for (const e of prev?.events ?? []) if (keep(e)) byId.set(e.id, e);
@@ -3486,7 +3499,7 @@ async function openTargetRoasDialogFor(nos: number[]) {
   openInputDialog({
     title: "목표 수익률 설정",
     description: nos.length === 1
-      ? "보고 문구에서 키워드를 목표 대비 초록/노랑/무색으로 분류하는 기준입니다."
+      ? "광고 성과 측정에서 키워드를 목표 대비 초록/노랑/무색으로 분류하는 기준입니다."
       : `선택된 ${nos.length}개 계정에 일괄 적용`,
     initialValue: initial,
     suffix: "%",
@@ -3610,7 +3623,9 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
    * "끄기" 버튼 없이 입력창을 비우는 것이 곧 끄기다.
    */
   const apply = async (turnOn: boolean) => {
-    await saveChangeWatchIdentity([...chosen]);
+    // 제외 목록도 서버 저장(user_settings) — 실패 시 토스트 후 중단(로컬만 바뀌면 PC마다 달라진다).
+    const saved = await withServerSave(() => saveChangeWatchIdentity([...chosen]));
+    if (saved === undefined) return;
     const result = await withServerSave(() => updateUserMetaMany(nos, { changeWatch: turnOn }));
     if (result === undefined) return;
     // 제외 목록이 바뀌었을 수 있어 기존 판정은 무효 — 비우고 처음부터 다시 훑는다.
@@ -3929,6 +3944,8 @@ function onChangePanelPointer(e: MouseEvent): void {
   if (!changePanelEl) return;
   const t = e.target as HTMLElement | null;
   if (!t || changePanelEl.contains(t)) return;
+  // 배지 클릭은 openChangeWatchPanel이 토글로 처리 — 여기서 먼저 닫으면 곧바로 다시 열린다.
+  if (t.closest?.(".dvads-multi-issue-badge")) return;
   closeChangeWatchPanel();
 }
 
@@ -3937,6 +3954,18 @@ function onChangePanelKey(e: KeyboardEvent): void {
   // capture 단계에서 먼저 삼켜 popover까지 같이 닫히지 않게 한다.
   e.stopPropagation();
   closeChangeWatchPanel();
+}
+
+/**
+ * 문구는 수집 시점에 저장돼 이미 쌓인 알림은 옛 문장을 그대로 들고 있다. 그리기 직전에
+ * 예산 잠금 문장만 현행 표기("... 일 예산 50,000원 초과")로 바꿔 준다.
+ */
+function displaySummary(summary: string): string {
+  const m = /^(.+?) 일예산 (.+?)원을 다 써서 광고가 멈췄어요$/.exec(summary);
+  if (m) return `${m[1]} 일 예산 ${m[2]}원 도달`;
+  const m2 = /^(.+?) 예산을 다 써서 광고가 멈췄어요$/.exec(summary);
+  if (m2) return `${m2[1]} 일 예산 도달`;
+  return summary;
 }
 
 function formatEventTime(ts: number): string {
@@ -3979,11 +4008,8 @@ async function openChangeWatchPanel(
     loadChangeWatchState(entry.adAccountNo),
     loadSnapshot(entry.adAccountNo),
   ]);
-  // 예산/수정을 한 목록으로 — 최신이 위.
-  const unread = [
-    ...unreadChangeWatchEvents(state, "budget"),
-    ...unreadChangeWatchEvents(state, "external"),
-  ].sort((a, b) => b.ts - a.ts);
+  // 예산/수정을 한 목록으로 — 최신이 위. 확인한 것도 보관 기간(60일) 동안 계속 보여준다.
+  const unread = [...(state?.events ?? [])].sort((a, b) => b.ts - a.ts);
   // 광고주센터 알림 이슈(소재 보류 등) — 읽음 개념 없이 네이버가 내리는 동안 유지.
   const naverIssues = snap?.issues ?? [];
   if (!popoverEl || !anchor.isConnected) return;
@@ -3995,6 +4021,7 @@ async function openChangeWatchPanel(
   panel.innerHTML = `
     <div class="dvads-change-panel-head">
       <span class="dvads-change-panel-title">계정 이슈</span>
+      <button class="dvads-change-panel-close" type="button" aria-label="닫기">✕</button>
     </div>
     <div class="dvads-change-panel-tabs">
       <div class="dvads-change-panel-tablist" role="tablist"></div>
@@ -4051,7 +4078,7 @@ async function openChangeWatchPanel(
       target.textContent = ev.target || "-";
       const summary = document.createElement("div");
       summary.className = "dvads-change-summary";
-      summary.textContent = ev.summary;
+      summary.textContent = displaySummary(ev.summary);
       item.append(top, target, summary);
       list.appendChild(item);
     }
@@ -4066,6 +4093,7 @@ async function openChangeWatchPanel(
   const tablist = panel.querySelector<HTMLDivElement>(".dvads-change-panel-tablist")!;
   // 이슈 0건이면 탭/읽음 버튼은 의미가 없어 통째로 감추고 안내 한 줄만 보여준다.
   if (isEmpty) {
+    panel.classList.add("is-empty");
     panel.querySelector(".dvads-change-panel-tabs")?.remove();
     const empty = document.createElement("div");
     empty.className = "dvads-change-more";
@@ -4088,6 +4116,9 @@ async function openChangeWatchPanel(
   if (!isEmpty) renderList("all");
 
   panel.addEventListener("click", (e) => e.stopPropagation());
+  panel
+    .querySelector<HTMLButtonElement>(".dvads-change-panel-close")
+    ?.addEventListener("click", () => closeChangeWatchPanel());
   panel.querySelector<HTMLButtonElement>(".dvads-change-panel-read")?.addEventListener("click", () => {
     void (async () => {
       const cur = await loadChangeWatchState(entry.adAccountNo);
@@ -4097,11 +4128,11 @@ async function openChangeWatchPanel(
           cur.events
             .filter((e) => e.kind === k)
             .reduce((m, e) => Math.max(m, e.ts), readUpToFor(cur, k));
+        // 읽음 기준만 올리고 events는 그대로 — 목록은 보관 기간(60일)까지 남는다.
         const next: ChangeWatchState = {
           ...cur,
           read_budget_up_to: upTo("budget"),
           read_external_up_to: upTo("external"),
-          events: [],
         };
         await saveChangeWatchState(next);
         paintChangeWatchRow(entry.adAccountNo, next);
