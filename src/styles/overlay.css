@@ -2258,11 +2258,7 @@ td.dvads-period-delta-down {
 
 /* ─── 계정 이슈 배지 ──────────────────────────────────────────────────── */
 
-/* 이슈 있는 행 — 연한 빨강 배경 + ⋯ 트리거 자리에 빨간 이슈 개수.
-   확인([모두 읽음])하면 syncIssueChip이 원래 모습(⋯, 흰 배경)으로 되돌린다. */
-.dvads-multi-tr.dvads-multi-tr-issues td {
-  background: #FEF2F2;
-}
+/* 이슈 있는 행 — 배경은 일반 행과 동일(빨간 개수 배지로만 구분, 2026-07-20 연한 빨강 배경 폐기). */
 /* 계정명 좌상단에 겹쳐 얹는 원형 개수 배지 — 우상단 버튼 배지(.dvads-multi-btn-badge)와 같은 모양.
    클릭하면 계정 이슈 패널(케밥 "계정 이슈"와 동일)이 열린다. */
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-name-line {
