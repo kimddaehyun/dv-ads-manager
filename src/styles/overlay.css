@@ -2126,7 +2126,7 @@ td.dvads-period-delta-down {
 }
 .dvads-multi-table td.dvads-multi-td-name,
 .dvads-multi-table th:first-child {
-  padding: 7px 12px;
+  padding: 11px 12px;
   min-width: 180px;
   width: 180px;
   max-width: 180px;
@@ -2251,43 +2251,48 @@ td.dvads-period-delta-down {
 
 /* ─── 계정 이슈 배지 ──────────────────────────────────────────────────── */
 
-/* 통합 배지 하나(종 + 개수). 이슈가 없으면 display:none이라 줄 자체가 사라진다.
-   수정/알림만 있으면 회색, 예산 소진 포함이면 빨강(급함).
-   이름 셀 클릭(계정 이동)과 겹치므로 클릭은 JS에서 stopPropagation. */
-.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+/* 이슈 있는 행 — 연한 빨강 배경 + ⋯ 트리거 자리에 빨간 이슈 개수.
+   확인([모두 읽음])하면 syncIssueChip이 원래 모습(⋯, 흰 배경)으로 되돌린다. */
+.dvads-multi-tr.dvads-multi-tr-issues td {
+  background: #FEF2F2;
 }
-.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-top: 4px;
-  padding: 1px 6px;
+/* 계정명 좌상단에 겹쳐 얹는 원형 개수 배지 — 우상단 버튼 배지(.dvads-multi-btn-badge)와 같은 모양.
+   클릭하면 계정 이슈 패널(케밥 "계정 이슈"와 동일)이 열린다. */
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name-line {
+  position: relative;
+  min-width: 0;
+}
+.dvads-multi-issue-badge {
+  position: absolute;
+  left: -7px;
+  top: -7px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  padding: 0;
   border: 0;
-  border-radius: 5px;
-  background: #EEF0F2;
-  color: #4B5563;
+  background: #DC2626;
+  color: #ffffff;
+  border-radius: 50%;
   font-family: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 1.5;
-  cursor: pointer;
-}
-.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip svg {
-  flex-shrink: 0;
-}
-.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip:hover {
-  background: #E1E4E8;
-}
-.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip.is-budget {
-  background: #FEE2E2;
-  color: #DC2626;
+  font-size: 10px;
   font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: background 120ms ease;
 }
-.dvads-multi-table td.dvads-multi-td-name .dvads-multi-change-chip.is-budget:hover {
-  background: #FECACA;
+.dvads-multi-issue-badge:hover {
+  background: #B91C1C;
+}
+.dvads-multi-issue-badge.is-two-digit {
+  font-size: 9px;
+  letter-spacing: -0.5px;
+}
+.dvads-multi-issue-badge.is-three-digit {
+  font-size: 8px;
+  letter-spacing: -0.5px;
 }
 
 /* ─── 변경이력 상세 패널 ──────────────────────────────────────────────── */
@@ -2981,7 +2986,8 @@ td.dvads-period-delta-down {
   min-width: 50px;
 }
 /* 계정 컬럼 보조 "원래 ..." 라인 — 별칭 있는 경우 원본 이름 표시. */
-.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name + .dvads-multi-no {
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name + .dvads-multi-no,
+.dvads-multi-table td.dvads-multi-td-name .dvads-multi-name-line + .dvads-multi-no {
   font-size: 12px;
   color: #9CA3AF;
   margin-top: 2px;
@@ -3821,7 +3827,7 @@ td.dvads-period-delta-down {
   color: #E6783B;
 }
 .dvads-multi-name {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: #171717;
   flex: 1;
@@ -4632,15 +4638,48 @@ td.dvads-period-delta-down {
   margin-top: 6px; font-size: 12px; font-weight: 500; color: #DC2626;
 }
 
-/* F-Brief 후보 선택 화면 (AE선택 모드) */
+/* F-Brief 후보 선택 화면 (AE선택 모드) — Selection Card 패턴 (DESIGN.md) */
+.dvads-brief-pick-list {
+  display: flex; flex-direction: column; gap: 8px; padding: 2px 0;
+}
 .dvads-brief-pick-row {
-  display: flex; align-items: center; gap: 10px;
-  padding: 10px 0; border-bottom: 1px solid #eef0f3;
-  cursor: pointer;
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; cursor: pointer;
+  background: #fff; border: 1.5px solid #e2e5ea; border-radius: 12px;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
+.dvads-brief-pick-row:hover { background: #fafafa; }
+.dvads-brief-pick-row.is-selected {
+  border-color: #E6783B; background: rgba(230, 120, 59, 0.05);
+}
+/* 실제 checkbox는 숨기고(접근성 유지) 우측 원형 체크가 상태를 그린다 */
 .dvads-brief-pick-row input[type="checkbox"] {
-  width: 16px; height: 16px; accent-color: #E6783B; flex-shrink: 0;
+  position: absolute; width: 1px; height: 1px; opacity: 0;
+  pointer-events: none;
 }
+.dvads-brief-pick-icon {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; border-radius: 10px; flex-shrink: 0;
+}
+.dvads-brief-pick-icon svg { width: 16px; height: 16px; display: block; }
+.dvads-brief-pick-icon-error   { background: rgba(220, 38, 38, 0.10);  color: #DC2626; }
+.dvads-brief-pick-icon-warning { background: rgba(217, 119, 6, 0.10);  color: #d97706; }
+.dvads-brief-pick-icon-success { background: rgba(22, 163, 74, 0.10);  color: #16a34a; }
+.dvads-brief-pick-icon-info    { background: rgba(0, 114, 245, 0.10);  color: #0072f5; }
+.dvads-brief-pick-check {
+  width: 20px; height: 20px; border-radius: 50%; flex-shrink: 0;
+  border: 1.5px solid #d1d5db; background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+.dvads-brief-pick-check svg {
+  width: 11px; height: 11px; display: block; color: #fff;
+  opacity: 0; transition: opacity 0.15s ease;
+}
+.dvads-brief-pick-row.is-selected .dvads-brief-pick-check {
+  border-color: #E6783B; background: #E6783B;
+}
+.dvads-brief-pick-row.is-selected .dvads-brief-pick-check svg { opacity: 1; }
 .dvads-brief-pick-label {
   flex: 1; min-width: 0;
   font: 400 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;

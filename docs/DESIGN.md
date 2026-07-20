@@ -410,6 +410,24 @@ className: "rounded-xl bg-input px-[18px] py-[18px] cursor-pointer
             hover:bg-[#eef0f3] has-[:checked]:bg-brand/10 transition"
 ```
 
+### Selection Card (오버레이 다중 선택 — F-Brief 이슈 선택)
+
+체크박스 리스트의 카드형 대체. 실제 `<input type="checkbox">`는 시각적으로 숨기고(접근성 유지)
+카드 전체가 클릭 영역. 구조: 아이콘 칩(32px, radius 10px) + 제목/근거 데이터 + 우측 원형 체크(20px).
+
+```
+기본:   background #fff / border 1.5px #e2e5ea / radius 12px / padding 12px 14px / gap 12px
+hover:  background #fafafa
+선택:   border #E6783B (오버레이 카드 보더와 동일 1.5px) + background rgba(230,120,59,0.05)
+        원형 체크 → #E6783B 채움 + 흰 체크 (11px svg)
+카드 간격: 8px (flex column)
+```
+
+- **아이콘 칩**: `bg-state-{X}/10` + solid state 색 — 색이 곧 의미(error=전환 없음, warning=목표
+  미달/하락, success=기회, info=이력/격차). 아이콘은 16px inline SVG, `stroke="currentColor"`
+  stroke-width 2 — 문자 글리프로 표현이 안 되는 자리에 한해 허용.
+- 클래스: `.dvads-brief-pick-row` / `-icon` / `-check` (overlay.css)
+
 ### Modal Overlay
 
 ```

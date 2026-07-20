@@ -303,6 +303,54 @@ export function pickRowText(c: BriefCandidate): { title: string; sub: string } {
   }
 }
 
+// ── 이슈 유형별 시각 요소 — semantic state 색 + 16px stroke 아이콘 (DESIGN.md Selection Card) ──
+
+const ICON_SVGS: Record<string, string> = {
+  // 시계 — 이력 추적(지난 조치·변경 이후)
+  clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  // 금지 원 — 전환 0 (돈만 나감)
+  zero: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>',
+  // 하락 화살표 — 목표 미달·성과 하락
+  down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l7 7 4-4 7 7"/><path d="M21 11v6h-6"/></svg>',
+  // 상승 화살표 — 기회(잘되는데 순위 낮음)
+  up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l7-7 4 4 7-7"/><path d="M21 13V7h-6"/></svg>',
+  // 저울 — 세그먼트 효율 격차
+  skew: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 21h8"/><path d="M5 6h14"/><path d="M5 6l-2 5a2.5 2.5 0 0 0 4.9 0z"/><path d="M19 6l-2 5a2.5 2.5 0 0 0 4.9 0z"/></svg>',
+  // 커서 클릭 — 소재(클릭률)
+  cursor: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l7 17 2.5-7.5L21 11z"/></svg>',
+};
+
+type PickVisual = { icon: keyof typeof ICON_SVGS; state: "error" | "warning" | "success" | "info" };
+
+/** 후보 kind → 아이콘 + 상태 색. 없는 kind는 info 시계로 폴백. */
+export function pickRowVisual(kind: string): PickVisual {
+  switch (kind) {
+    case "pastActionFollowUp":
+    case "changeFollowUp":
+      return { icon: "clock", state: "info" };
+    case "zeroConvKeyword":
+    case "zeroConvPlacement":
+      return { icon: "zero", state: "error" };
+    case "belowTargetKeyword":
+    case "belowTargetGroup":
+    case "lowRoasPlacement":
+    case "productConvDrop":
+      return { icon: "down", state: "warning" };
+    case "highRoasLowRank":
+      return { icon: "up", state: "success" };
+    case "lowCtrAd":
+      return { icon: "cursor", state: "warning" };
+    case "genderBidSkew":
+    case "ageBidSkew":
+    case "deviceBidSkew":
+    case "hourWeekdaySkew":
+    case "regionBidSkew":
+      return { icon: "skew", state: "info" };
+    default:
+      return { icon: "clock", state: "info" };
+  }
+}
+
 /** 선택 화면의 전체 상태 — "다시 고르기" 복귀 시 그대로 복원한다. */
 export interface BriefPickState {
   reportType: BriefReportType;
@@ -474,18 +522,30 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     (kind === PREV_HISTORY_KIND && !state.includePrevHistory) ||
     (kind === CHANGE_HISTORY_KIND && !state.includeChangeHistory);
 
+  const list = document.createElement("div");
+  list.className = "dvads-brief-pick-list";
+
   picks.forEach((pick) => {
     const row = document.createElement("label");
     row.className = "dvads-brief-pick-row";
+    row.classList.toggle("is-selected", pick.selected);
 
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.checked = pick.selected;
     cb.addEventListener("change", () => {
       pick.selected = cb.checked;
+      row.classList.toggle("is-selected", cb.checked);
       updateComposeEnabled();
     });
     row.appendChild(cb);
+
+    // 이슈 유형별 아이콘 칩 — 색이 곧 의미(error/warning/success/info)
+    const visual = pickRowVisual(pick.kind);
+    const iconEl = document.createElement("span");
+    iconEl.className = `dvads-brief-pick-icon dvads-brief-pick-icon-${visual.state}`;
+    iconEl.innerHTML = ICON_SVGS[visual.icon];
+    row.appendChild(iconEl);
 
     const { title, sub } = pickRowText(pick);
     const main = document.createElement("span");
@@ -502,7 +562,13 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     }
     row.appendChild(main);
 
-    body.appendChild(row);
+    // 우측 원형 체크 — 선택 시 주황 채움 + 흰 체크
+    const check = document.createElement("span");
+    check.className = "dvads-brief-pick-check";
+    check.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>';
+    row.appendChild(check);
+
+    list.appendChild(row);
 
     // 토글 off면 해당 이력성 후보는 숨김 + 체크 해제(보내면 안 된다).
     const refresh = () => {
@@ -511,11 +577,13 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       if (hidden && pick.selected) {
         pick.selected = false;
         cb.checked = false;
+        row.classList.remove("is-selected");
       }
       updateComposeEnabled();
     };
     rowsByIdx.push({ refresh });
   });
+  body.appendChild(list);
 
   // 자유 입력 — 데이터가 모르는 맥락(예: "6월 말부터 CPC 낮춰 운영 중").
   const memoTa = document.createElement("textarea");

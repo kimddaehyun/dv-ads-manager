@@ -83,6 +83,9 @@ export default defineManifest({
         "src/assets/fonts/PretendardVariable.woff2",
         // F-Report — 리포트 엑셀 양식(템플릿 주입용). content script가 runtime에 fetch.
         "src/assets/report-template.xlsx",
+        // 콘텐츠 스크립트 CSS — crxjs 로더가 <link>로 주입하므로 WAR에 없으면 404로
+        // 스타일만 조용히 빠진다(2026-07-20 발견). JS 청크는 crxjs가 자동 등재하지만 CSS는 아님.
+        "assets/*.css",
       ],
       matches: ["https://ads.naver.com/*"],
     },
