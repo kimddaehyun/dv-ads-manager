@@ -174,6 +174,11 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     });
     presetsBox.appendChild(b);
   }
+  // 문구 생성 토글은 프리셋 열 하단으로 이동 — 네이버 달력의 "기간 비교" 자리.
+  if (opts.showMessageToggle) {
+    const group = el.querySelector(".dvads-rdp-msg-group");
+    if (group) presetsBox.appendChild(group);
+  }
 
   // ── 월별 달력 빌드 ──
   const months: Array<{ y: number; m: number }> = [];
@@ -450,6 +455,13 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   const onDocPointer = (e: MouseEvent | PointerEvent): void => {
     const t = e.target as Node;
     if (el.contains(t) || opts.anchor.contains(t)) return;
+    // 옆에 떠 있는 메뉴(행 메뉴/설정 드롭다운) 안을 누른 경우 — 다른 항목으로 갈아타는 중.
+    // finish()로 메뉴까지 닫으면 click이 완료되기 전에 버튼이 DOM에서 떨어져 그 항목의
+    // onClick이 실행되지 않아 "전부 꺼짐"이 된다. 선택기만 접고 메뉴는 살려 클릭이 진행되게.
+    if (t instanceof Element && t.closest(".dvads-dropdown-panel")) {
+      dispose?.();
+      return;
+    }
     finish();
   };
   const onKey = (e: KeyboardEvent): void => {

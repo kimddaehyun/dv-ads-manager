@@ -4583,7 +4583,7 @@ td.dvads-period-delta-down {
   text-align: left;
   padding: 8px 12px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: #404040;
   border-radius: 8px;
@@ -4622,7 +4622,7 @@ td.dvads-period-delta-down {
   border: 1px solid #D1D5DB;
   border-radius: 8px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   color: #171717;
   text-align: center;
   cursor: text;
@@ -4663,7 +4663,7 @@ td.dvads-period-delta-down {
 .dvads-rdp-navlabel {
   min-width: 116px;
   text-align: center;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #171717;
 }
@@ -4689,7 +4689,7 @@ td.dvads-period-delta-down {
   padding-bottom: 4px;
 }
 .dvads-rdp-mlabel {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: #525252;
   padding: 6px 2px;
@@ -4710,7 +4710,7 @@ td.dvads-period-delta-down {
   border: 0;
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   color: #171717;
   cursor: pointer;
 }
@@ -4772,7 +4772,7 @@ td.dvads-period-delta-down {
   padding: 0 12px;
   background: #F3F4F6;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   color: #171717;
   outline: none;
   transition: background 120ms ease, box-shadow 120ms ease;
@@ -4806,7 +4806,7 @@ td.dvads-period-delta-down {
   border: 0;
   background: transparent;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   color: #171717;
   outline: none;
 }
@@ -4815,7 +4815,7 @@ td.dvads-period-delta-down {
 }
 .dvads-rdp-roas-suffix {
   flex: none;
-  font-size: 13px;
+  font-size: 14px;
   color: #9CA3AF;
 }
 .dvads-rdp-foot-btns {
@@ -5287,18 +5287,28 @@ td.dvads-period-delta-down {
   margin-right: 4px;
 }
 .dvads-rdp-msg-label {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   color: #404040;
   white-space: nowrap;
 }
-/* 입력칸이 행의 남은 폭을 채운다 (기본 160px 고정폭 override).
-   F-Brief는 담당자 대신 목표 ROAS만 남아 그쪽이 폭을 가져간다. */
-.dvads-rdp-msgrow .dvads-rdp-author,
+/* 담당자 입력은 이름 3글자 정도만 들어가는 좁은 칸 (기본 160px override). */
+.dvads-rdp-msgrow .dvads-rdp-author {
+  width: 88px;
+}
+/* F-Brief의 목표 ROAS도 담당자 칸과 같은 좁은 고정폭 — placeholder("목표 ROAS")가
+   담당자명보다 길어 폭만 살짝 넓게. */
 .dvads-rdp-msgrow .dvads-rdp-roas-wrap {
-  flex: 1;
-  min-width: 0;
-  width: auto;
+  width: 108px;
+}
+/* 문구 생성 토글이 프리셋 열 하단에 붙을 때 — 라벨 좌 / 토글 우 */
+.dvads-rdp-presets .dvads-rdp-msg-group {
+  display: flex;
+  margin: auto 0 0;
+  padding: 10px 12px 2px;
+}
+.dvads-rdp-presets .dvads-rdp-msg-toggle {
+  margin-left: auto;
 }
 
 /* ─── 다이얼로그 푸터 대형 버튼 통일 (2026-07-21) ───

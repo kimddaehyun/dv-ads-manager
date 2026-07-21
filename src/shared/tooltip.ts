@@ -30,6 +30,9 @@ export function showTooltip(
   preferred: TooltipPlacement = "top",
 ): void {
   const el = ensureTooltipEl();
+  // 같은 z-index의 오버레이(날짜 선택기 등)가 나중에 mount되면 DOM 순서로 툴팁을 덮는다.
+  // 보여줄 때마다 body 끝으로 재이동해 항상 최상위 유지.
+  if (el !== document.body.lastElementChild) document.body.appendChild(el);
   el.textContent = text;
   el.style.display = "block";
   // rAF로 다음 frame에서 측정 — display:block 직후 getBoundingClientRect가 0일 수 있음.
