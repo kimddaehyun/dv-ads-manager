@@ -586,6 +586,7 @@ const AD_TITLE_WORKERS = 4;
 interface RawAdRef {
   nccAdId?: string;
   referenceData?: Record<string, unknown>;
+  ad?: Record<string, unknown>;
 }
 
 // 소재ID 뒤에 붙는 상품 정보. url은 상품 페이지 링크(없는 소재도 있어 optional).
@@ -598,6 +599,8 @@ export interface ProductInfo {
 // CATALOG_AD ...) **종류로 거르지 않고** referenceData만 꺼낸다 — 거르면 카탈로그형 계정이 통째로 빈다.
 // productName(브랜드 없음) 말고 productTitle(브랜드 포함)이 네이버 리포트 '상품명' 칸과 같다.
 // 링크(mallProductUrl)는 같은 응답에 있어 추가 조회가 없다 — F-Setup(setup-adapters)과 같은 필드.
+// 브랜드형 소재(SHOPPING_BRAND_IMAGE_BANNER_AD 등)는 상품이 아니라 referenceData가 없다 —
+// ad.headline/landingUrl로 대체하고 "[브랜드]" 표기로 구분한다(2026-07-21 라이브, 계정 454196).
 async function fetchProductInfo(customerId: number, ids: string[]): Promise<Map<string, ProductInfo>> {
   const chunks: string[][] = [];
   for (let i = 0; i < ids.length; i += AD_ID_CHUNK) chunks.push(ids.slice(i, i + AD_ID_CHUNK));
@@ -611,10 +614,15 @@ async function fetchProductInfo(customerId: number, ids: string[]): Promise<Map<
         `/apis/sa/api/ncc/ads?ids=${chunk.map(encodeURIComponent).join(",")}`, undefined, customerId,
       );
       for (const a of ads ?? []) {
+        if (!a.nccAdId) continue;
         const title = str(a.referenceData?.["productTitle"]);
-        if (!a.nccAdId || !title) continue;
-        const url = str(a.referenceData?.["mallProductUrl"]) || str(a.referenceData?.["mallProdMblUrl"]);
-        out.set(a.nccAdId, { title, url: url || undefined });
+        if (title) {
+          const url = str(a.referenceData?.["mallProductUrl"]) || str(a.referenceData?.["mallProdMblUrl"]);
+          out.set(a.nccAdId, { title, url: url || undefined });
+          continue;
+        }
+        const headline = str(a.ad?.["headline"]);
+        if (headline) out.set(a.nccAdId, { title: `[브랜드] ${headline}`, url: str(a.ad?.["landingUrl"]) || undefined });
       }
     }
   };
@@ -778,15 +786,27 @@ export async function collectReportData(
 }
 
 export async function buildReportBytes(target: ReportTarget, range: DateRange, meta: ReportMeta): Promise<Uint8Array> {
-  const url = chrome.runtime.getURL("src/assets/report-template.xlsx");
   // 양식 로드와 데이터 수집을 동시 출발 - 수집이 양식 fetch를 기다리지 않게(기존과 동일).
-  const filesP = (async (): Promise<ZipFiles> =>
-    openXlsx(new Uint8Array(await (await fetch(url)).arrayBuffer())))();
+  const filesP = loadTemplate();
   const dataP = collectReportData(target, range, meta);
   const files = await filesP;
+  return renderReportBytes(files, await dataP);
+}
+
+async function loadTemplate(): Promise<ZipFiles> {
+  const url = chrome.runtime.getURL("src/assets/report-template.xlsx");
+  return openXlsx(new Uint8Array(await (await fetch(url)).arrayBuffer()));
+}
+
+/** 이미 수집된 데이터로 엑셀만 렌더 — 문구 포함 생성(report-message)이 수집 결과를 공유할 때 사용. */
+export async function buildReportBytesFromData(data: ReportData): Promise<Uint8Array> {
+  return renderReportBytes(await loadTemplate(), data);
+}
+
+function renderReportBytes(files: ZipFiles, data: ReportData): Uint8Array {
   const {
     model, searchTypes, displayData, campGroups, plKeywords, shKeywords, shProducts,
-  } = await dataP;
+  } = data;
   const displayTypes = displayData.byType;
 
   // 고정형
