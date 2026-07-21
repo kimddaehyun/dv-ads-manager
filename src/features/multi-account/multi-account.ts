@@ -3548,9 +3548,8 @@ const ACTOR_SCAN_DAYS = 14;
 /**
  * 변경이력 알림 — 켜기/끄기 + 알림에서 제외할 변경자 선택을 한 화면에서.
  *
- * 버튼 배치는 비즈머니 알림과 동일 — [해제][취소][확인]. 해제는 선택 계정 중 하나라도
- * 켜져 있을 때만 노출(꺼진 계정엔 의미 없는 버튼). 확인 = 제외 목록 저장 + 알림 켜기이고,
- * 목록이 비면 판별이 불가능하므로(우리 것도 남의 것으로 보임) 확인을 막는다.
+ * 좌측에 켜기/끄기 토글, 우측에 [취소][확인]. 확인 = 제외 목록 저장 + 토글 상태 적용.
+ * 제외할 사람이 1명뿐인 팀도 있으므로 목록이 비어도 확인을 허용한다.
  *
  * 변경자 표기가 제각각(`dvcompany:naver` / `김아라` / `GW10500` / `SYSTEM`)이라 맨입력은
  * 거의 실패한다. 그래서 열면 **선택한 계정의** 최근 이력에서 실제 등장한 변경자를 긁어와
@@ -3566,9 +3565,8 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
     loadAllUserMeta(),
   ]);
   const chosen = new Set(current);
-  // 해제는 이미 켜진 계정이 있을 때만 노출 — 꺼져 있는 계정엔 의미 없는 버튼이다
-  // (비즈머니 알림의 해제 노출 규칙과 동일).
-  const showClear = nos.some((no) => metaMap[no]?.changeWatch);
+  // 토글 초기값 = 현재 상태 (선택 계정 중 하나라도 켜져 있으면 켜짐으로 표시).
+  const isOn = nos.some((no) => metaMap[no]?.changeWatch);
 
   const backdrop = document.createElement("div");
   backdrop.className = "dvads dvads-actor-backdrop";
@@ -3585,7 +3583,7 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
       <button class="dvads-actor-input-clear" type="button" aria-label="지우기">×</button>
     </div>
     <div class="dvads-actor-actions">
-      ${showClear ? `<button class="dvads-cw-off dvads-btn dvads-btn-secondary" type="button">해제</button><div class="dvads-cw-spacer"></div>` : ""}
+      <label class="dvads-cw-toggle"><input class="dvads-cw-on dvads-asset-bulk-switch" type="checkbox"${isOn ? " checked" : ""} aria-label="알림 켜기" /></label><div class="dvads-cw-spacer"></div>
       <button class="dvads-cw-cancel dvads-btn dvads-btn-secondary" type="button">취소</button>
       <button class="dvads-cw-confirm dvads-btn dvads-btn-primary" type="button">확인</button>
     </div>
@@ -3599,12 +3597,7 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
   const confirmBtn = card.querySelector<HTMLButtonElement>(".dvads-cw-confirm")!;
   input.value = current.join(", ");
 
-  // 제외할 변경자가 하나도 없으면 우리 것까지 전부 남의 것으로 보여 알림이 무의미하다.
-  // 그래서 입력이 비면 확인(=켜기)을 막는다. 끄는 건 해제 버튼으로.
   const syncOnEnabled = () => {
-    const empty = chosen.size === 0;
-    confirmBtn.disabled = empty;
-    confirmBtn.classList.toggle("is-disabled", empty);
     clearBtn.style.display = input.value === "" ? "none" : "";
   };
   // 입력창이 값의 원천 — 칩은 그 값을 편하게 넣는 수단일 뿐이다. 손으로 글자를 지웠을 때
@@ -3637,11 +3630,7 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
   document.addEventListener("keydown", onKey, true);
   card.querySelector<HTMLButtonElement>(".dvads-actor-close")?.addEventListener("click", cleanup);
 
-  /**
-   * 제외 목록을 저장하고 선택 계정의 알림 on/off를 적용.
-   * 목록이 비면 판별 자체가 불가능하므로(우리 것도 남의 것으로 보임) 알림을 끈다 — 별도
-   * "끄기" 버튼 없이 입력창을 비우는 것이 곧 끄기다.
-   */
+  /** 제외 목록을 저장하고 선택 계정의 알림 on/off를 적용. */
   const apply = async (turnOn: boolean) => {
     // 제외 목록도 서버 저장(user_settings) — 실패 시 토스트 후 중단(로컬만 바뀌면 PC마다 달라진다).
     const saved = await withServerSave(() => saveChangeWatchIdentity([...chosen]));
@@ -3659,17 +3648,12 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
     void refreshBadge();
   };
 
-  // 해제 = 선택 계정 알림 끄기 + 쌓인 알림 정리. 확인 = 제외 목록 저장 + 알림 켜기.
-  // 취소는 아무것도 저장하지 않고 닫기만 한다.
-  card.querySelector<HTMLButtonElement>(".dvads-cw-off")?.addEventListener("click", () => {
-    cleanup();
-    void apply(false);
-  });
+  // 확인 = 제외 목록 저장 + 토글 상태(켜기/끄기) 적용. 취소는 아무것도 저장하지 않고 닫기만.
+  const onToggle = card.querySelector<HTMLInputElement>(".dvads-cw-on")!;
   card.querySelector<HTMLButtonElement>(".dvads-cw-cancel")?.addEventListener("click", cleanup);
   confirmBtn.addEventListener("click", () => {
-    if (confirmBtn.disabled) return;
     cleanup();
-    void apply(true);
+    void apply(onToggle.checked);
   });
 
   // ─── 변경자 후보 수집 (선택한 계정의 최근 이력) ───
