@@ -17,9 +17,13 @@ fingerprint() {
   {
     git ls-files -s -- "${CODE_PATHS[@]}" 2>/dev/null | grep -v -E '\.css$'
     git diff -- "${CODE_PATHS[@]}" ':(exclude)*.css' 2>/dev/null
-  } | shasum | cut -d' ' -f1
+  } | git hash-object --stdin
 }
 CUR="$(fingerprint)"
+# 지문 생성 실패(빈 값)면 아무것도 하지 않는다 — 빈 기준선이 기록되면
+# "빈 값 = 빈 값"으로 영영 발동하지 않는 침묵 고장이 된다(2026-07-21 실사고: shasum이
+# hook 실행 환경 PATH에 없어 하루 종일 미발동).
+[ -z "$CUR" ] && exit 0
 
 # 직전 멈춤에서 후처리를 시켰다면: 이번 멈춤은 그 후처리가 끝난 시점 — 지문을 갱신하고 종료.
 # (후처리 중 코드가 또 바뀌어도 여기서 지문에 흡수돼 무한 반복을 막는다)
