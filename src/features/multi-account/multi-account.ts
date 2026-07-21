@@ -53,6 +53,9 @@ import {
   isChangeWatchFresh,
   unreadChangeWatchEvents,
   readUpToFor,
+  isReadById,
+  withReadIds,
+  naverIssueReadKey,
   CHANGE_WATCH_TTL_MS,
   CHANGE_WATCH_BOOTSTRAP_MS,
   CHANGE_WATCH_KEEP_MS,
@@ -527,28 +530,17 @@ let listSearchQuery = "";
 type StatusKind = "ok" | "warn" | "budget" | "stopped";
 let statusFilter: StatusKind | null = null;
 
+// 항목 설명(툴팁)은 두지 않는다 — 라벨이 상태 배지와 같은 말이라 그 자체로 뜻이 통하고,
+// 좁은 메뉴 옆에 뜨는 툴팁이 표를 덮어 거슬린다.
 const STATUS_FILTER_OPTIONS: {
   value: StatusKind | null;
   label: string;
-  title: string;
 }[] = [
-  { value: null, label: "전체", title: "모든 계정을 보여줍니다" },
-  { value: "ok", label: "이상 없음", title: "발견된 이슈가 없는 계정입니다" },
-  {
-    value: "warn",
-    label: "확인 필요",
-    title: "다른 사람이 광고를 수정했거나 광고주센터 알림이 있는 계정입니다 (이슈가 여러 개 겹친 계정 포함)",
-  },
-  {
-    value: "budget",
-    label: "예산 도달",
-    title: "캠페인·광고그룹·공유 예산을 다 써서 멈춘 광고가 있는 계정입니다",
-  },
-  {
-    value: "stopped",
-    label: "광고 중단",
-    title: "비즈머니가 다 떨어져 계정의 광고가 멈춰 있는 계정입니다",
-  },
+  { value: null, label: "전체" },
+  { value: "ok", label: "이상 없음" },
+  { value: "warn", label: "확인 필요" },
+  { value: "budget", label: "예산 도달" },
+  { value: "stopped", label: "광고 중단" },
 ];
 
 // 그룹 칩 필터 상태 — "all"(구획 전체) | groupId(그 그룹만) | "unassigned"(미지정만).
@@ -794,10 +786,12 @@ async function renderListView(wrap: HTMLElement) {
     attachActionMenu({
       trigger: statusTh,
       ariaLabel: "상태 필터",
+      // 헤더 바로 아래 가운데로 — 좁은 컬럼 헤더에서 좌측 정렬은 한쪽으로 쏠려 보인다.
+      align: "center",
+      panelClass: "dvads-status-filter-menu",
       items: () =>
         STATUS_FILTER_OPTIONS.map((o) => ({
           label: o.label,
-          title: o.title,
           checked: statusFilter === o.value,
           onClick: () => {
             statusFilter = o.value;
@@ -1326,8 +1320,8 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
       .forEach((r) => {
         r.style.display = nowCollapsed ? "none" : "";
       });
-    // 펼칠 때 검색어가 있으면 필터 재적용(숨겨야 할 행 다시 숨김).
-    if (!nowCollapsed && listSearchQuery) applyListSearchFilter(wrap, listSearchQuery);
+    // 펼칠 때 검색어나 상태 필터가 있으면 재적용(숨겨야 할 행 다시 숨김 — 코덱스 P2).
+    if (!nowCollapsed && (listSearchQuery || statusFilter)) applyListSearchFilter(wrap, listSearchQuery);
     scheduleHeadColSync();
   };
   // 그룹명(밴드) 클릭 = 접기/펼치기. 좌측 체크박스는 아래에서 별도로 그룹 전체 선택을 담당.
@@ -3000,7 +2994,7 @@ function renderTableRow(
     <td class="dvads-multi-td-num" data-k="conversions">-</td>
     <td class="dvads-multi-td-num" data-k="roas">-</td>
     <td class="dvads-multi-td-status">
-      <button class="dvads-multi-status-badge" type="button" style="display:none" aria-label="계정 이슈"></button>
+      <button class="dvads-multi-status-badge" type="button" style="display:none" aria-label="계정 상태"></button>
     </td>
     <td class="dvads-multi-td-act">
       <button class="dvads-multi-action-trigger" type="button" aria-label="작업 메뉴">⋯</button>
@@ -3068,10 +3062,7 @@ function renderTableRow(
       ariaLabel: `${displayName} 작업 메뉴`,
       items: [
         { label: "바로가기", onClick: goTo },
-        {
-          label: "계정 이슈",
-          onClick: () => void openChangeWatchPanel(entry, actionTrigger),
-        },
+        // '계정 상태'는 메뉴에 없다 — 같은 행의 상태 배지를 누르면 열린다.
         {
           label: "이름 수정",
           onClick: () => openRenameDialog(entry, () => replaceListRow(tr, entry)),
@@ -3344,12 +3335,18 @@ async function refreshChangeWatchRow(
     const byId = new Map<string, ChangeWatchState["events"][number]>();
     for (const e of prev?.events ?? []) if (keep(e)) byId.set(e.id, e);
     for (const e of classifyHistory(rows, actors)) if (keep(e)) byId.set(e.id, e);
+    // 보관 기간이 지나 목록에서 빠진 알림의 읽음 키는 같이 버린다(무한정 쌓이지 않게).
+    // `naver:` 키는 이벤트가 아니라 알림 피드 항목이라 그대로 둔다.
+    const readIds = (prev?.read_ids ?? []).filter(
+      (k) => k.startsWith("naver:") || byId.has(k),
+    );
     const next: ChangeWatchState = {
       adAccountNo: entry.adAccountNo,
       events: [...byId.values()].sort((a, b) => b.ts - a.ts),
       scanned_until: now,
       read_budget_up_to: readBudget,
       read_external_up_to: readExternal,
+      read_ids: readIds,
       fetched_at: new Date(now).toISOString(),
     };
     await saveChangeWatchState(next);
@@ -3363,6 +3360,7 @@ async function refreshChangeWatchRow(
       scanned_until: prev?.scanned_until ?? since,
       read_budget_up_to: readUpToFor(prev, "budget"),
       read_external_up_to: readUpToFor(prev, "external"),
+      read_ids: prev?.read_ids ?? [],
       fetched_at: new Date(now).toISOString(),
       error: friendlyMessage(e),
     });
@@ -3430,9 +3428,32 @@ function startChangeWatchTimer(): void {
   void changeWatchTick();
 }
 
+/**
+ * 읽음 처리한 광고주센터 알림 제목 — 계정별. 알림 자체는 스냅샷(paintRow)이, 읽음 여부는
+ * 이슈 이력(paintChangeWatchRow)이 들고 있어 서로 다른 시점에 도착한다. 그래서 읽음 쪽은
+ * 여기 모아두고 syncIssueChip이 합쳐서 판단한다.
+ */
+const readIssueTitles = new Map<number, Set<string>>();
+
+/** 행에 남은 알림 중 아직 읽지 않은 제목들. */
+function unreadIssueTitles(row: HTMLTableRowElement): string[] {
+  const raw = row.dataset.statusIssueTitles;
+  if (!raw) return [];
+  const read = readIssueTitles.get(Number(row.dataset.adAccountNo)) ?? null;
+  return raw.split("\n").filter((t) => t && !read?.has(t));
+}
+
 // 변경이력 unread 개수를 dataset에 남기고 syncIssueChip으로 행 표시(⋯ 개수/배경) 갱신.
 function paintChangeWatchRow(adAccountNo: number, state: ChangeWatchState | null): void {
   if (!popoverEl) return;
+  readIssueTitles.set(
+    adAccountNo,
+    new Set(
+      (state?.read_ids ?? [])
+        .filter((k) => k.startsWith("naver:"))
+        .map((k) => k.slice("naver:".length)),
+    ),
+  );
   const counts = {
     budget: unreadChangeWatchEvents(state, "budget").length,
     external: unreadChangeWatchEvents(state, "external").length,
@@ -3889,9 +3910,8 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
     delete row.dataset.brandDday;
   }
 
-  // 알림 배지 재료 — 광고주센터 알림(프로모션·추천 제외분). 실제 그리기는 syncIssueChip.
+  // 알림 배지 재료 — 광고주센터 알림(프로모션·추천 제외분). 읽은 것은 syncIssueChip이 뺀다.
   const issues = snap.issues ?? [];
-  row.dataset.statusIssueCount = String(issues.length);
   row.dataset.statusIssueTitles = issues.map((i) => i.title).join("\n");
   // 비즈머니 소진(잔액 ≤ 0) = 계정 자체 광고 중단. 상단 빨간 배너는 알림 피드에 안 와서
   // 잔액으로 직접 판정한다 (2026-07-20 정찰).
@@ -3914,7 +3934,7 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
 function syncIssueChip(row: HTMLTableRowElement) {
   const badge = row.querySelector<HTMLButtonElement>(".dvads-multi-status-badge");
   if (!badge) return;
-  const naver = Number(row.dataset.statusIssueCount ?? "0");
+  const naver = unreadIssueTitles(row).length;
   const change = Number(row.dataset.statusChangeCount ?? "0");
   const budget = Number(row.dataset.statusChangeBudget ?? "0");
   const bizDepleted = row.dataset.statusBizDepleted === "1";
@@ -3944,12 +3964,7 @@ function syncIssueChip(row: HTMLTableRowElement) {
     row.dataset.statusKind = "ok";
   }
   badge.style.display = "";
-  const lines: string[] = [];
-  if (bizDepleted) lines.push("비즈머니가 다 떨어져 광고가 멈춰 있어요");
-  if (budget > 0) lines.push("예산을 다 써서 멈춘 광고가 있어요");
-  if (change - budget > 0) lines.push("우리가 아닌 다른 사람이 광고를 수정했어요");
-  if (row.dataset.statusIssueTitles) lines.push(row.dataset.statusIssueTitles);
-  badge.title = lines.join("\n") || "발견된 이슈가 없어요";
+  // 배지 호버 툴팁은 안 쓴다 — 이슈 내용은 배지를 눌러 '계정 상태' 패널에서 본다.
   // 상태 필터가 켜져 있으면 판정이 바뀔 때마다 표시/숨김도 다시 계산.
   if (statusFilter && popoverEl) applyListSearchFilter(popoverEl, listSearchQuery);
 }
@@ -4008,27 +4023,20 @@ function formatEventTime(ts: number): string {
   return `${mm}/${dd} ${hh}:${mi}`;
 }
 
-// 탭 필터 — "기타"는 예산/수정 어느 쪽도 아닌 종류(현재는 없지만 종류가 늘 때를 대비).
+// 탭 필터.
 const CHANGE_PANEL_TABS = [
   { id: "all", label: "전체" },
   { id: "budget", label: "예산" },
   { id: "external", label: "수정" },
-  { id: "etc", label: "기타" },
+  { id: "unread", label: "읽지 않음" },
 ] as const;
 type ChangePanelTab = (typeof CHANGE_PANEL_TABS)[number]["id"];
-
-function filterChangeEvents(events: ChangeWatchEvent[], tab: ChangePanelTab): ChangeWatchEvent[] {
-  if (tab === "all") return events;
-  if (tab === "budget") return events.filter((e) => e.kind === "budget");
-  if (tab === "external") return events.filter((e) => e.kind === "external");
-  return events.filter((e) => e.kind !== "budget" && e.kind !== "external");
-}
 
 // ── 과거 알림(id 미저장) 클릭 이동 — 대상 이름으로 캠페인/그룹 id를 찾는다 ──
 // 이동 정보 저장(campaignId/adgroupId)은 도입 이후 알림에만 있어, 그 전 알림은 이름 매칭으로
 // 폴백한다. 계정당 1회만 조회하고 캐시(popover 세션 동안 유지).
-// API campaignType → SPA URL의 campaigns-by/{TYPE}. 캠페인 상세 URL 패턴은 미확인이라
-// (추정 `/sa/campaigns/{id}`는 404, 2026-07-20) 검증된 유형별 목록 페이지로 보낸다.
+// API campaignType → SPA URL의 campaigns-by/{TYPE}. 이름만 아는 캠페인은 상세 id를 모르니
+// 유형별 목록 페이지로 보낸다(id를 아는 알림은 `/sa/campaigns/{id}` 상세로 직행).
 const ISSUE_DEST_CAMPAIGN_TYPES: Array<{ api: string; spa: string }> = [
   { api: "WEB_SITE", spa: "WEB_SITE" },
   { api: "SHOPPING", spa: "SHOPPING_NS" },
@@ -4090,6 +4098,37 @@ function legacyIssueDests(entry: MultiAccountDirectoryEntry): Promise<Map<string
   return p;
 }
 
+/**
+ * 알림 1건이 가리키는 화면 — 광고그룹 > 캠페인 순(구체적인 쪽 우선). 둘 다 없는 과거 저장분은
+ * 대상 이름으로 찾아본다(legacyIssueDests). 그래도 못 찾으면 null.
+ */
+async function resolveIssueDest(
+  entry: MultiAccountDirectoryEntry,
+  ev: ChangeWatchEvent,
+): Promise<string | null> {
+  const base = `/manage/ad-accounts/${entry.adAccountNo}/sa`;
+  if (ev.adgroupId) return `${base}/adgroups/${ev.adgroupId}`;
+  if (ev.campaignId) return `${base}/campaigns/${ev.campaignId}`;
+  if (ev.target) return (await legacyIssueDests(entry)).get(ev.target) ?? null;
+  return null;
+}
+
+/**
+ * 아직 점검 이력이 없는 계정에서 읽음만 먼저 누른 경우의 빈 상태. 점검 시각을 과거로 둬
+ * 다음 점검이 정상적으로 첫 구간부터 훑게 한다.
+ */
+function blankChangeWatchState(adAccountNo: number): ChangeWatchState {
+  return {
+    adAccountNo,
+    events: [],
+    scanned_until: Date.now() - CHANGE_WATCH_BOOTSTRAP_MS,
+    read_budget_up_to: 0,
+    read_external_up_to: 0,
+    read_ids: [],
+    fetched_at: new Date(0).toISOString(),
+  };
+}
+
 async function openChangeWatchPanel(
   entry: MultiAccountDirectoryEntry,
   anchor: HTMLElement,
@@ -4101,23 +4140,69 @@ async function openChangeWatchPanel(
     return;
   }
   closeChangeWatchPanel();
-  const [state, snap] = await Promise.all([
+  const [loaded, snap] = await Promise.all([
     loadChangeWatchState(entry.adAccountNo),
     loadSnapshot(entry.adAccountNo),
   ]);
+  // 읽음 표시로 바뀌므로 패널이 열려 있는 동안의 최신 상태를 들고 다닌다.
+  let state = loaded;
   // 예산/수정을 한 목록으로 — 최신이 위. 확인한 것도 보관 기간(60일) 동안 계속 보여준다.
-  const unread = [...(state?.events ?? [])].sort((a, b) => b.ts - a.ts);
-  // 광고주센터 알림 이슈(소재 보류 등) — 읽음 개념 없이 네이버가 내리는 동안 유지.
+  const events = [...(state?.events ?? [])].sort((a, b) => b.ts - a.ts);
+  // 광고주센터 알림 이슈(소재 보류 등) — 네이버가 내리는 동안 유지. 읽음은 제목이 키.
   const naverIssues = snap?.issues ?? [];
   if (!popoverEl || !anchor.isConnected) return;
   // 이슈가 하나도 없어도 패널은 연다 — 케밥에서 눌렀을 때 아무 반응 없으면 고장으로 보인다.
-  const isEmpty = unread.length === 0 && naverIssues.length === 0;
+  const isEmpty = events.length === 0 && naverIssues.length === 0;
+
+  // 알림 피드 항목과 변경이력을 한 형태로 맞춰 목록/읽음 처리를 한 갈래로 다룬다.
+  const accountDest = `/manage/ad-accounts/${entry.adAccountNo}/dashboard`;
+  interface PanelItem {
+    readKey: string;
+    kind: "budget" | "external" | "naver";
+    ts: number;
+    who: string;
+    when: string;
+    target: string;
+    summary: string;
+    /** 이동할 화면 (없으면 null) */
+    dest: () => Promise<string | null>;
+    hasDest: boolean;
+  }
+  const items: PanelItem[] = [
+    ...naverIssues.map((iss) => ({
+      readKey: naverIssueReadKey(iss.title),
+      kind: "naver" as const,
+      ts: 0,
+      who: "알림",
+      when: "",
+      target: "",
+      summary: iss.title,
+      // 알림 피드는 대상 정보를 안 줘서 해당 광고계정 화면까지만 안내한다.
+      dest: async () => accountDest,
+      hasDest: true,
+    })),
+    ...events.map((ev) => ({
+      readKey: ev.id,
+      kind: ev.kind,
+      ts: ev.ts,
+      who: ev.kind === "budget" ? "예산 소진" : ev.actor,
+      when: formatEventTime(ev.ts),
+      target: ev.target || "-",
+      summary: displaySummary(ev.summary),
+      dest: () => resolveIssueDest(entry, ev),
+      hasDest: !!(ev.adgroupId || ev.campaignId || ev.target),
+    })),
+  ];
+  // 읽음 판정 — 항목 단위 읽음(read_ids)이 우선이고, 옛 [모두 읽음]이 올려둔 기준선도 함께 본다.
+  const isUnread = (it: PanelItem) =>
+    !isReadById(state, it.readKey) &&
+    (it.kind === "naver" || it.ts > readUpToFor(state, it.kind));
 
   const panel = document.createElement("div");
   panel.className = "dvads dvads-change-panel";
   panel.innerHTML = `
     <div class="dvads-change-panel-head">
-      <span class="dvads-change-panel-title">계정 이슈</span>
+      <span class="dvads-change-panel-title">계정 상태</span>
       <button class="dvads-change-panel-close" type="button" aria-label="닫기">✕</button>
     </div>
     <div class="dvads-change-panel-tabs">
@@ -4130,67 +4215,87 @@ async function openChangeWatchPanel(
   const list = panel.querySelector<HTMLDivElement>(".dvads-change-panel-list")!;
   // 아주 많으면 스크롤보다 상한이 낫다 — 읽음을 누르면 어차피 전부 읽음 처리된다.
   const MAX_SHOWN = 50;
+  let activeTab: ChangePanelTab = "all";
+
+  /** 고른 항목만 읽음 처리 — 저장(서버+로컬) 후 행 배지와 목록을 다시 그린다. */
+  const markRead = async (keys: string[]) => {
+    const cur =
+      (await loadChangeWatchState(entry.adAccountNo)) ?? blankChangeWatchState(entry.adAccountNo);
+    const next = withReadIds(cur, keys);
+    await saveChangeWatchState(next);
+    state = next;
+    paintChangeWatchRow(entry.adAccountNo, next);
+    void refreshBadge();
+    renderList(activeTab);
+  };
+
   const renderList = (tab: ChangePanelTab) => {
+    activeTab = tab;
     list.textContent = "";
-    const shown = filterChangeEvents(unread, tab);
-    // 광고주센터 알림 이슈는 "전체" 탭 맨 위에 — 변경이력과 달리 읽음 처리 대상이 아니다.
-    if (tab === "all") {
-      for (const iss of naverIssues) {
-        const item = document.createElement("div");
-        item.className = "dvads-change-item";
-        const who = document.createElement("span");
-        who.className = "dvads-change-kind";
-        who.textContent = "알림";
-        const top = document.createElement("div");
-        top.className = "dvads-change-item-top";
-        top.append(who);
-        const summary = document.createElement("div");
-        summary.className = "dvads-change-summary";
-        summary.textContent = iss.title;
-        item.append(top, summary);
-        list.appendChild(item);
-      }
-    }
-    if (shown.length === 0 && (tab !== "all" || naverIssues.length === 0)) {
+    const shown = items.filter((it) => {
+      if (tab === "all") return true;
+      if (tab === "unread") return isUnread(it);
+      return it.kind === tab;
+    });
+    if (shown.length === 0) {
       const empty = document.createElement("div");
       empty.className = "dvads-change-more";
-      empty.textContent = "표시할 알림이 없어요";
+      empty.textContent = tab === "unread" ? "읽지 않은 알림이 없어요" : "표시할 알림이 없어요";
       list.appendChild(empty);
       return;
     }
-    for (const ev of shown.slice(0, MAX_SHOWN)) {
+    for (const it of shown.slice(0, MAX_SHOWN)) {
+      const unread = isUnread(it);
       const item = document.createElement("div");
-      item.className = "dvads-change-item";
+      item.className = "dvads-change-item" + (unread ? " is-unread" : "");
       const who = document.createElement("span");
       who.className = "dvads-change-kind";
-      who.textContent = ev.kind === "budget" ? "예산 소진" : ev.actor;
-      const when = document.createElement("span");
-      when.className = "dvads-change-when";
-      when.textContent = formatEventTime(ev.ts);
+      who.textContent = it.who;
       const top = document.createElement("div");
       top.className = "dvads-change-item-top";
-      top.append(who, when);
-      const target = document.createElement("div");
-      target.className = "dvads-change-target";
-      target.textContent = ev.target || "-";
+      top.append(who);
+      item.append(top);
+      if (it.target) {
+        const target = document.createElement("div");
+        target.className = "dvads-change-target";
+        target.textContent = it.target;
+        item.append(target);
+      }
       const summary = document.createElement("div");
       summary.className = "dvads-change-summary";
-      summary.textContent = displaySummary(ev.summary);
-      item.append(top, target, summary);
-      // 클릭 시 해당 캠페인/광고그룹 화면으로 이동 — 소재/키워드 수정도 소속 광고그룹
-      // 페이지로 간다(그룹이 더 구체적이라 우선). id가 저장 안 된 과거 알림은 대상 이름으로
-      // id를 찾아 이동(legacyIssueDests).
-      // 그룹 id는 상세 URL 패턴이 검증돼 바로 사용. 캠페인은 상세 URL 패턴이 확인 안 돼
-      // (추정 경로 404) 이름 매칭 맵을 거쳐 유형별 목록 페이지로 보낸다.
-      const staticDest = ev.adgroupId
-        ? `/manage/ad-accounts/${entry.adAccountNo}/sa/adgroups/${ev.adgroupId}`
-        : null;
-      if (staticDest || ev.target) {
+      summary.textContent = it.summary;
+      item.append(summary);
+      // 아래 줄 — 왼쪽에 발생 시각, 오른쪽에 [읽음 표시](안 읽은 항목만).
+      if (it.when || unread) {
+        const foot = document.createElement("div");
+        foot.className = "dvads-change-item-foot";
+        if (it.when) {
+          const when = document.createElement("span");
+          when.className = "dvads-change-when";
+          when.textContent = it.when;
+          foot.append(when);
+        }
+        if (unread) {
+          const readBtn = document.createElement("button");
+          readBtn.type = "button";
+          readBtn.className = "dvads-change-item-read";
+          readBtn.textContent = "읽음 표시";
+          readBtn.addEventListener("click", (e) => {
+            // 항목 클릭(화면 이동)까지 같이 발화하지 않게.
+            e.stopPropagation();
+            void markRead([it.readKey]);
+          });
+          foot.append(readBtn);
+        }
+        item.append(foot);
+      }
+      // 클릭 시 이슈가 난 화면으로 이동 — 광고그룹 > 캠페인 > (알림은) 광고계정 순.
+      if (it.hasDest) {
         item.classList.add("is-link");
         item.title = "해당 화면으로 이동 (새 탭)";
         item.addEventListener("click", () => {
           void (async () => {
-            const dest = staticDest ?? (await legacyIssueDests(entry)).get(ev.target) ?? null;
+            const dest = await it.dest();
             if (!dest) {
               showToast({ message: "이동할 화면을 찾지 못했어요", variant: "error" });
               return;
@@ -4240,23 +4345,9 @@ async function openChangeWatchPanel(
     ?.addEventListener("click", () => closeChangeWatchPanel());
   panel.querySelector<HTMLButtonElement>(".dvads-change-panel-read")?.addEventListener("click", () => {
     void (async () => {
-      const cur = await loadChangeWatchState(entry.adAccountNo);
-      if (cur) {
-        // 두 종류 모두 저장된 전체 중 최신 시각까지 읽음 처리하고 목록을 비운다 (저장소 절약).
-        const upTo = (k: ChangeWatchEvent["kind"]) =>
-          cur.events
-            .filter((e) => e.kind === k)
-            .reduce((m, e) => Math.max(m, e.ts), readUpToFor(cur, k));
-        // 읽음 기준만 올리고 events는 그대로 — 목록은 보관 기간(60일)까지 남는다.
-        const next: ChangeWatchState = {
-          ...cur,
-          read_budget_up_to: upTo("budget"),
-          read_external_up_to: upTo("external"),
-        };
-        await saveChangeWatchState(next);
-        paintChangeWatchRow(entry.adAccountNo, next);
-        void refreshBadge();
-      }
+      // 지금 목록에 있는 것 전부 읽음 — events는 그대로 두고(보관 기간까지 목록 유지)
+      // 읽음 키만 쌓는다.
+      await markRead(items.map((it) => it.readKey));
       closeChangeWatchPanel();
     })();
   });

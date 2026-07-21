@@ -312,6 +312,12 @@ export interface ChangeWatchState {
    */
   read_budget_up_to: number;
   read_external_up_to: number;
+  /**
+   * 항목 단위로 읽음 처리한 키 목록. 변경이력은 이벤트 id, 광고주센터 알림은
+   * `naver:<제목>`(알림 피드에 id·시각이 없어 제목이 유일한 키). 기준선(위 두 값)은
+   * [모두 읽음]과 옛 저장분 호환용으로 남고, 개별 읽음은 여기에 쌓인다.
+   */
+  read_ids?: string[];
   /** 마지막 점검 시각 (ISO date string) */
   fetched_at: string;
   /** 점검 실패 사유 (사용자 친화 한글 메시지) */

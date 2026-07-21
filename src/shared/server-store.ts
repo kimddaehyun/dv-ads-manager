@@ -191,6 +191,7 @@ interface ChangeWatchRow {
   scanned_until: number | string;
   read_budget_up_to: number | string;
   read_external_up_to: number | string;
+  read_ids?: string[] | null;
   fetched_at: string;
 }
 
@@ -201,6 +202,7 @@ function rowToChangeWatch(row: ChangeWatchRow): ChangeWatchState {
     scanned_until: Number(row.scanned_until),
     read_budget_up_to: Number(row.read_budget_up_to),
     read_external_up_to: Number(row.read_external_up_to),
+    read_ids: Array.isArray(row.read_ids) ? row.read_ids : [],
     fetched_at: row.fetched_at,
   };
 }
@@ -225,6 +227,7 @@ export async function pushChangeWatchState(state: ChangeWatchState): Promise<voi
       scanned_until: state.scanned_until,
       read_budget_up_to: state.read_budget_up_to,
       read_external_up_to: state.read_external_up_to,
+      read_ids: state.read_ids ?? [],
       fetched_at: state.fetched_at,
       updated_at: new Date().toISOString(),
     },

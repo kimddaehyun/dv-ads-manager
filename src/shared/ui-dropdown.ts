@@ -270,6 +270,10 @@ export interface AttachActionMenuOptions {
    *  (예: 선택 상태에 따라 disabled가 바뀌는 경우). */
   items: ActionMenuItem[] | (() => ActionMenuItem[]);
   ariaLabel?: string;
+  /** 트리거 기준 가로 정렬. 기본 "left"(좌측 정렬), "center"는 트리거 중앙에 패널 중앙을 맞춤. */
+  align?: "left" | "center";
+  /** 패널에 추가할 클래스 — 항목 정렬 등 메뉴별 스타일 훅. */
+  panelClass?: string;
 }
 
 export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => void } {
@@ -290,9 +294,14 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
     requestAnimationFrame(() => {
       if (!panel) return;
 
-      // 가로 overflow 체크 — 패널 우측이 viewport를 넘으면 우측 앵커로 폴백.
       const pw = panel.offsetWidth;
-      if (r.left + pw > window.innerWidth - 8) {
+      if (opts.align === "center") {
+        // 트리거 중앙 기준 — 화면 밖으로 나가지 않게 양쪽 8px 여백 안에서 클램프.
+        const centered = r.left + r.width / 2 - pw / 2;
+        const max = window.innerWidth - 8 - pw;
+        panel.style.left = `${Math.round(Math.max(8, Math.min(centered, max)))}px`;
+      } else if (r.left + pw > window.innerWidth - 8) {
+        // 가로 overflow — 패널 우측이 viewport를 넘으면 우측 앵커로 폴백.
         panel.style.left = "auto";
         panel.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
       }
@@ -375,6 +384,7 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
     if (panel) return;
     panel = document.createElement("div");
     panel.className = "dvads dvads-dropdown-panel dvads-action-menu-panel";
+    if (opts.panelClass) panel.classList.add(opts.panelClass);
     if (opts.ariaLabel) panel.setAttribute("aria-label", opts.ariaLabel);
 
     populate();

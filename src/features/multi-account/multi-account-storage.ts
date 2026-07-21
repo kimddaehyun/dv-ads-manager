@@ -541,6 +541,16 @@ export function readUpToFor(
   return (kind === "budget" ? state.read_budget_up_to : state.read_external_up_to) ?? 0;
 }
 
+/** 광고주센터 알림(피드에 id가 없어 제목이 키)의 읽음 키 */
+export function naverIssueReadKey(title: string): string {
+  return `naver:${title}`;
+}
+
+/** 항목 단위로 읽음 처리했는지 — 변경이력은 이벤트 id, 알림은 naverIssueReadKey. */
+export function isReadById(state: ChangeWatchState | null, key: string): boolean {
+  return !!state?.read_ids?.includes(key);
+}
+
 /** 아직 확인하지 않은 알림. kind를 주면 그 종류만. */
 export function unreadChangeWatchEvents(
   state: ChangeWatchState | null,
@@ -548,8 +558,16 @@ export function unreadChangeWatchEvents(
 ): ChangeWatchState["events"] {
   if (!state) return [];
   return state.events.filter(
-    (e) => (!kind || e.kind === kind) && e.ts > readUpToFor(state, e.kind),
+    (e) =>
+      (!kind || e.kind === kind) &&
+      e.ts > readUpToFor(state, e.kind) &&
+      !isReadById(state, e.id),
   );
+}
+
+/** 읽음 키를 추가한 새 상태 (저장은 호출부). 중복은 합집합으로 흡수. */
+export function withReadIds(state: ChangeWatchState, keys: string[]): ChangeWatchState {
+  return { ...state, read_ids: [...new Set([...(state.read_ids ?? []), ...keys])] };
 }
 
 // ─── F-Accounts: 서버 → 로컬 캐시 새로고침 ───
@@ -635,6 +653,8 @@ async function mergeChangeWatchFromServer(): Promise<void> {
       scanned_until: Math.max(remote.scanned_until, mine?.scanned_until ?? 0),
       read_budget_up_to: Math.max(remote.read_budget_up_to, mine?.read_budget_up_to ?? 0),
       read_external_up_to: Math.max(remote.read_external_up_to, mine?.read_external_up_to ?? 0),
+      // 읽음은 합집합 — 어느 기기에서 읽었든 읽은 것으로 본다.
+      read_ids: [...new Set([...(remote.read_ids ?? []), ...(mine?.read_ids ?? [])])],
       fetched_at: remote.fetched_at,
     };
   }

@@ -1759,6 +1759,13 @@ td.dvads-period-delta-down {
 .dvads-action-menu-panel {
   min-width: 140px;
 }
+/* 상태 필터 — 좁은 '상태' 헤더 아래 가운데로 펼쳐지는 메뉴라 라벨도 가운데 정렬. */
+.dvads-status-filter-menu {
+  min-width: 104px;
+}
+.dvads-status-filter-menu .dvads-dropdown-option {
+  text-align: center;
+}
 /* 메뉴 항목 구분선 — 그룹 사이 가는 hr. dropdown panel 안에서 음수 좌우 마진으로 패널 양끝까지. */
 .dvads-dropdown-separator {
   height: 1px;
@@ -2287,6 +2294,11 @@ td.dvads-period-delta-down {
 }
 .dvads-multi-table th.dvads-multi-th-status,
 .dvads-multi-table td.dvads-multi-td-status {
+  /* 배지(4글자 알약)만 들어가는 칸이라 폭을 고정해 좁게 — 남는 폭은 계정명이 가져간다. */
+  width: 84px;
+  min-width: 84px;
+  padding-left: 4px;
+  padding-right: 4px;
   text-align: center;
   white-space: nowrap;
 }
@@ -2457,9 +2469,39 @@ td.dvads-period-delta-down {
 .dvads-change-item {
   padding: 12px;
 }
+/* 안 읽은 알림 — 연한 파랑 배경으로 읽은 것과 한눈에 구분. */
+.dvads-change-item.is-unread {
+  background: #EFF6FF;
+}
 /* 대상 id를 아는 알림 — 클릭하면 해당 캠페인/광고그룹 화면으로 이동 */
 .dvads-change-item.is-link { cursor: pointer; }
 .dvads-change-item.is-link:hover { background: rgba(0, 0, 0, 0.03); }
+.dvads-change-item.is-unread.is-link:hover { background: #E0EDFF; }
+/* 아래 줄 — 왼쪽 발생 시각 + 오른쪽 [읽음 표시] */
+.dvads-change-item-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+}
+/* 시각이 없는 알림(광고주센터 피드)이면 버튼만 남아도 오른쪽에 붙게. */
+.dvads-change-item-read {
+  margin-left: auto;
+}
+.dvads-change-item-read {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12px;
+  color: #6B7280;
+  cursor: pointer;
+}
+.dvads-change-item-read:hover {
+  color: #171717;
+  text-decoration: underline;
+}
 .dvads-change-item + .dvads-change-item {
   border-top: 1px solid #F3F4F6;
 }
