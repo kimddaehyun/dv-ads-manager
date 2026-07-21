@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
-  pickRankTargets, LOW_RANK_FLOOR, SKEW_RATIO, AD_IMP_FLOOR, LOW_CTR_PCT, foldByWeekday,
+  pickRankTargets, LOW_RANK_FLOOR, AD_IMP_FLOOR, LOW_CTR_PCT, foldByWeekday,
   type BriefProductDelta, type BriefGroupData, type BriefAdRow,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
@@ -269,8 +269,8 @@ describe("extractCandidates - belowTargetGroup", () => {
     expect(c).toBeDefined();
     expect(c!.scope).toMatchObject({ campaign: "[DV] 대나무", group: "2. 세부" });
     expect(c!.facts.수익률).toBe("400%");
-    // 그룹 후보는 요약 — 키워드 나열이 아니라 그룹 단위 표.
-    expect(c!.table.columns[0]).toBe("광고그룹");
+    // 그룹 후보는 요약 — 키워드 나열이 아니라 그룹 단위 표. 그룹명 칸은 헤더와 중복이라 없다.
+    expect(c!.table.columns[0]).toBe("노출");
     expect(c!.table.rows[0].problem).toBe(true);
   });
 
@@ -380,57 +380,47 @@ describe("extractCandidates - lowRoasPlacement (그룹 단위)", () => {
   });
 });
 
-describe("extractCandidates - genderBidSkew / ageBidSkew (그룹 단위)", () => {
+// 2026-07-21 A안 — "1등 vs 꼴찌" 상대 비교 폐기. 비용 문턱을 넘고 목표(band none)에
+// 못 미치는 구간을 전부 잡는다. kind 이름은 이력 호환을 위해 유지.
+describe("extractCandidates - genderBidSkew / ageBidSkew (목표 미달 구간, 그룹 단위)", () => {
   const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
   const withGender = (byGender: NamedMetrics[]) => ({ ...base, groups: [gd("C", "G", 1, { byGender })] });
 
-  it("SKEW_RATIO는 1.5", () => {
-    expect(SKEW_RATIO).toBe(1.5);
-  });
-
-  it("성별 ROAS 격차 1.5배 이상 + 양쪽 비용 임계 이상 → genderBidSkew", () => {
-    // 남성 900% vs 여성 400% (2.25배) — 남성 상향/여성 하향 제안.
+  it("목표 미달(none) 구간만 전부 잡는다 — green 구간은 제외", () => {
+    // 남성 900%(green) / 여성 400%(none) → 여성만.
     const c = extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 5, 450_000) },
       { label: "여성", metrics: m(50_000, 2, 200_000) },
     ])).find((x) => x.kind === "genderBidSkew");
     expect(c).toBeDefined();
-    expect(c!.facts.좋은쪽).toBe("남성");
-    expect(c!.facts.나쁜쪽).toBe("여성");
+    expect(c!.facts.구간).toBe("여성");
+    expect(c!.facts.count).toBe(1);
     expect(c!.scope).toMatchObject({ campaign: "C", group: "G" });
   });
 
-  it("격차가 임계 바로 아래면 후보 아님", () => {
-    // 600% vs 449% → 449 x 1.5 = 673.5 > 600 → 미달.
+  it("yellow(유지) 구간은 잡지 않는다 — none만", () => {
+    // 900%(green) vs 700%(yellow, 하한 600 이상) → 후보 없음.
     expect(extractCandidates(withGender([
-      { label: "남성", metrics: m(100_000, 6, 600_000) },
-      { label: "여성", metrics: m(100_000, 4, 449_000) },
+      { label: "남성", metrics: m(100_000, 6, 900_000) },
+      { label: "여성", metrics: m(100_000, 4, 700_000) },
     ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
-  it("격차가 정확히 1.5배면 후보 — 경계 포함", () => {
-    expect(extractCandidates(withGender([
-      { label: "남성", metrics: m(100_000, 6, 600_000) },
-      { label: "여성", metrics: m(100_000, 4, 400_000) },
-    ])).find((x) => x.kind === "genderBidSkew")).toBeDefined();
-  });
-
-  it("한쪽 비용이 문턱 미만이면 후보 아님 — 잡음 방지", () => {
+  it("비용 문턱 미만 구간은 잡지 않는다 — 잡음 방지", () => {
     expect(extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 5, 450_000) },
       { label: "여성", metrics: m(5_000, 0, 0) },
     ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
-  it("'알 수 없음' 세그먼트는 비교에서 제외 — 가중치를 걸 수 없는 대상", () => {
+  it("'알 수 없음' 세그먼트는 제외 — 가중치를 걸 수 없는 대상", () => {
     expect(extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 5, 450_000) },
-      { label: "여성", metrics: m(50_000, 5, 440_000) },
       { label: "알 수 없음", metrics: m(50_000, 1, 50_000) },
     ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
-  it("목표 ROAS 미설정이어도 동작 — 격차는 상대 비교라 목표가 필요 없다", () => {
+  it("목표 ROAS 미설정이면 후보를 만들지 않는다", () => {
     expect(extractCandidates({
       keywords: [],
       groups: [gd("C", "G", 1, {
@@ -439,77 +429,131 @@ describe("extractCandidates - genderBidSkew / ageBidSkew (그룹 단위)", () =>
           { label: "여성", metrics: m(50_000, 2, 200_000) },
         ],
       })],
-    }).find((x) => x.kind === "genderBidSkew")).toBeDefined();
+    }).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
-  it("연령 버킷 간 격차 → ageBidSkew (최고 vs 최저)", () => {
+  it("연령 버킷 → ageBidSkew, 미달 버킷만 problem 행 (문턱 미만 버킷 제외)", () => {
     const byAge: NamedMetrics[] = [
-      { label: "25세 ~ 29세", metrics: m(30_000, 3, 270_000) }, // 900%
-      { label: "30세 ~ 34세", metrics: m(30_000, 2, 210_000) }, // 700%
-      { label: "50세 ~ 54세", metrics: m(30_000, 1, 90_000) },  // 300%
-      { label: "기타", metrics: m(2_000, 0, 0) },                // 문턱 미만 → 비교 제외
+      { label: "25세 ~ 29세", metrics: m(30_000, 3, 270_000) }, // 900% green
+      { label: "30세 ~ 34세", metrics: m(30_000, 2, 210_000) }, // 700% yellow
+      { label: "50세 ~ 54세", metrics: m(30_000, 1, 90_000) },  // 300% none
+      { label: "60세", metrics: m(2_000, 0, 0) },                // 문턱 미만 → 제외
     ];
     const c = extractCandidates({ ...base, groups: [gd("C", "G", 1, { byAge })] })
       .find((x) => x.kind === "ageBidSkew");
     expect(c).toBeDefined();
-    expect(c!.facts.좋은쪽).toBe("25세 ~ 29세");
-    expect(c!.facts.나쁜쪽).toBe("50세 ~ 54세");
-    // 문턱 미만 버킷이 최저로 잡히면 안 된다.
-    expect(c!.facts.나쁜쪽).not.toBe("기타");
+    expect(c!.facts.구간).toBe("50세 ~ 54세");
+    expect(c!.table.rows.filter((r) => r.problem)).toHaveLength(1);
   });
 
-  it("양쪽 다 매출 0이면 후보 아님 — 0% vs 0%는 격차가 아니다", () => {
-    expect(extractCandidates(withGender([
+  it("전환 0 구간은 미달 후보가 아니라 zeroConvSegment로 분리된다", () => {
+    const cands = extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 0, 0) },
       { label: "여성", metrics: m(50_000, 0, 0) },
-    ])).find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+    ]));
+    expect(cands.find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+    const zero = cands.find((x) => x.kind === "zeroConvSegment");
+    expect(zero).toBeDefined();
+    expect(zero!.facts.count).toBe(2);
   });
 
-  it("비교 가능한 세그먼트가 2개 미만이면 후보 아님", () => {
-    expect(extractCandidates({
-      ...base,
-      groups: [gd("C", "G", 1, { byAge: [{ label: "25세 ~ 29세", metrics: m(30_000, 3, 270_000) }] })],
-    }).find((x) => x.kind === "ageBidSkew")).toBeUndefined();
-  });
-
-  it("세그먼트 격차는 그룹 안에서만 비교 — 그룹이 다르면 섞이지 않는다", () => {
-    // 두 그룹 각각은 격차가 없다. 계정 합산이었다면 남성(G1) 900% vs 여성(G2) 400%로 오탐.
+  it("판정은 그룹 안에서만 — 미달 구간이 있는 그룹만 후보", () => {
     const two = [
-      gd("A", "G1", 1, { byGender: [{ label: "남성", metrics: m(50_000, 5, 450_000) }] }),
-      gd("B", "G2", 2, { byGender: [{ label: "여성", metrics: m(50_000, 2, 200_000) }] }),
+      gd("A", "G1", 1, { byGender: [{ label: "남성", metrics: m(50_000, 5, 450_000) }] }),  // green
+      gd("B", "G2", 2, { byGender: [{ label: "여성", metrics: m(50_000, 2, 200_000) }] }),  // none
     ];
-    expect(extractCandidates({ ...base, groups: two })
-      .find((x) => x.kind === "genderBidSkew")).toBeUndefined();
+    const cands = extractCandidates({ ...base, groups: two })
+      .filter((x) => x.kind === "genderBidSkew");
+    expect(cands).toHaveLength(1);
+    expect(cands[0].scope).toMatchObject({ campaign: "B", group: "G2" });
   });
 });
 
-describe("extractCandidates - deviceBidSkew (그룹 단위)", () => {
+describe("extractCandidates - deviceBidSkew (목표 미달 구간, 그룹 단위)", () => {
   const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
   const withDevice = (byDevice: NamedMetrics[]) => ({ ...base, groups: [gd("C", "G", 1, { byDevice })] });
 
-  it("PC/모바일 ROAS 격차 1.5배 이상 → deviceBidSkew", () => {
-    // 모바일 900% vs PC 400% (2.25배)
+  it("목표 미달 기기만 잡는다", () => {
+    // PC 400%(none) / 모바일 900%(green) → PC만.
     const c = extractCandidates(withDevice([
       { label: "PC", metrics: m(50_000, 2, 200_000) },
       { label: "모바일", metrics: m(50_000, 5, 450_000) },
     ])).find((x) => x.kind === "deviceBidSkew");
     expect(c).toBeDefined();
-    expect(c!.facts.좋은쪽).toBe("모바일");
-    expect(c!.facts.나쁜쪽).toBe("PC");
+    expect(c!.facts.구간).toBe("PC");
   });
 
-  it("격차 미달이면 후보 아님", () => {
+  it("전부 목표 이상이면 후보 없음", () => {
     expect(extractCandidates(withDevice([
       { label: "PC", metrics: m(50_000, 5, 400_000) },
       { label: "모바일", metrics: m(50_000, 5, 450_000) },
     ])).find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
   });
 
-  it("한쪽 비용 문턱 미만이면 후보 아님", () => {
+  it("미달 구간이 문턱 미만이면 후보 없음", () => {
     expect(extractCandidates(withDevice([
       { label: "PC", metrics: m(3_000, 0, 0) },
       { label: "모바일", metrics: m(50_000, 5, 450_000) },
     ])).find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+  });
+});
+
+describe("extractCandidates - 세그먼트 확장: 전환0 / 상향 여지 / 클릭률 (2026-07-21)", () => {
+  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
+  const withDevice = (byDevice: NamedMetrics[]) => ({ ...base, groups: [gd("C", "G", 1, { byDevice })] });
+
+  it("전환 0 구간 → zeroConvSegment, 미달 후보와 중복되지 않는다", () => {
+    const cands = extractCandidates(withDevice([
+      { label: "PC", metrics: m(50_000, 0, 0) },
+      { label: "모바일", metrics: m(50_000, 5, 450_000) },
+    ]));
+    const zero = cands.find((x) => x.kind === "zeroConvSegment");
+    expect(zero).toBeDefined();
+    expect(zero!.facts.구간).toBe("PC");
+    expect(zero!.facts.차원).toBe("기기");
+    expect(cands.find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
+  });
+
+  it("목표 이상 구간 → highRoasSegment, 표에서 good(초록) 행", () => {
+    const cands = extractCandidates(withDevice([
+      { label: "PC", metrics: m(50_000, 2, 200_000) },     // 400% none
+      { label: "모바일", metrics: m(50_000, 5, 450_000) },  // 900% green
+    ]));
+    const good = cands.find((x) => x.kind === "highRoasSegment");
+    expect(good).toBeDefined();
+    expect(good!.facts.구간).toBe("모바일");
+    expect(good!.table.rows.find((r) => r.good)!.cells[0]).toBe("모바일");
+    // 상향 여지 표는 빨강(problem) 강조를 쓰지 않는다.
+    expect(good!.table.rows.some((r) => r.problem)).toBe(false);
+  });
+
+  it("목표 미설정이면 상향 여지 후보 없음 (전환 0 후보는 그대로)", () => {
+    const cands = extractCandidates({
+      keywords: [],
+      groups: [gd("C", "G", 1, { byDevice: [
+        { label: "PC", metrics: m(50_000, 0, 0) },
+        { label: "모바일", metrics: m(50_000, 5, 450_000) },
+      ] })],
+    });
+    expect(cands.find((x) => x.kind === "highRoasSegment")).toBeUndefined();
+    expect(cands.find((x) => x.kind === "zeroConvSegment")).toBeDefined();
+  });
+
+  it("노출 충분 + 클릭률 미만 구간 → lowCtrSegment", () => {
+    const seg = (label: string, impressions: number, clicks: number): NamedMetrics =>
+      ({ label, metrics: { ...ZERO_METRICS, impressions, clicks, cost: 20_000 } });
+    // 클릭률 0.2% < 0.5% (노출 5000 ≥ 1000)
+    const c = extractCandidates({ ...base, groups: [gd("C", "G", 1, { byHour: [seg("10시~11시", 5_000, 10)] })] })
+      .find((x) => x.kind === "lowCtrSegment");
+    expect(c).toBeDefined();
+    expect(c!.facts.차원).toBe("시간대");
+    expect(c!.facts.구간).toBe("10시~11시");
+  });
+
+  it("노출이 임계 미만이면 클릭률 후보 없음", () => {
+    const seg: NamedMetrics = { label: "10시~11시", metrics: { ...ZERO_METRICS, impressions: 500, clicks: 0, cost: 20_000 } };
+    expect(extractCandidates({ ...base, groups: [gd("C", "G", 1, { byHour: [seg] })] })
+      .find((x) => x.kind === "lowCtrSegment")).toBeUndefined();
   });
 });
 
@@ -530,38 +574,37 @@ describe("foldByWeekday", () => {
   });
 });
 
-describe("extractCandidates - hourWeekdaySkew (그룹 단위)", () => {
+describe("extractCandidates - hourWeekdaySkew (목표 미달 구간, 그룹 단위)", () => {
   const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
 
-  it("그룹 내 시간대 격차 → 그 그룹의 후보 (worst 행만 problem)", () => {
+  it("목표 미달 시간대만 problem 행으로 잡는다", () => {
     const groups = [gd("브랜드", "핵심", 1, {
       byHour: [
-        { label: "10시~11시", metrics: m(30_000, 3, 270_000) }, // 900%
-        { label: "22시~23시", metrics: m(30_000, 1, 90_000) },  // 300%
+        { label: "10시~11시", metrics: m(30_000, 3, 270_000) }, // 900% green
+        { label: "22시~23시", metrics: m(30_000, 1, 90_000) },  // 300% none
       ],
     })];
     const c = extractCandidates({ ...base, groups }).find((x) => x.kind === "hourWeekdaySkew");
     expect(c).toBeDefined();
-    expect(c!.facts.좋은쪽).toBe("10시~11시");
-    expect(c!.facts.나쁜쪽).toBe("22시~23시");
+    expect(c!.facts.구간).toBe("22시~23시");
     expect(c!.scope).toMatchObject({ campaign: "브랜드", group: "핵심", nccAdgroupId: "grp-1" });
     expect(c!.table.rows.filter((r) => r.problem)).toHaveLength(1);
     expect(c!.table.rows.find((r) => r.problem)!.cells[0]).toBe("22시~23시");
   });
 
-  it("요일 간 격차 → 후보 (그룹의 byDay를 요일로 접어 판정)", () => {
+  it("요일 미달 구간 → 후보 (그룹의 byDay를 요일로 접어 판정)", () => {
     const groups = [gd("브랜드", "핵심", 1, {
       byDay: [
-        { label: "2026-07-06", metrics: m(30_000, 3, 270_000) }, // 월
-        { label: "2026-07-08", metrics: m(30_000, 1, 90_000) },  // 수
+        { label: "2026-07-06", metrics: m(30_000, 3, 270_000) }, // 월 green
+        { label: "2026-07-08", metrics: m(30_000, 1, 90_000) },  // 수 none
       ],
     })];
     const cands = extractCandidates({ ...base, groups }).filter((x) => x.kind === "hourWeekdaySkew");
     expect(cands).toHaveLength(1);
-    expect(cands[0].facts.좋은쪽).toBe("월");
+    expect(cands[0].facts.구간).toBe("수");
   });
 
-  it("그룹 내 격차 미달이면 후보 없음", () => {
+  it("전부 목표 이상이면 후보 없음", () => {
     const groups = [gd("브랜드", "핵심", 1, {
       byHour: [
         { label: "10시~11시", metrics: m(30_000, 3, 270_000) },
@@ -572,7 +615,7 @@ describe("extractCandidates - hourWeekdaySkew (그룹 단위)", () => {
       .find((x) => x.kind === "hourWeekdaySkew")).toBeUndefined();
   });
 
-  it("시간대 격차 그룹이 여럿이면 그룹마다 후보가 따로", () => {
+  it("미달 구간이 있는 그룹이 여럿이면 그룹마다 후보가 따로", () => {
     const mk = (i: number) => gd("브랜드", `그룹${i}`, i, {
       byHour: [
         { label: "10시~11시", metrics: m(30_000, 3, 270_000) },
@@ -586,25 +629,24 @@ describe("extractCandidates - hourWeekdaySkew (그룹 단위)", () => {
   });
 });
 
-describe("extractCandidates - regionBidSkew (그룹 단위)", () => {
+describe("extractCandidates - regionBidSkew (목표 미달 구간, 그룹 단위)", () => {
   const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
 
-  it("그룹 내 지역 격차 → 후보 (비용 문턱 미만 지역은 비교 제외)", () => {
+  it("목표 미달 지역만 잡는다 (비용 문턱 미만 지역은 제외)", () => {
     const groups = [gd("브랜드", "핵심", 1, {
       byRegion: [
-        { label: "서울특별시", metrics: m(50_000, 5, 450_000) }, // 900%
-        { label: "경기도", metrics: m(50_000, 2, 200_000) },     // 400%
-        { label: "세종특별자치시", metrics: m(1_000, 0, 0) },     // 문턱 미만
+        { label: "서울특별시", metrics: m(50_000, 5, 450_000) }, // 900% green
+        { label: "경기도", metrics: m(50_000, 2, 200_000) },     // 400% none
+        { label: "세종특별자치시", metrics: m(1_000, 0, 0) },     // 문턱 미만 → 제외
       ],
     })];
     const c = extractCandidates({ ...base, groups }).find((x) => x.kind === "regionBidSkew");
     expect(c).toBeDefined();
-    expect(c!.facts.좋은쪽).toBe("서울특별시");
-    expect(c!.facts.나쁜쪽).toBe("경기도");
+    expect(c!.facts.구간).toBe("경기도");
     expect(c!.scope?.group).toBe("핵심");
   });
 
-  it("그룹 내 격차 미달이면 후보 없음", () => {
+  it("전부 목표 이상이면 후보 없음", () => {
     const groups = [gd("브랜드", "핵심", 1, {
       byRegion: [
         { label: "서울특별시", metrics: m(50_000, 5, 450_000) },
@@ -728,14 +770,16 @@ describe("targets 스냅샷", () => {
     ]);
   });
 
-  it("skew 후보에는 좋은쪽/나쁜쪽 두 대상이 붙는다 — 라벨에 캠페인 > 그룹 경로 포함", () => {
+  it("세그먼트 후보에는 미달 구간들이 대상으로 붙는다 — 라벨에 캠페인 > 그룹 경로 포함", () => {
     const seg = (label: string, cost: number, revenue: number): NamedMetrics =>
       ({ label, metrics: { ...ZERO_METRICS, cost, revenue, purchaseConv: 1 } });
     const out = extractCandidates({
       keywords: [],
+      targetRoas: 800,
+      // 남성 1000%(green) / 여성 200%(none) → 여성만 대상.
       groups: [gd("C", "G", 1, { byGender: [seg("남성", 20_000, 200_000), seg("여성", 20_000, 40_000)] })],
     });
     const c = out.find((c) => c.kind === "genderBidSkew")!;
-    expect(c.targets.map((t) => t.label)).toEqual(["C > G > 남성", "C > G > 여성"]);
+    expect(c.targets.map((t) => t.label)).toEqual(["C > G > 여성"]);
   });
 });

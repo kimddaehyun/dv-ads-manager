@@ -25,7 +25,7 @@ export function openBriefToneDialog(onClose?: () => void): void {
 
   const head = document.createElement("div");
   head.className = "dvads-brief-head";
-  head.textContent = "내 말투 설정";
+  head.textContent = "대화 스타일 설정";
   card.appendChild(head);
 
   const body = document.createElement("div");
@@ -42,23 +42,18 @@ export function openBriefToneDialog(onClose?: () => void): void {
   samplesTa.placeholder = "예) 안녕하세요:) 지난 30일 동안 ...";
   body.appendChild(samplesTa);
 
+  // 문구 버튼 대신 아래 화살표 하나 — 누르면 위 채팅으로 말투 규칙을 생성해 아래 칸에 채운다.
   const makeBtn = document.createElement("button");
   makeBtn.type = "button";
-  makeBtn.className = "dvads-btn";
-  makeBtn.style.marginTop = "10px";
-  makeBtn.textContent = "말투 만들기";
+  makeBtn.className = "dvads-brief-tone-make";
+  makeBtn.setAttribute("aria-label", "말투 규칙 생성");
+  makeBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
   body.appendChild(makeBtn);
-
-  const hint2 = document.createElement("div");
-  hint2.className = "dvads-brief-tone-hint";
-  hint2.style.marginTop = "14px";
-  hint2.textContent = "만들어진 말투 규칙이에요. 직접 고칠 수 있어요";
-  body.appendChild(hint2);
 
   const promptTa = document.createElement("textarea");
   promptTa.className = "dvads-brief-tone-ta";
   promptTa.rows = 8;
-  promptTa.placeholder = "\"말투 만들기\"를 누르면 여기에 말투 규칙이 생겨요";
+  promptTa.placeholder = "화살표를 누르면 여기에 말투 규칙이 생겨요. 직접 고칠 수도 있어요";
   body.appendChild(promptTa);
 
   card.appendChild(body);
@@ -85,20 +80,20 @@ export function openBriefToneDialog(onClose?: () => void): void {
       return;
     }
     makeBtn.disabled = true;
-    makeBtn.textContent = "만드는 중...";
+    makeBtn.classList.add("is-busy");
     void distillTone(samples)
       .then((prompt) => { promptTa.value = prompt; })
       .catch((e) => showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" }))
       .finally(() => {
         makeBtn.disabled = false;
-        makeBtn.textContent = "말투 만들기";
+        makeBtn.classList.remove("is-busy");
       });
   });
 
   save.addEventListener("click", () => {
     const tonePrompt = promptTa.value.trim();
     if (!tonePrompt) {
-      showToast({ message: "먼저 \"말투 만들기\"로 말투 규칙을 만들어 주세요", variant: "error" });
+      showToast({ message: "먼저 화살표 버튼으로 말투 규칙을 만들어 주세요", variant: "error" });
       return;
     }
     save.disabled = true;

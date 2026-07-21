@@ -70,7 +70,7 @@ export function buildFollowUpCandidate(
     },
     table: {
       title: `지난 조치 항목 성과 (${day} 보고 대비)`,
-      columns: ["항목", "조치", "당시 광고비", "이번 광고비", "당시 수익률", "이번 수익률"],
+      columns: ["항목", "조치", "당시 광고비", "이번 광고비", "당시 ROAS", "이번 ROAS"],
       rows: rows.map((r) => ({
         cells: [
           r.then.label,

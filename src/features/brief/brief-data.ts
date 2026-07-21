@@ -286,7 +286,7 @@ export function buildSummarySpec(data: BriefData): BriefTableSpec {
   }));
   return {
     title: `${data.advertiserName} - ${rangeText(data.range)}`,
-    columns: ["구분", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
+    columns: ["구분", "노출", "클릭", "총비용", "구매완료", "매출액", "ROAS"],
     rows,
   };
 }

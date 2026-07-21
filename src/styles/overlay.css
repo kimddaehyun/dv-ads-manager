@@ -4723,10 +4723,8 @@ td.dvads-period-delta-down {
 /* F-Brief 후보 선택 화면 (AE선택 모드) — Selection Card 패턴 (DESIGN.md) */
 .dvads-brief-pick-list {
   display: flex; flex-direction: column; padding: 2px 0;
-  border-top: 1px solid #eef0f3;
 }
 .dvads-brief-pick-item {
-  border-bottom: 1px solid #eef0f3;
   border-radius: 12px;
   transition: background-color 0.15s ease;
 }
@@ -4776,25 +4774,38 @@ td.dvads-period-delta-down {
 /* 첫 열은 이름 — 왼쪽 정렬 */
 .dvads-brief-pick-detail-table th:first-child,
 .dvads-brief-pick-detail-table td:first-child { text-align: left; padding-right: 28px; }
-/* 문제(후보 발화) 행만 강조 — state-error 7% */
+/* 문제(후보 발화) 행만 강조 — state-error 7%. 기회(상향 여지) 행은 초록 7% */
 .dvads-brief-pick-detail-table tr.dvads-brief-row-problem td { background: rgba(220, 38, 38, 0.07); }
+.dvads-brief-pick-detail-table tr.dvads-brief-row-good td { background: rgba(22, 163, 74, 0.07); }
+/* 판정에 실제로 쓴 지표 셀 — 굵게 */
+.dvads-brief-pick-detail-table td.dvads-brief-cell-bold { font-weight: 700; }
 /* 캠페인 > 그룹 계층 헤더 — 캠페인은 굵게, 그룹은 들여쓴 소제목 */
+/* 머리글 클릭 = 자식 이슈 전체 선택/해제. 하이라이트가 자식과 한 덩어리로 붙게 여백은 padding으로만. */
 .dvads-brief-pick-camp {
-  font-size: 13px; font-weight: 700; color: #171717;
-  padding: 14px 2px 4px; border-bottom: 1px solid #eef0f3; margin-bottom: 2px;
+  font-size: 16px; font-weight: 700; color: #171717;
+  padding: 14px 2px 4px;
+  display: flex; align-items: center;
+  cursor: pointer; border-radius: 8px;
 }
 .dvads-brief-pick-camp:first-child { padding-top: 2px; }
 .dvads-brief-pick-grouphead {
-  font-size: 12px; font-weight: 600; color: #525252;
+  font-size: 14px; font-weight: 600; color: #525252;
   padding: 8px 2px 2px 10px;
+  cursor: pointer; border-radius: 8px;
 }
+/* 머리글 호버 — 머리글 자신 + 자식 영역(그룹 소제목·이슈·펼친 표)이 함께 밝아진다. 선택 주황은 유지. */
+.dvads-brief-pick-list .dvads-kids-hover:not(.is-selected) { background: rgba(0, 0, 0, 0.04); }
+/* 머리글에 커서를 올리면 글씨는 DV 주황 */
+.dvads-brief-pick-camp:hover,
+.dvads-brief-pick-grouphead:hover { color: #E6783B; }
+/* 자식이 전부 선택되면 머리글도 선택 상태(주황)로 칠한다 */
+.dvads-brief-pick-camp.is-selected,
+.dvads-brief-pick-grouphead.is-selected { background: rgba(230, 120, 59, 0.07); }
+.dvads-brief-pick-camp.is-selected,
+.dvads-brief-pick-grouphead.is-selected { color: #E6783B; }
 /* 광고관리자 바로가기 링크 칩 — 평소 회색, hover 시 DV 주황 */
-.dvads-brief-pick-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 8px; }
-.dvads-brief-pick-link {
-  border: 1px solid #e5e7eb; background: #fff; border-radius: 8px;
-  height: 24px; padding: 0 10px; font-size: 12px; color: #525252; cursor: pointer;
-}
-.dvads-brief-pick-link:hover { color: #E6783B; border-color: #E6783B; }
+/* 머리글 제목 = 광고관리자 바로가기 링크 — 제목만 따로 호버하면 밑줄로 표시 */
+.dvads-brief-pick-head-title:hover { text-decoration: underline; }
 /* 실제 checkbox는 숨기고(접근성 유지) 우측 원형 체크가 상태를 그린다 */
 .dvads-brief-pick-row input[type="checkbox"] {
   position: absolute; width: 1px; height: 1px; opacity: 0;
@@ -4841,33 +4852,28 @@ td.dvads-period-delta-down {
   width: 100%; padding: 16px 0; background: none; border: 0; cursor: pointer; text-align: left;
 }
 .dvads-brief-adv-text { display: flex; flex-direction: column; gap: 4px; }
+/* 다이얼로그 공통 폰트 토큰(제목 16/600, 본문 14/400 - DESIGN.md) 적용 */
 .dvads-brief-adv-title {
-  font: 600 15px/1.4 Pretendard, -apple-system, sans-serif; color: #171717;
-}
-.dvads-brief-adv-desc {
-  font: 400 12px/1.5 Pretendard, -apple-system, sans-serif; color: #6b7280;
+  font: 600 16px/1.4 Pretendard, -apple-system, sans-serif; color: #171717;
 }
 .dvads-brief-adv-chev { width: 20px; height: 20px; color: #6b7280; flex-shrink: 0; }
 .dvads-brief-adv-chev svg { width: 100%; height: 100%; transition: transform 0.15s; }
 .dvads-brief-adv.is-open .dvads-brief-adv-chev svg { transform: rotate(180deg); }
 .dvads-brief-pick-setting-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-.dvads-brief-pick-listhead {
-  font: 600 14px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
-  margin-bottom: -8px;
-  display: flex; align-items: center;
-}
-/* 오른쪽 끝 모두 선택/선택 해제 토글 — 텍스트 버튼 */
-.dvads-brief-pick-selectall {
-  margin-left: auto; padding: 0;
-  background: none; border: 0; cursor: pointer;
-  font: 500 13px/1.5 Pretendard, -apple-system, sans-serif; color: #6b7280;
-}
-.dvads-brief-pick-selectall:hover { color: #171717; }
-.dvads-brief-pick-listhead-count { color: #171717; }
 .dvads-brief-adv-sub { margin-top: 12px; }
+/* 섹션 소제목은 14px — 16px은 "고급 옵션" 제목만 */
 .dvads-brief-adv-sub-title {
-  font: 600 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+  font: 600 14px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+  display: flex; align-items: center; gap: 6px;
 }
+/* 소제목 옆 i 아이콘 — 흰 원 + 회색 테두리, 클릭하면 설명 툴팁 */
+.dvads-brief-info-icon {
+  width: 16px; height: 16px; border-radius: 50%; padding: 0;
+  border: 1px solid #c6cbd2; background: #fff; color: #6b7280;
+  font: 600 10px/1 Pretendard, -apple-system, sans-serif; font-style: italic;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.dvads-brief-info-icon:hover { border-color: #6b7280; color: #171717; }
 /* 네이버 광고관리자 하단 버튼 비율 — 좌우 반반, 높이 44px */
 .dvads-brief-foot .dvads-btn {
   flex: 1; height: 44px; font-size: 14px; font-weight: 600;
@@ -4907,25 +4913,41 @@ td.dvads-period-delta-down {
 .dvads-brief-preset-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .dvads-brief-preset-chip {
   padding: 6px 14px; border: 1px solid #e2e5ea; border-radius: 8px; background: #fff;
-  font: 500 13px/1.4 Pretendard, -apple-system, sans-serif; color: #404040; cursor: pointer;
+  font: 500 14px/1.4 Pretendard, -apple-system, sans-serif; color: #404040; cursor: pointer;
 }
 .dvads-brief-preset-chip.is-on { border-color: #E6783B; color: #E6783B; background: #FDF3EC; }
 .dvads-brief-custom-row {
   display: flex; align-items: center; gap: 8px; padding: 6px 0;
-  font: 400 13px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
+  font: 400 14px/1.5 Pretendard, -apple-system, sans-serif; color: #171717;
 }
 .dvads-brief-custom-row > span:first-child { flex: 1; }
 .dvads-brief-custom-input {
   width: 100px; padding: 6px 10px; border: 1px solid #e2e5ea; border-radius: 8px;
-  font: 400 13px/1.4 Pretendard, -apple-system, sans-serif; text-align: right;
+  font: 400 14px/1.4 Pretendard, -apple-system, sans-serif; text-align: right;
 }
 .dvads-brief-custom-input:focus { outline: none; border-color: #E6783B; }
 .dvads-brief-custom-unit { color: #9aa1ab; font-size: 12px; width: 20px; }
 
 /* F-Brief 내 말투 설정 다이얼로그 */
 .dvads-brief-tone-hint {
-  font: 400 12px/1.6 Pretendard, -apple-system, sans-serif; color: #6b7280;
+  font: 400 14px/1.6 Pretendard, -apple-system, sans-serif; color: #6b7280;
   margin-bottom: 8px;
+}
+/* 말투 규칙 생성 화살표 — 두 입력칸 사이 중앙 */
+.dvads-brief-tone-make {
+  width: 32px; height: 32px; border-radius: 50%; padding: 0; margin: 10px auto;
+  border: 1px solid #e2e5ea; background: #fff; color: #6b7280; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dvads-brief-tone-make svg { width: 16px; height: 16px; }
+.dvads-brief-tone-make:hover { border-color: #E6783B; color: #E6783B; }
+/* 생성 중 — 화살표 대신 원형 로딩 */
+.dvads-brief-tone-make.is-busy { cursor: default; }
+.dvads-brief-tone-make.is-busy svg { display: none; }
+.dvads-brief-tone-make.is-busy::after {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid #eceef1; border-top-color: #E6783B;
+  animation: dvads-spin 0.8s linear infinite;
 }
 .dvads-brief-tone-ta {
   width: 100%; padding: 10px 12px; resize: vertical;

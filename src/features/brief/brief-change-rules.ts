@@ -156,7 +156,7 @@ export function buildChangeHistoryCandidates(impacts: BriefChangeImpact[]): Brie
       table: {
         title: `변경 이력 (${day} ${event.entityLabel})`,
         columns: hasMetrics
-          ? ["대상", "변경일", "변경내용", "이전 수익률", "이후 수익률", "평가"]
+          ? ["대상", "변경일", "변경내용", "이전 ROAS", "이후 ROAS", "평가"]
           : ["대상", "변경일", "변경내용", "평가"],
         rows: [
           {

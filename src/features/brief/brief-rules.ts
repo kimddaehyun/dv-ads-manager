@@ -56,6 +56,9 @@ export type BriefKind =
   | "regionBidSkew"        // 지역(시도) 간 ROAS 격차 (Task 17)
   | "zeroConvPlacement"    // 지면 비용 임계 이상인데 전환 0
   | "lowRoasPlacement"     // 지면 전환은 있으나 none 구간 (Task 12)
+  | "zeroConvSegment"      // 세그먼트 비용 임계 이상인데 전환 0 (2026-07-21)
+  | "lowCtrSegment"        // 세그먼트 노출 충분한데 클릭률 낮음 (2026-07-21)
+  | "highRoasSegment"      // 세그먼트 목표 초과 달성 — 가중치 상향 여지 (2026-07-21)
   | "productConvDrop"      // 전기 대비 전환 빠진 상품 (Task 8)
   | "changeFollowUp";      // 우리 팀 변경 이력 + 이후 성과 평가 (구조 개편 2차)
 
@@ -66,8 +69,10 @@ export interface BriefTableRow {
   cells: string[];
   /** ROAS 구간(참고용). 색칠에는 더 이상 쓰지 않는다 — problem이 색칠 기준. */
   band?: RoasBand;
-  /** 이 후보를 발화시킨(문제인) 행 — 표에서 이 행만 강조한다. */
+  /** 이 후보를 발화시킨(문제인) 행 — 표에서 이 행만 빨강으로 강조한다. */
   problem?: boolean;
+  /** 잘돼서 후보가 된(기회) 행 — 초록으로 강조한다 (highRoasSegment 등). */
+  good?: boolean;
 }
 
 /** 표 명세 — brief-table.ts가 이것만 보고 그린다. 규칙 로직을 알 필요가 없다. */
@@ -75,6 +80,8 @@ export interface BriefTableSpec {
   title: string;
   columns: string[];
   rows: BriefTableRow[];
+  /** 판정에 실제로 쓴 지표 열 — problem 행에서 이 열만 굵게. problem 행이 없으면 전 행에 적용. */
+  boldColumns?: string[];
 }
 
 /** 이력 저장용 대상 스냅샷 — 표(문자열)와 달리 숫자 그대로. 다음 보고의 비교 계산 재료(설계 §7). */
@@ -217,7 +224,7 @@ export function flattenKeywords(groups: KeywordGroup[]): BriefKeywordRow[] {
   return out;
 }
 
-const KW_COLUMNS = ["키워드", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"];
+const KW_COLUMNS = ["키워드", "노출", "클릭", "총비용", "구매완료", "매출액", "ROAS"];
 
 function toTarget(label: string, m: ReportMetrics): BriefTargetSnapshot {
   return { label, cost: m.cost, revenue: m.revenue, purchaseConv: m.purchaseConv, clicks: m.clicks, impressions: m.impressions };
@@ -294,26 +301,6 @@ export const DEFAULT_THRESHOLDS: BriefThresholds = {
 /** 가중치를 걸 수 없는 세그먼트(성별 "알 수 없음" 등)는 비교에서 뺀다. */
 const UNKNOWN_SEGMENT = /알\s*수\s*없음|알수없음|기타/;
 
-/**
- * 세그먼트 간 상대 격차 판정. 절대 성과가 아니라 **구간 간 비교**다 — 모든 계정에 늘 있는
- * 미세한 차이는 (a) 양쪽 비용 문턱 (b) 격차 임계로 거른다. 통과 못 하면 null.
- */
-export function findSkew(
-  segments: NamedMetrics[],
-  th: BriefThresholds = DEFAULT_THRESHOLDS,
-): { best: NamedMetrics; worst: NamedMetrics } | null {
-  const comparable = segments.filter(
-    (s) => s.metrics.cost >= th.costFloor && !UNKNOWN_SEGMENT.test(s.label),
-  );
-  if (comparable.length < 2) return null;
-  const byRoas = [...comparable].sort((a, b) => roasPct(b.metrics) - roasPct(a.metrics));
-  const best = byRoas[0];
-  const worst = byRoas[byRoas.length - 1];
-  // 전부 매출 0이면 0% vs 0% — 격차가 아니다(0 < 0x1.5가 false로 통과하는 함정).
-  if (roasPct(best.metrics) <= 0) return null;
-  if (roasPct(best.metrics) < roasPct(worst.metrics) * th.skewRatio) return null;
-  return { best, worst };
-}
 
 const WEEKDAY_ORDER = ["월", "화", "수", "목", "금", "토", "일"];
 
@@ -338,12 +325,16 @@ function segmentTable(
   segments: NamedMetrics[],
   targetRoas?: number,
   problemLabels?: ReadonlySet<string>,
+  boldColumns: string[] = ["총비용", "ROAS"],
+  goodLabels?: ReadonlySet<string>,
 ): BriefTableSpec {
   return {
     title,
-    columns: [dim, "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
+    columns: [dim, "노출", "클릭", "총비용", "구매완료", "매출액", "ROAS"],
+    boldColumns,
     rows: segments.map((s) => ({
       problem: problemLabels?.has(s.label) || undefined,
+      good: goodLabels?.has(s.label) || undefined,
       cells: [
         s.label,
         s.metrics.impressions.toLocaleString(),
@@ -358,36 +349,99 @@ function segmentTable(
   };
 }
 
-function skewCandidate(
+/**
+ * 세그먼트(성별/연령/기기/시간대/요일/지역) 후보 (2026-07-21 A안 - "1등 vs 꼴찌" 상대 비교 폐기).
+ * 지면 이슈와 같은 구조로, 그룹 안 그 차원의 구간들을 절대 기준으로 판정한다:
+ *  - 전환 0(zeroConvSegment): 비용 문턱 이상인데 구매완료 0 — 제외/하향 검토
+ *  - 목표 미달(기존 …Skew kind): 전환은 있으나 목표에 크게 미달 — 하향 검토
+ *  - 성과 좋음(highRoasSegment): 목표 이상 — 가중치 상향 여지
+ *  - 클릭률 낮음(lowCtrSegment): 노출 충분한데 클릭률 낮음
+ * 목표가 필요한 판정(미달/좋음)은 목표 ROAS 미설정 시 만들지 않는다.
+ */
+function segmentCandidates(
   kind: BriefKind,
   dim: string,
   segments: NamedMetrics[] | undefined,
   targetRoas: number | undefined,
   th: BriefThresholds,
   scope: BriefScope,
-): BriefCandidate | null {
-  if (!segments) return null;
-  const skew = findSkew(segments, th);
-  if (!skew) return null;
-  return {
-    kind,
+): BriefCandidate[] {
+  if (!segments) return [];
+  const out: BriefCandidate[] = [];
+  const gName = `${scope.campaign} > ${scope.group}`;
+  const eligible = segments.filter((s) => !UNKNOWN_SEGMENT.test(s.label));
+  const baseFacts = { 캠페인: scope.campaign, 광고그룹: scope.group, 차원: dim };
+  const mk = (
+    kindOf: BriefKind,
+    flagged: NamedMetrics[],
+    기준: string,
+    bold: string[],
+    good: boolean,
+  ): BriefCandidate => ({
+    kind: kindOf,
     scope,
     facts: {
-      캠페인: scope.campaign,
-      광고그룹: scope.group,
-      기준: `${dim} 간 수익률 차이 ${th.skewRatio}배 이상 - 효율 좋은 쪽 가중치 상향, 낮은 쪽 하향 검토`,
-      좋은쪽: skew.best.label,
-      좋은쪽수익률: `${roasPct(skew.best.metrics).toFixed(0)}%`,
-      나쁜쪽: skew.worst.label,
-      나쁜쪽수익률: `${roasPct(skew.worst.metrics).toFixed(0)}%`,
+      ...baseFacts,
+      기준,
+      구간: flagged.map((s) => s.label).join(", "),
+      count: flagged.length,
+      비용합계: flagged.reduce((s, x) => s + x.metrics.cost, 0),
     },
-    table: segmentTable(`${scope.campaign} > ${scope.group} - ${dim} 성과`, dim, segments, targetRoas, new Set([skew.worst.label])),
-    targets: [
-      toTarget(`${scope.campaign} > ${scope.group} > ${skew.best.label}`, skew.best.metrics),
-      toTarget(`${scope.campaign} > ${scope.group} > ${skew.worst.label}`, skew.worst.metrics),
-    ],
+    table: segmentTable(
+      `${gName} - ${dim} 성과`, dim, segments, targetRoas,
+      good ? undefined : new Set(flagged.map((s) => s.label)),
+      bold,
+      good ? new Set(flagged.map((s) => s.label)) : undefined,
+    ),
+    targets: flagged.map((s) => toTarget(`${gName} > ${s.label}`, s.metrics)),
     selected: false,
-  };
+  });
+
+  // 전환 0 — 목표 없이도 판정.
+  const zero = eligible
+    .filter((s) => s.metrics.cost >= th.costFloor && s.metrics.purchaseConv === 0)
+    .sort(byCostDesc);
+  if (zero.length > 0) {
+    out.push(mk("zeroConvSegment", zero,
+      `${dim} 구간이 광고비 ${th.costFloor.toLocaleString()}원 이상 소진, 구매완료 전환 0건 - 제외 또는 가중치 하향 검토`,
+      ["총비용", "구매완료"], false));
+  }
+
+  if (targetRoas != null && targetRoas > 0) {
+    // 목표 미달 — 전환 0 구간은 위(zeroConvSegment)가 담당하므로 전환 있는 것만.
+    const below = eligible
+      .filter((s) => s.metrics.cost >= th.costFloor && s.metrics.purchaseConv > 0 &&
+        roasBand(roasPct(s.metrics), targetRoas) === "none")
+      .sort(byCostDesc);
+    if (below.length > 0) {
+      out.push(mk(kind, below,
+        `${dim} ROAS가 목표 ${targetRoas}%에 크게 미달 - 해당 구간 가중치 하향 검토`,
+        ["총비용", "ROAS"], false));
+    }
+
+    // 목표 이상 — 가중치 상향 여지(기회). 초록 강조.
+    const good = eligible
+      .filter((s) => s.metrics.cost >= th.costFloor &&
+        roasBand(roasPct(s.metrics), targetRoas) === "green")
+      .sort(byCostDesc);
+    if (good.length > 0) {
+      out.push(mk("highRoasSegment", good,
+        `${dim} ROAS가 목표 ${targetRoas}% 이상 - 가중치 상향 검토`,
+        ["총비용", "ROAS"], true));
+    }
+  }
+
+  // 클릭률 낮음 — 노출은 충분한데 클릭이 안 나오는 구간.
+  const lowCtr = eligible
+    .filter((s) => s.metrics.impressions >= th.adImpFloor && ctrPct(s.metrics) < th.lowCtrPct)
+    .sort(byCostDesc);
+  if (lowCtr.length > 0) {
+    out.push(mk("lowCtrSegment", lowCtr,
+      `${dim} 구간 노출 ${th.adImpFloor.toLocaleString()}회 이상인데 클릭률 ${th.lowCtrPct}% 미만`,
+      ["노출", "클릭"], false));
+  }
+
+  return out;
 }
 
 /** 지면별 성과 표 — 전환 0(③)과 저수익률(⑦) 지면 후보가 같은 표를 쓴다. 그룹 내 전체 지면 문맥 포함. */
@@ -396,10 +450,12 @@ function placementTable(
   placements: NamedMetrics[],
   targetRoas?: number,
   problemLabels?: ReadonlySet<string>,
+  boldColumns?: string[],
 ): BriefTableSpec {
   return {
     title,
-    columns: ["지면", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
+    columns: ["지면", "노출", "클릭", "총비용", "구매완료", "매출액", "ROAS"],
+    boldColumns,
     rows: [...placements].sort(byCostDesc).map((p) => ({
       problem: problemLabels?.has(p.label) || undefined,
       cells: [
@@ -454,6 +510,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         table: {
           title: `${gName} - 전환 0 키워드`,
           columns: KW_COLUMNS,
+          boldColumns: ["총비용", "구매완료"],
           rows: zeroConv.map((r) => kwRow(r, targetRoas, true)),
         },
         // 라벨에 그룹 경로 접두 — 같은 키워드가 여러 그룹에 있을 때 이력 추적 오매칭 방지(코덱스 리뷰 P2).
@@ -482,8 +539,9 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             비용합계: below.reduce((s, r) => s + r.metrics.cost, 0),
           },
           table: {
-            title: `${gName} - 목표 수익률 ${targetRoas}% 미달 키워드`,
+            title: `${gName} - 목표 ROAS ${targetRoas}% 미달 키워드`,
             columns: KW_COLUMNS,
+            boldColumns: ["총비용", "ROAS"],
             rows: below.map((r) => kwRow(r, targetRoas, true)),
           },
           targets: below.map((r) => toTarget(`${gName} > ${r.keyword}`, r.metrics)),
@@ -514,6 +572,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           table: {
             title: `${gName} - 목표 달성, 순위 상승 여지 키워드`,
             columns: [...KW_COLUMNS, "추정순위"],
+            boldColumns: ["ROAS", "추정순위"],
             rows: lowRank.map((r) => {
               const base = kwRow(r, targetRoas);
               return { ...base, cells: [...base.cells, `${r.rank}위`] };
@@ -543,10 +602,11 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           },
           table: {
             title: `${gName} - 그룹 합산 성과`,
-            columns: ["광고그룹", "노출", "클릭", "총비용", "구매완료", "매출액", "수익률"],
+            // 광고그룹명은 이슈가 걸린 캠페인 > 그룹 헤더에 이미 있어 표에서는 뺀다.
+            columns: ["노출", "클릭", "총비용", "구매완료", "매출액", "ROAS"],
+            boldColumns: ["총비용", "ROAS"],
             rows: [{
               cells: [
-                gName,
                 gm.impressions.toLocaleString(),
                 gm.clicks.toLocaleString(),
                 `${gm.cost.toLocaleString()}원`,
@@ -593,7 +653,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           count: zeroPlace.length,
           비용합계: zeroPlace.reduce((s, p) => s + p.metrics.cost, 0),
         },
-        table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(zeroPlace.map((p) => p.label))),
+        table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(zeroPlace.map((p) => p.label)), ["총비용", "구매완료"]),
         targets: zeroPlace.map((p) => toTarget(`${gName} > ${p.label}`, p.metrics)),
         selected: false,
       });
@@ -616,25 +676,34 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             count: lowPlace.length,
             비용합계: lowPlace.reduce((s, p) => s + p.metrics.cost, 0),
           },
-          table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(lowPlace.map((p) => p.label))),
+          table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(lowPlace.map((p) => p.label)), ["총비용", "ROAS"]),
           targets: lowPlace.map((p) => toTarget(`${gName} > ${p.label}`, p.metrics)),
           selected: false,
         });
       }
     }
 
-    // ⑧⑨⑪ 세그먼트 격차 — 상대 격차라 목표 ROAS 없이도 동작(표 색칠에만 사용).
+    // ⑧⑨⑪ 세그먼트 목표 미달 — 전체 구간이 정해진 차원(기기/성별/요일)은 노출 0으로 응답에서
+    // 빠진 구간도 0값 행으로 채워 표에서 비교할 수 있게 한다(수집 필터 impCnt>0 보완).
+    const padSegments = (segs: NamedMetrics[] | undefined, fullSet: string[]): NamedMetrics[] | undefined => {
+      if (!segs) return undefined;
+      // fullSet 순서대로 정렬해 채우고, fullSet 밖 라벨("알 수 없음" 등)은 뒤에 그대로 둔다.
+      const inSet = new Set(fullSet);
+      return [
+        ...fullSet.map((l) => segs.find((s) => s.label === l) ?? { label: l, metrics: ZERO_METRICS }),
+        ...segs.filter((s) => !inSet.has(s.label)),
+      ];
+    };
     const dims: Array<[BriefKind, string, NamedMetrics[] | undefined]> = [
-      ["genderBidSkew", "성별", gd.byGender],
+      ["genderBidSkew", "성별", padSegments(gd.byGender, ["남성", "여성"])],
       ["ageBidSkew", "연령대", gd.byAge],
-      ["deviceBidSkew", "기기", gd.byDevice],
+      ["deviceBidSkew", "기기", padSegments(gd.byDevice, ["PC", "모바일"])],
       ["hourWeekdaySkew", "시간대", gd.byHour],
-      ["hourWeekdaySkew", "요일", gd.byDay ? foldByWeekday(gd.byDay) : undefined],
+      ["hourWeekdaySkew", "요일", gd.byDay ? padSegments(foldByWeekday(gd.byDay), WEEKDAY_ORDER) : undefined],
       ["regionBidSkew", "지역", gd.byRegion],
     ];
     for (const [kind, dim, segs] of dims) {
-      const c = skewCandidate(kind, dim, segs, targetRoas, th, scope);
-      if (c) out.push(c);
+      out.push(...segmentCandidates(kind, dim, segs, targetRoas, th, scope));
     }
   }
 
@@ -672,6 +741,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         table: {
           title: `${scope.campaign} > ${scope.group} - 클릭률 낮은 소재`,
           columns: ["소재", "노출", "클릭", "클릭률", "총비용", "구매완료", "매출액"],
+          boldColumns: ["노출", "클릭률"],
           rows: lowCtr.map((a) => ({
             problem: true,
             cells: [
@@ -694,10 +764,18 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
   // ⑤ 전기 대비 전환이 빠진 상품 — 보고 로그의 "객단가 높은 [온열 찜질기]에서 전환이
   // 발생하지 않아"가 이것. 매출 낙폭 임계로 소음을 거른다.
   if (input.products) {
+    // 광고비를 줄여서 매출이 따라 준 경우는 성과 문제가 아니다 — 매출 감소율이 광고비
+    // 감소율보다 클 때(효율 자체가 나빠졌을 때)만 이슈로 잡는다.
+    const worseThanSpend = (p: BriefProductDelta): boolean => {
+      const costRatio = p.prev.cost > 0 ? p.cur.cost / p.prev.cost : 1;
+      const revRatio = p.prev.revenue > 0 ? p.cur.revenue / p.prev.revenue : 0;
+      return revRatio < costRatio;
+    };
     const dropped = input.products
       .filter((p) =>
         p.cur.purchaseConv < p.prev.purchaseConv &&
-        p.prev.revenue - p.cur.revenue >= th.revenueDropFloor,
+        p.prev.revenue - p.cur.revenue >= th.revenueDropFloor &&
+        worseThanSpend(p),
       )
       .sort((a, b) => (b.prev.revenue - b.cur.revenue) - (a.prev.revenue - a.cur.revenue));
     if (dropped.length > 0) {
@@ -711,16 +789,18 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         },
         table: {
           title: "상품별 성과 (이전 기간 대비)",
-          columns: ["상품", "총비용", "구매완료", "이전 구매완료", "매출액", "이전 매출액", "수익률"],
+          // 시간 순서대로 이전 → 현재. (2026-07-21 열 순서 개편)
+          columns: ["상품", "총비용", "이전 구매완료", "구매완료", "이전 매출액", "매출액", "ROAS"],
+          boldColumns: ["이전 매출액", "매출액"],
           rows: dropped.map((p) => ({
             problem: true,
             cells: [
               p.label,
               `${p.cur.cost.toLocaleString()}원`,
-              String(p.cur.purchaseConv),
               String(p.prev.purchaseConv),
-              `${p.cur.revenue.toLocaleString()}원`,
+              String(p.cur.purchaseConv),
               `${p.prev.revenue.toLocaleString()}원`,
+              `${p.cur.revenue.toLocaleString()}원`,
               `${roasPct(p.cur).toFixed(0)}%`,
             ],
             band: targetRoas != null ? roasBand(roasPct(p.cur), targetRoas) : undefined,

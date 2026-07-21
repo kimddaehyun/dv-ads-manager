@@ -21,6 +21,7 @@ const FONT = "Pretendard, -apple-system, sans-serif";
 
 // 문제 행 배경 — DESIGN.md state-error #DC2626을 7% 투명도로. 문제인 행만 칠한다.
 const PROBLEM_BG = "rgba(220, 38, 38, 0.07)";
+const GOOD_BG = "rgba(22, 163, 74, 0.07)";
 
 /** 첫 열(라벨) 최대 폭 — 긴 "캠페인 > 그룹" 라벨이 표를 무한정 넓히지 않게 말줄임. */
 const LABEL_MAX_W = 280;
@@ -104,16 +105,20 @@ export async function renderTablePng(spec: BriefTableSpec): Promise<Blob> {
   }
   y += HEAD_H;
 
-  // 본문
+  // 본문 — 판정에 쓴 지표 열(boldColumns)은 굵게: 강조(problem/good) 행에만, 강조 행이 없으면 전 행.
+  const boldIdx = new Set((spec.boldColumns ?? []).map((c) => spec.columns.indexOf(c)));
+  const hasMark = rows.some((r) => r.problem || r.good);
   ctx.font = `400 13px ${FONT}`;
   for (const r of rows) {
-    if (r.problem) {
-      ctx.fillStyle = PROBLEM_BG;
+    if (r.problem || r.good) {
+      ctx.fillStyle = r.problem ? PROBLEM_BG : GOOD_BG;
       ctx.fillRect(PAD, y, w - PAD * 2, ROW_H);
     }
     ctx.fillStyle = "#171717";
     x = PAD;
     for (let c = 0; c < spec.columns.length; c++) {
+      const bold = boldIdx.has(c) && (r.problem || r.good || !hasMark);
+      ctx.font = `${bold ? 700 : 400} 13px ${FONT}`;
       ctx.textAlign = c === 0 ? "left" : "right";
       const text = c === 0 ? ellipsize(ctx, r.cells[c] ?? "", cols[c] - 20) : r.cells[c] ?? "";
       ctx.fillText(text, c === 0 ? x + 10 : x + cols[c] - 10, y + ROW_H / 2);
