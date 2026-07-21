@@ -500,6 +500,7 @@ export function closePopover() {
   popoverEl = null;
   popoverView = "list";
   listSearchQuery = "";
+  statusFilter = null;
   activeGroupFilter = "all";
   collapsedSectionKeys.clear();
   popoverFullscreen = false;
@@ -519,6 +520,36 @@ let popoverView: PopoverView = "list";
 // 내 계정(list view) 검색 쿼리 — 추가된 계정만 필터링. 행 DOM은 그대로 두고
 // display:none 토글로 visibility 제어 → 입력 중 focus 유지. popover 닫힐 때 초기화.
 let listSearchQuery = "";
+
+// 상태 컬럼 필터 — null이면 전체. '상태' 헤더 클릭 드롭다운에서 선택.
+// 판정 값은 syncIssueChip이 row.dataset.statusKind에 남긴다 (이슈 겹침(danger)도 "warn"으로
+// 기록 — 배지가 "확인 필요"로 보이므로 필터도 확인 필요에 묶인다).
+type StatusKind = "ok" | "warn" | "budget" | "stopped";
+let statusFilter: StatusKind | null = null;
+
+const STATUS_FILTER_OPTIONS: {
+  value: StatusKind | null;
+  label: string;
+  title: string;
+}[] = [
+  { value: null, label: "전체", title: "모든 계정을 보여줍니다" },
+  { value: "ok", label: "이상 없음", title: "발견된 이슈가 없는 계정입니다" },
+  {
+    value: "warn",
+    label: "확인 필요",
+    title: "다른 사람이 광고를 수정했거나 광고주센터 알림이 있는 계정입니다 (이슈가 여러 개 겹친 계정 포함)",
+  },
+  {
+    value: "budget",
+    label: "예산 도달",
+    title: "캠페인·광고그룹·공유 예산을 다 써서 멈춘 광고가 있는 계정입니다",
+  },
+  {
+    value: "stopped",
+    label: "광고 중단",
+    title: "비즈머니가 다 떨어져 계정의 광고가 멈춰 있는 계정입니다",
+  },
+];
 
 // 그룹 칩 필터 상태 — "all"(구획 전체) | groupId(그 그룹만) | "unassigned"(미지정만).
 // "내 계정" view 전용. popover 닫힐 때 "all"로 리셋.
@@ -746,10 +777,37 @@ async function renderListView(wrap: HTMLElement) {
           <span>${c.label}</span><span class="dvads-multi-sort-ind">${sortInd}</span>
         </th>`;
       }).join("")}
+      <th class="dvads-multi-th-status">상태</th>
       <th class="dvads-multi-th-act">작업</th>
     </tr></thead>
   `;
   headWrap.appendChild(headTable);
+
+  // '상태' 헤더 클릭 → 상태 필터 드롭다운. 선택한 상태의 계정만 표시(전체로 해제).
+  const statusTh = headTable.querySelector<HTMLTableCellElement>("th.dvads-multi-th-status");
+  if (statusTh) {
+    // 필터 활성 표시는 라벨 교체 없이 색(주황)으로만 — 헤더 폭이 흔들리지 않게.
+    const syncFilteredCue = () => {
+      statusTh.classList.toggle("is-filtered", statusFilter !== null);
+    };
+    syncFilteredCue();
+    attachActionMenu({
+      trigger: statusTh,
+      ariaLabel: "상태 필터",
+      items: () =>
+        STATUS_FILTER_OPTIONS.map((o) => ({
+          label: o.label,
+          title: o.title,
+          checked: statusFilter === o.value,
+          onClick: () => {
+            statusFilter = o.value;
+            syncFilteredCue();
+            applyListSearchFilter(wrap, listSearchQuery);
+            updateBulkActionUI(wrap);
+          },
+        })),
+    });
+  }
 
   const tableWrap = document.createElement("div");
   tableWrap.className = "dvads-multi-table-wrap";
@@ -836,8 +894,8 @@ async function renderListView(wrap: HTMLElement) {
   void paintChangeWatchRows(sorted.map((s) => s.entry.adAccountNo));
   void refreshBadge();
 
-  // 기존 검색 쿼리가 있으면(예: sort 변경 후 재렌더) 적용.
-  if (listSearchQuery) applyListSearchFilter(wrap, listSearchQuery);
+  // 기존 검색 쿼리/상태 필터가 있으면(예: sort 변경 후 재렌더) 적용.
+  if (listSearchQuery || statusFilter) applyListSearchFilter(wrap, listSearchQuery);
 
   // select-all 헤더 체크박스 wire + 초기 UI(설정 버튼 라벨/select-all 상태) 동기화.
   wireSelectAll(wrap);
@@ -868,13 +926,16 @@ function applyListSearchFilter(wrap: HTMLElement, query: string): void {
     const collapsed = header?.classList.contains("is-collapsed") ?? false;
     const hay = row.dataset.searchHaystack || "";
     const match = !q || hay.includes(q);
-    row.style.display = match && !collapsed ? "" : "none";
+    // 상태 필터 — 아직 판정 전(kind 미기록)인 행은 숨기지 않는다(로딩 중 전부 사라짐 방지).
+    const kind = row.dataset.statusKind;
+    const statusMatch = !statusFilter || !kind || kind === statusFilter;
+    row.style.display = match && statusMatch && !collapsed ? "" : "none";
   });
-  // 그룹 섹션 헤더 — 검색 중일 땐 보이는 계정 행이 하나도 없는 섹션 헤더를 숨긴다(빈 구획 방지).
-  // 검색어가 없으면 헤더는 항상 표시(빈 그룹도 관리 가능하도록).
+  // 그룹 섹션 헤더 — 검색/상태 필터 중일 땐 보이는 계정 행이 하나도 없는 섹션 헤더를 숨긴다(빈 구획 방지).
+  // 필터가 없으면 헤더는 항상 표시(빈 그룹도 관리 가능하도록).
   wrap.querySelectorAll<HTMLTableRowElement>("tr.dvads-multi-group-tr").forEach((header) => {
     const key = header.dataset.sectionKey;
-    if (!q || !key) {
+    if ((!q && !statusFilter) || !key) {
       header.style.display = "";
       return;
     }
@@ -1250,6 +1311,7 @@ function buildSectionHeaderRow(section: Section, wrap: HTMLElement): HTMLTableRo
     <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="revenue">${revStr}</td>
     <td class="dvads-multi-td-num" data-k="conversions"></td>
     <td class="dvads-multi-td-num dvads-multi-group-subtotal" data-k="roas">${roasStr}</td>
+    <td class="dvads-multi-td-status"></td>
     <td class="dvads-multi-td-act">${
       g ? '<button class="dvads-multi-action-trigger dvads-multi-group-action" type="button" aria-label="그룹 메뉴">⋯</button>' : ""
     }</td>
@@ -2808,10 +2870,10 @@ function searchKebabItems(): ActionMenuItem[] {
   ];
 }
 
-// popover 기본 폭 — 두 탭 동일 776px (큰 수치 표시 시 행이 짤리지 않게 좌우 8px씩 추가).
+// popover 기본 폭 — 두 탭 동일 940px (상태 컬럼 추가로 776px에선 작업 칸이 잘림, 2026-07-21).
 // 크게 보기 모드에선 CSS가 폭 무시하고 viewport 채움.
 function applyPopoverWidth(_view: PopoverView): void {
-  popoverEl?.style.setProperty("--dvads-multi-popover-width", "776px");
+  popoverEl?.style.setProperty("--dvads-multi-popover-width", "940px");
 }
 
 /**
@@ -2925,7 +2987,6 @@ function renderTableRow(
     <td class="dvads-multi-td-name">
       <div class="dvads-multi-name-line">
         <div class="dvads-multi-name" title="${escapeHtml(entry.name)}">${escapeHtml(displayName)}</div>
-        <button class="dvads-multi-issue-badge" type="button" style="display:none" aria-label="계정 이슈"></button>
       </div>
       <div class="dvads-multi-no">${subLine}</div>
     </td>
@@ -2938,6 +2999,9 @@ function renderTableRow(
     <td class="dvads-multi-td-num" data-k="revenue">-</td>
     <td class="dvads-multi-td-num" data-k="conversions">-</td>
     <td class="dvads-multi-td-num" data-k="roas">-</td>
+    <td class="dvads-multi-td-status">
+      <button class="dvads-multi-status-badge" type="button" style="display:none" aria-label="계정 이슈"></button>
+    </td>
     <td class="dvads-multi-td-act">
       <button class="dvads-multi-action-trigger" type="button" aria-label="작업 메뉴">⋯</button>
     </td>
@@ -2972,11 +3036,11 @@ function renderTableRow(
     scheduleHideBrandTooltip();
   });
 
-  // 이슈 카운트 배지 — 이름 셀 안이라 클릭이 계정 이동(goTo)으로 새지 않게 전파를 끊는다.
-  const issueBadge = tr.querySelector<HTMLButtonElement>(".dvads-multi-issue-badge");
-  issueBadge?.addEventListener("click", (e) => {
+  // 상태 배지 클릭 → 계정 이슈 패널. 행 클릭(체크박스 토글)으로 새지 않게 전파를 끊는다.
+  const statusBadge = tr.querySelector<HTMLButtonElement>(".dvads-multi-status-badge");
+  statusBadge?.addEventListener("click", (e) => {
     e.stopPropagation();
-    void openChangeWatchPanel(entry, issueBadge);
+    void openChangeWatchPanel(entry, statusBadge);
   });
 
   // 체크박스 wire — 선택 토글 + 헤더 카운트 동기화.
@@ -3845,38 +3909,65 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
   const issues = snap.issues ?? [];
   row.dataset.statusIssueCount = String(issues.length);
   row.dataset.statusIssueTitles = issues.map((i) => i.title).join("\n");
+  // 비즈머니 소진(잔액 ≤ 0) = 계정 자체 광고 중단. 상단 빨간 배너는 알림 피드에 안 와서
+  // 잔액으로 직접 판정한다 (2026-07-20 정찰).
+  row.dataset.statusBizDepleted =
+    snap.bizMoney != null && snap.bizMoney <= 0 ? "1" : "0";
   syncIssueChip(row);
 }
 
 /**
  * 계정 이슈 표시는 서로 다른 시점에 도는 두 경로가 칠한다 — 스냅샷 paint(알림 피드)와
  * 변경이력 스캔(예산/수정). 각 경로는 dataset에 자기 판정만 남기고 여기서 합쳐 그린다.
- * 개수 = 변경이력 unread + 광고주센터 알림 이슈. 이슈가 있으면 계정명 왼쪽에 빨간 원형
- * 개수 배지 + 행 배경 연한 빨강 — 확인(패널 [모두 읽음])하면 배지가 사라진다.
+ * '상태' 컬럼 배지 — 이슈 종류별 4단계:
+ *   - "광고 중단"(빨강) = 계정 자체 중단(비즈머니 소진, 잔액 ≤ 0)
+ *   - "예산 도달"(주황) = 캠페인/그룹/공유예산 잠금(변경이력 budget)
+ *   - "확인 필요"(호박) = 외부 수정 unread + 광고주센터 알림 이슈
+ *   - 이슈 종류가 2개 이상 겹치면 "확인 필요"를 빨강으로
+ *   - 아무것도 없으면 "정상"(초록)
+ * 배지 클릭 → 계정 이슈 패널. 확인(패널 [모두 읽음])하면 정상으로 돌아간다.
  */
 function syncIssueChip(row: HTMLTableRowElement) {
-  const badge = row.querySelector<HTMLButtonElement>(".dvads-multi-issue-badge");
+  const badge = row.querySelector<HTMLButtonElement>(".dvads-multi-status-badge");
   if (!badge) return;
   const naver = Number(row.dataset.statusIssueCount ?? "0");
   const change = Number(row.dataset.statusChangeCount ?? "0");
   const budget = Number(row.dataset.statusChangeBudget ?? "0");
-  const total = naver + change;
-  row.classList.toggle("dvads-multi-tr-issues", total > 0);
-  if (total === 0) {
-    badge.style.display = "none";
-    badge.textContent = "";
-    return;
+  const bizDepleted = row.dataset.statusBizDepleted === "1";
+  const external = change - budget + naver;
+  const kinds = [bizDepleted, budget > 0, external > 0].filter(Boolean).length;
+  row.classList.toggle("dvads-multi-tr-issues", kinds > 0);
+  badge.classList.remove("is-ok", "is-warn", "is-budget", "is-stopped", "is-danger");
+  if (kinds >= 2) {
+    badge.textContent = "확인 필요";
+    badge.classList.add("is-danger");
+    row.dataset.statusKind = "warn";
+  } else if (bizDepleted) {
+    badge.textContent = "광고 중단";
+    badge.classList.add("is-stopped");
+    row.dataset.statusKind = "stopped";
+  } else if (budget > 0) {
+    badge.textContent = "예산 도달";
+    badge.classList.add("is-budget");
+    row.dataset.statusKind = "budget";
+  } else if (external > 0) {
+    badge.textContent = "확인 필요";
+    badge.classList.add("is-warn");
+    row.dataset.statusKind = "warn";
+  } else {
+    badge.textContent = "이상 없음";
+    badge.classList.add("is-ok");
+    row.dataset.statusKind = "ok";
   }
-  const text = total > 99 ? "99+" : String(total);
-  badge.textContent = text;
   badge.style.display = "";
-  badge.classList.toggle("is-two-digit", text.length === 2);
-  badge.classList.toggle("is-three-digit", text.length >= 3);
   const lines: string[] = [];
+  if (bizDepleted) lines.push("비즈머니가 다 떨어져 광고가 멈춰 있어요");
   if (budget > 0) lines.push("예산을 다 써서 멈춘 광고가 있어요");
   if (change - budget > 0) lines.push("우리가 아닌 다른 사람이 광고를 수정했어요");
   if (row.dataset.statusIssueTitles) lines.push(row.dataset.statusIssueTitles);
-  badge.title = lines.join("\n");
+  badge.title = lines.join("\n") || "발견된 이슈가 없어요";
+  // 상태 필터가 켜져 있으면 판정이 바뀔 때마다 표시/숨김도 다시 계산.
+  if (statusFilter && popoverEl) applyListSearchFilter(popoverEl, listSearchQuery);
 }
 
 // ─── 변경이력 알림 상세 패널 ─────────────────────────────────────────────
@@ -3901,7 +3992,7 @@ function onChangePanelPointer(e: MouseEvent): void {
   const t = e.target as HTMLElement | null;
   if (!t || changePanelEl.contains(t)) return;
   // 배지 클릭은 openChangeWatchPanel이 토글로 처리 — 여기서 먼저 닫으면 곧바로 다시 열린다.
-  if (t.closest?.(".dvads-multi-issue-badge")) return;
+  if (t.closest?.(".dvads-multi-status-badge")) return;
   closeChangeWatchPanel();
 }
 

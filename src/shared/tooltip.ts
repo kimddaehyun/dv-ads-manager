@@ -7,7 +7,7 @@
  * "top"(트리거 위) + 공간 부족 시 자동 flip.
  */
 
-export type TooltipPlacement = "top" | "bottom";
+export type TooltipPlacement = "top" | "bottom" | "right";
 
 export interface AttachTooltipOptions {
   placement?: TooltipPlacement;
@@ -41,6 +41,22 @@ export function showTooltip(
     }
     const rect = anchor.getBoundingClientRect();
     const tt = el.getBoundingClientRect();
+
+    // "right" — 트리거 오른쪽에 세로 중앙 정렬. 공간 부족 시 왼쪽으로 flip.
+    if (preferred === "right") {
+      let left = rect.right + 8;
+      if (left + tt.width > window.innerWidth - 8) left = Math.max(8, rect.left - tt.width - 8);
+      let top = rect.top + rect.height / 2 - tt.height / 2;
+      top = Math.max(8, Math.min(top, window.innerHeight - tt.height - 8));
+      el.style.left = `${left}px`;
+      el.style.top = `${top}px`;
+      el.dataset.placement = left >= rect.right ? "right" : "left";
+      // 캐럿 세로 위치 — anchor 중앙 기준, tooltip 내부 10px 안쪽 clamp.
+      const caretTop = Math.max(10, Math.min(tt.height - 10, rect.top + rect.height / 2 - top));
+      el.style.setProperty("--dvads-tooltip-caret-y", `${caretTop}px`);
+      return;
+    }
+
     // 가로: 트리거 중앙 정렬 + viewport 좌우 8px clamp.
     let left = rect.left + rect.width / 2 - tt.width / 2;
     left = Math.max(8, Math.min(left, window.innerWidth - tt.width - 8));

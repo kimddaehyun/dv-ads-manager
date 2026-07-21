@@ -22,6 +22,8 @@
  * popup 등 컨테이너가 dismiss될 때 `closeAllOpenDropdowns()`를 호출해 잔여 패널 정리.
  */
 
+import { attachTooltip, hideTooltip } from "./tooltip";
+
 export interface DropdownOption<V extends string> {
   value: V;
   label: string;
@@ -257,6 +259,8 @@ export interface ActionMenuItem {
   checked?: boolean;
   /** 클릭해도 메뉴를 닫지 않음 (체크박스 토글용). 클릭 후 항목 재렌더로 체크 표시 즉시 갱신. */
   keepOpen?: boolean;
+  /** 항목 호버 시 다크 툴팁(공용 dvads-tooltip, 우측 배치)으로 보여줄 설명. */
+  title?: string;
 }
 
 export interface AttachActionMenuOptions {
@@ -313,6 +317,8 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
     panel.remove();
     panel = null;
     opts.trigger.classList.remove("is-open");
+    // 항목 호버 툴팁이 떠 있는 채로 패널이 사라지면 mouseleave가 안 와서 고아로 남는다.
+    hideTooltip();
   };
 
   // 패널 항목 채우기 — 체크박스 토글(keepOpen) 시 재호출해 체크 표시를 갱신한다.
@@ -336,6 +342,7 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
         btn.classList.add("is-disabled");
         btn.disabled = true;
       }
+      if (item.title) attachTooltip(btn, item.title, { placement: "right" });
       if (item.checked !== undefined) {
         // 토글 항목 — 선택 시 주황 배경 강조(is-selected), 미선택 시 일반. 체크 표시 아이콘은 안 씀.
         btn.classList.toggle("is-selected", item.checked);

@@ -158,6 +158,7 @@
   font-weight: 500;
   line-height: 1.5;
   word-break: keep-all;
+  white-space: pre-line; /* \n 줄바꿈 지원 (이슈 기준 설명 등 여러 줄 툴팁) */
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   pointer-events: none;
 }
@@ -179,6 +180,27 @@
 .dvads-tooltip[data-placement="bottom"]::after {
   bottom: 100%;
   border-bottom: 5px solid #1f2937;
+}
+/* 좌/우 배치 — 캐럿이 세로 방향(--dvads-tooltip-caret-y)으로 anchor를 가리킨다. */
+.dvads-tooltip[data-placement="right"]::after,
+.dvads-tooltip[data-placement="left"]::after {
+  left: auto;
+  top: var(--dvads-tooltip-caret-y, 50%);
+  transform: translateY(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+}
+.dvads-tooltip[data-placement="right"]::after {
+  right: 100%;
+  border-left: 0;
+  border-right: 5px solid #1f2937;
+}
+.dvads-tooltip[data-placement="left"]::after {
+  left: 100%;
+  border-right: 0;
+  border-left: 5px solid #1f2937;
 }
 .dvads-rank-badge.lock {
   background: #F3F4F6;
@@ -2256,49 +2278,66 @@ td.dvads-period-delta-down {
 }
 
 
-/* ─── 계정 이슈 배지 ──────────────────────────────────────────────────── */
+/* ─── 계정 상태 배지 (상태 컬럼) ──────────────────────────────────────── */
 
-/* 이슈 있는 행 — 배경은 일반 행과 동일(빨간 개수 배지로만 구분, 2026-07-20 연한 빨강 배경 폐기). */
-/* 계정명 좌상단에 겹쳐 얹는 원형 개수 배지 — 우상단 버튼 배지(.dvads-multi-btn-badge)와 같은 모양.
+/* '작업' 왼쪽의 상태 컬럼 — 정상/확인필요/광고 중단 3단계 알약 배지.
    클릭하면 계정 이슈 패널(케밥 "계정 이슈"와 동일)이 열린다. */
 .dvads-multi-table td.dvads-multi-td-name .dvads-multi-name-line {
-  position: relative;
   min-width: 0;
 }
-.dvads-multi-issue-badge {
-  position: absolute;
-  left: -7px;
-  top: -7px;
-  z-index: 1;
-  width: 16px;
-  height: 16px;
-  padding: 0;
-  border: 0;
-  background: #DC2626;
-  color: #ffffff;
-  border-radius: 50%;
-  font-family: inherit;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 16px;
+.dvads-multi-table th.dvads-multi-th-status,
+.dvads-multi-table td.dvads-multi-td-status {
   text-align: center;
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* '상태' 헤더 = 상태 필터 드롭다운 트리거 — 정렬 헤더와 동일한 클릭 어포던스. */
+.dvads-multi-table th.dvads-multi-th-status {
   cursor: pointer;
-  /* 흰 테두리 — 계정명 글자 위에 얹혀도 배지 경계가 뭉개지지 않게. */
-  border: 2px solid #ffffff;
-  box-sizing: content-box;
-  transition: background 120ms ease;
+  user-select: none;
 }
-.dvads-multi-issue-badge:hover {
-  background: #B91C1C;
+.dvads-multi-table th.dvads-multi-th-status:hover {
+  background: #f3f4f6;
+  color: #171717;
 }
-.dvads-multi-issue-badge.is-two-digit {
-  font-size: 9px;
-  letter-spacing: -0.5px;
+/* 필터 활성 — DV 주황으로 "거르는 중" 표시. */
+.dvads-multi-table th.dvads-multi-th-status.is-filtered {
+  color: #E6783B;
+  font-weight: 600;
 }
-.dvads-multi-issue-badge.is-three-digit {
-  font-size: 8px;
-  letter-spacing: -0.5px;
+.dvads-multi-status-badge {
+  display: inline-block;
+  margin: 0 auto;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: filter 120ms ease;
+}
+.dvads-multi-status-badge:hover {
+  filter: brightness(0.95);
+}
+.dvads-multi-status-badge.is-ok {
+  background: #F0FDF4;
+  color: #16A34A;
+}
+.dvads-multi-status-badge.is-warn {
+  background: #FFFBEB;
+  color: #B45309;
+}
+.dvads-multi-status-badge.is-budget {
+  background: #FFF7ED;
+  color: #EA580C;
+}
+/* 광고 중단(계정 중단)과 이슈 겹침(확인필요 강조)은 같은 빨강 계열. */
+.dvads-multi-status-badge.is-stopped,
+.dvads-multi-status-badge.is-danger {
+  background: #FEF2F2;
+  color: #DC2626;
 }
 
 /* ─── 변경이력 상세 패널 ──────────────────────────────────────────────── */
@@ -3037,8 +3076,10 @@ td.dvads-period-delta-down {
   color: #E6783B;
 }
 /* 상태 컬럼 — 권한 라벨. 좌측 정렬, 보조 색상. ID와 동일 폭(130px)으로 시각 균형. */
+/* 검색 view 전용 — 리스트 view의 상태 배지 셀(.dvads-multi-td-status)과 클래스가 겹치므로
+   검색 테이블로 범위를 한정 (안 하면 배지 가운데 정렬이 여기 좌측 정렬에 덮인다). */
 .dvads-multi-table th.dvads-multi-th-search-status,
-.dvads-multi-table td.dvads-multi-td-status {
+.dvads-multi-search-table td.dvads-multi-td-status {
   width: 130px;
   padding: 12px 12px;
   text-align: left;
