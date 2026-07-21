@@ -3,7 +3,7 @@ import {
   roasBand, roasPct, YELLOW_FLOOR_RATIO,
   flattenKeywords, extractCandidates, COST_FLOOR,
   pickRankTargets, LOW_RANK_FLOOR, AD_IMP_FLOOR, LOW_CTR_PCT, foldByWeekday,
-  type BriefProductDelta, type BriefGroupData, type BriefAdRow,
+  type BriefGroupData, type BriefAdRow,
 } from "./brief-rules";
 import { ZERO_METRICS, type ReportMetrics } from "@/features/report/report-data";
 import { type KeywordGroup } from "@/features/report/report-variable";
@@ -458,9 +458,16 @@ describe("extractCandidates - genderBidSkew / ageBidSkew (목표 미달 구간, 
   });
 
   it("판정은 그룹 안에서만 — 미달 구간이 있는 그룹만 후보", () => {
+    // 두 구간 모두 채운다 — 한 구간만 돌아간 그룹은 비교 대상이 없어 목표 대비 후보를 안 만든다.
     const two = [
-      gd("A", "G1", 1, { byGender: [{ label: "남성", metrics: m(50_000, 5, 450_000) }] }),  // green
-      gd("B", "G2", 2, { byGender: [{ label: "여성", metrics: m(50_000, 2, 200_000) }] }),  // none
+      gd("A", "G1", 1, { byGender: [
+        { label: "남성", metrics: m(50_000, 5, 450_000) },  // green
+        { label: "여성", metrics: m(50_000, 5, 450_000) },  // green
+      ] }),
+      gd("B", "G2", 2, { byGender: [
+        { label: "남성", metrics: m(50_000, 5, 450_000) },  // green
+        { label: "여성", metrics: m(50_000, 2, 200_000) },  // none
+      ] }),
     ];
     const cands = extractCandidates({ ...base, groups: two })
       .filter((x) => x.kind === "genderBidSkew");
@@ -537,6 +544,15 @@ describe("extractCandidates - 세그먼트 확장: 전환0 / 상향 여지 / 클
     });
     expect(cands.find((x) => x.kind === "highRoasSegment")).toBeUndefined();
     expect(cands.find((x) => x.kind === "zeroConvSegment")).toBeDefined();
+  });
+
+  it("한 구간만 돌아간 그룹(모바일 전용)은 목표 대비 후보를 만들지 않는다", () => {
+    const cands = extractCandidates(withDevice([
+      { label: "PC", metrics: { ...ZERO_METRICS } },        // 노출·비용 0 = 미운영
+      { label: "모바일", metrics: m(50_000, 5, 450_000) },   // 900% green
+    ]));
+    expect(cands.find((x) => x.kind === "highRoasSegment")).toBeUndefined();
+    expect(cands.find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
   });
 
   it("노출 충분 + 클릭률 미만 구간 → lowCtrSegment", () => {
@@ -719,40 +735,6 @@ describe("extractCandidates - lowCtrAd (그룹 단위)", () => {
     const plAds = [ad("같은문구", 600, 1, "G1", 1), ad("같은문구", 600, 1, "G2", 2)];
     expect(extractCandidates({ ...base, plAds })
       .find((x) => x.kind === "lowCtrAd")).toBeUndefined();
-  });
-});
-
-describe("extractCandidates - productConvDrop", () => {
-  const products: BriefProductDelta[] = [
-    // 전환 5 → 0, 매출 -340,000 → 후보
-    { label: "온열 찜질기", cur: m(80_000, 0, 0), prev: m(75_000, 5, 340_000) },
-    // 전환 유지 → 후보 아님
-    { label: "대나무 돗자리", cur: m(50_000, 4, 300_000), prev: m(50_000, 4, 310_000) },
-    // 전환 증가 → 후보 아님
-    { label: "17MM", cur: m(60_000, 8, 500_000), prev: m(60_000, 3, 200_000) },
-    // 전환 감소하나 매출 낙폭이 임계 미만 → 후보 아님 (소음)
-    { label: "소품", cur: m(20_000, 1, 30_000), prev: m(20_000, 2, 35_000) },
-  ];
-  const base = { keywords: [] as KeywordGroup[], targetRoas: 800 };
-
-  it("전환이 줄고 매출 낙폭이 임계 이상인 상품만", () => {
-    const c = extractCandidates({ ...base, products }).find((x) => x.kind === "productConvDrop");
-    expect(c).toBeDefined();
-    expect(c!.facts.products).toBe("온열 찜질기");
-  });
-
-  it("매출 낙폭이 임계 미만이면 제외 — 소음 방지", () => {
-    const c = extractCandidates({ ...base, products }).find((x) => x.kind === "productConvDrop");
-    expect(String(c!.facts.products)).not.toContain("소품");
-  });
-
-  it("표에 전기/현재를 나란히 — 비교가 문장의 근거다", () => {
-    const c = extractCandidates({ ...base, products }).find((x) => x.kind === "productConvDrop");
-    expect(c!.table.columns).toContain("이전 구매완료");
-  });
-
-  it("상품 데이터가 없으면 후보 없음", () => {
-    expect(extractCandidates(base).find((x) => x.kind === "productConvDrop")).toBeUndefined();
   });
 });
 

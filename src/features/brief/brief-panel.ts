@@ -15,6 +15,7 @@ import { resolveThresholds, SENSITIVITY_LABEL, type BriefSensitivity } from "./b
 import { distillTone } from "./brief-compose";
 import { loadBriefTone, saveBriefTone } from "./brief-tone";
 import { showTooltip, hideTooltip } from "@/shared/tooltip";
+import { attachActionMenu, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
 
 export interface BriefTextBlock {
   type: "text";
@@ -57,6 +58,8 @@ const REGEN_BUTTONS: Array<{ label: string; tone?: BriefTone }> = [
 let disposePanel: (() => void) | null = null;
 
 export function closeBriefPanel(): void {
+  // 성과 필터 등 portal 드롭다운 패널이 body에 남지 않게 함께 정리.
+  closeAllOpenDropdowns();
   disposePanel?.();
   disposePanel = null;
 }
@@ -406,8 +409,8 @@ export interface BriefPickState {
 }
 
 const REPORT_TYPE_OPTIONS: Array<{ value: BriefReportType; label: string }> = [
-  { value: "post_action_report", label: "사후보고" },
-  { value: "pre_action_proposal", label: "사전제안" },
+  { value: "post_action_report", label: "사후 보고" },
+  { value: "pre_action_proposal", label: "사전 제안" },
 ];
 
 /** 이슈 기준 직접 설정 입력 — 라벨은 비개발자 기준. */
@@ -416,7 +419,6 @@ const THRESHOLD_FIELDS: Array<{ key: keyof BriefThresholds; label: string; unit:
   { key: "lowCtrPct", label: "낮은 클릭률 기준", unit: "%", step: "0.1" },
   { key: "adImpFloor", label: "소재 판단 최소 노출", unit: "회" },
   { key: "lowRankFloor", label: "낮은 순위 기준", unit: "위" },
-  { key: "revenueDropFloor", label: "상품 매출 감소 기준", unit: "원" },
 ];
 
 /** 토글로 묶여 숨겨질 수 있는 이력성 후보 kind. */
@@ -509,12 +511,42 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   card.className = "dvads-brief-card dvads-brief-card-wide";
 
   const head = document.createElement("div");
-  head.className = "dvads-brief-head";
+  head.className = "dvads-brief-head dvads-brief-head-row";
   head.append("광고 성과 측정 ");
   const headName = document.createElement("span");
   headName.className = "dvads-brief-head-name";
   headName.textContent = opts.advertiserName;
   head.appendChild(headName);
+
+  // ── 성과 필터 — 제목 행 오른쪽 끝의 깔때기 아이콘 → 드롭다운. 아이콘 상태색 기준으로
+  // 목표 달성(초록)과 개선 필요(빨강·노랑)만 추려 본다. 보기 전용 — 선택 상태는 안 건드린다. ──
+  let perfFilter: "all" | "good" | "bad" = "all";
+  const filterBtn = document.createElement("button");
+  filterBtn.type = "button";
+  filterBtn.className = "dvads-brief-pick-filter-btn";
+  filterBtn.setAttribute("aria-label", "성과 필터");
+  filterBtn.innerHTML =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M7 12h10M10 18h4"/></svg>';
+  attachActionMenu({
+    trigger: filterBtn,
+    ariaLabel: "성과 필터",
+    items: () =>
+      ([
+        ["all", "전체"],
+        ["good", "목표 달성"],
+        ["bad", "개선 필요"],
+      ] as const).map(([value, label]) => ({
+        label,
+        checked: perfFilter === value,
+        onClick: () => {
+          perfFilter = value;
+          // 필터가 걸려 있음을 아이콘 색으로 남긴다 — 안 그러면 목록이 왜 짧은지 알 수 없다.
+          filterBtn.classList.toggle("is-filtering", value !== "all");
+          rowsByIdx.forEach((r) => r.refresh());
+        },
+      })),
+  });
+  head.appendChild(filterBtn);
   card.appendChild(head);
 
   const body = document.createElement("div");
@@ -528,12 +560,13 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     (e) => {
       if (e.shiftKey || Math.abs(e.deltaX) >= Math.abs(e.deltaY)) return;
       e.preventDefault();
-      // 말투 입력칸처럼 자체 스크롤이 있는 요소 위에서는 그 요소를 먼저 스크롤.
+      // 말투 입력칸은 클릭해서 포커스한 뒤에만 자체 스크롤 — 지나가는 휠에 잡히면 목록을
+      // 내리려던 스크롤이 입력칸에 먹혀 불편하다(2026-07-21).
       const ta = (e.target as HTMLElement | null)?.closest?.("textarea");
-      if (ta && ta.scrollHeight > ta.clientHeight) {
-        const before = ta.scrollTop;
+      if (ta && document.activeElement === ta && ta.scrollHeight > ta.clientHeight) {
+        // 포커스 중에는 끝(맨 위/아래)에 닿아도 목록으로 넘기지 않는다 — 입력칸만 스크롤.
         ta.scrollTop += e.deltaY;
-        if (ta.scrollTop !== before) return; // 끝에 닿았을 때만 목록으로 넘어간다
+        return;
       }
       body.scrollTop += e.deltaY;
     },
@@ -579,6 +612,12 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   const isHiddenKind = (kind: string): boolean =>
     (kind === PREV_HISTORY_KIND && !state.includePrevHistory) ||
     (kind === CHANGE_HISTORY_KIND && !state.includeChangeHistory);
+  const passesPerfFilter = (p: BriefCandidate): boolean => {
+    if (perfFilter === "all") return true;
+    const s = pickRowVisual(p.kind, p.facts).state;
+    return perfFilter === "good" ? s === "success" : s === "error" || s === "warning";
+  };
+  const isVisiblePick = (p: BriefCandidate): boolean => !isHiddenKind(p.kind) && passesPerfFilter(p);
 
   const list = document.createElement("div");
   list.className = "dvads-brief-pick-list";
@@ -607,17 +646,19 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   // 캠페인/그룹 머리글 — 클릭하면 그 아래 자식 이슈 전체를 선택/해제하고,
   // 호버하면 어디까지가 자식인지 전체가 함께 하이라이트된다.
   interface SectionCtrl {
-    picks: Array<{ kind: string; selected: boolean }>;
+    picks: BriefCandidate[];
     rows: Array<(on: boolean) => void>;
     items: HTMLElement[];
   }
   const wireHead = (el: HTMLElement, ctrl: SectionCtrl) => {
     headSyncs.push(() => {
-      const visible = ctrl.picks.filter((p) => !isHiddenKind(p.kind));
+      const visible = ctrl.picks.filter(isVisiblePick);
+      // 필터로 자식이 전부 사라지면 머리글도 숨긴다 — 빈 제목만 남으면 어색하다.
+      el.style.display = visible.length === 0 ? "none" : "";
       el.classList.toggle("is-selected", visible.length > 0 && visible.every((p) => p.selected));
     });
     el.addEventListener("click", () => {
-      const visible = ctrl.picks.filter((p) => !isHiddenKind(p.kind));
+      const visible = ctrl.picks.filter(isVisiblePick);
       const turnOn = !(visible.length > 0 && visible.every((p) => p.selected));
       ctrl.rows.forEach((set) => set(turnOn));
       updateComposeEnabled();
@@ -768,7 +809,8 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     // 토글 off면 해당 이력성 후보는 숨김 + 체크 해제(보내면 안 된다).
     const refresh = () => {
       const hidden = isHiddenKind(pick.kind);
-      item.style.display = hidden ? "none" : "";
+      // 성과 필터는 보기 전용 — 화면에서만 숨기고 선택은 유지한다(토글성 숨김과 다름).
+      item.style.display = hidden || !passesPerfFilter(pick) ? "none" : "";
       if (hidden && pick.selected) {
         pick.selected = false;
         cb.checked = false;
@@ -778,7 +820,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     };
     // 모두 선택/선택 해제용 — 숨긴 이슈는 켜지 않는다(보내면 안 되는 후보).
     const setSelected = (on: boolean) => {
-      if (on && isHiddenKind(pick.kind)) return;
+      if (on && !isVisiblePick(pick)) return;
       pick.selected = on;
       cb.checked = on;
       item.classList.toggle("is-selected", on);
@@ -826,8 +868,8 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   {
     const t = addSubHead("보고 유형");
     t.appendChild(makeInfoIcon(
-      "사후보고 - 이미 조치한 내용을 알리는 보고예요\n" +
-      "사전제안 - 앞으로 이렇게 하겠다고 먼저 제안하는 보고예요",
+      "사후 보고 - 이미 조치한 내용을 알리는 보고예요\n" +
+      "사전 제안 - 앞으로 이렇게 하겠다고 먼저 제안하는 보고예요",
     ));
     const row = document.createElement("div");
     row.className = "dvads-brief-preset-row";
@@ -851,42 +893,52 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     const th = opts.thresholds;
     const thTitle = addSubHead("이슈 기준");
     thTitle.appendChild(makeInfoIcon(
-      "민감하게 - 작은 변화도 이슈로 잡아요\n" +
-      "보통 - 이 기간 광고비에 맞춘 기본 기준이에요\n" +
-      "느슨하게 - 큰 변화만 이슈로 잡아요\n" +
-      "직접 설정 - 기준값을 하나하나 직접 정해요",
+      "민감 - 작은 변화도 이슈로 잡아요\n" +
+      "기본 - 이 기간 광고비에 맞춘 기준이에요\n" +
+      "핵심 - 굵직한 변화만 이슈로 잡아요\n" +
+      "맞춤 - 기준값을 하나하나 직접 정해요",
     ));
     let sensitivity: BriefSensitivity = th.sensitivity;
 
     const chipRow = document.createElement("div");
     chipRow.className = "dvads-brief-preset-row";
+    // 맞춤 폼 — 라벨/입력이 한 줄 양끝으로 벌어지면 시선이 멀어져, 카드 안 2열 격자로 묶고
+    // 단위는 입력칸 안쪽 오른쪽에 붙인다.
     const customWrap = document.createElement("div");
-    customWrap.style.marginTop = "8px";
+    customWrap.className = "dvads-brief-th-card";
+    const grid = document.createElement("div");
+    grid.className = "dvads-brief-th-grid";
+    customWrap.appendChild(grid);
     const inputs = new Map<keyof BriefThresholds, HTMLInputElement>();
     for (const f of THRESHOLD_FIELDS) {
-      const row = document.createElement("div");
-      row.className = "dvads-brief-custom-row";
+      const field = document.createElement("label");
+      field.className = "dvads-brief-th-field";
       const label = document.createElement("span");
+      label.className = "dvads-brief-th-label";
       label.textContent = f.label;
-      row.appendChild(label);
+      field.appendChild(label);
+      const box = document.createElement("span");
+      box.className = "dvads-brief-th-box";
       const input = document.createElement("input");
       input.type = "number";
       input.min = "0";
       if (f.step) input.step = f.step;
-      input.className = "dvads-brief-custom-input";
-      row.appendChild(input);
+      input.className = "dvads-brief-th-input";
+      box.appendChild(input);
       const unit = document.createElement("span");
       unit.textContent = f.unit;
-      unit.className = "dvads-brief-custom-unit";
-      row.appendChild(unit);
-      customWrap.appendChild(row);
+      unit.className = "dvads-brief-th-unit";
+      box.appendChild(unit);
+      field.appendChild(box);
+      grid.appendChild(field);
       inputs.set(f.key, input);
     }
-    // 직접 설정은 타이핑마다 목록을 다시 만들 수 없어(재계산) 적용 버튼으로 확정.
+    // 맞춤은 타이핑마다 목록을 다시 만들 수 없어(재계산) 적용 버튼으로 확정.
+    const foot = document.createElement("div");
+    foot.className = "dvads-brief-th-foot";
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
-    applyBtn.className = "dvads-btn";
-    applyBtn.style.marginTop = "8px";
+    applyBtn.className = "dvads-btn dvads-btn-secondary";
     applyBtn.textContent = "기준 적용";
     applyBtn.addEventListener("click", () => {
       const custom: Partial<BriefThresholds> = {};
@@ -900,7 +952,8 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       }
       th.onChange("custom", custom);
     });
-    customWrap.appendChild(applyBtn);
+    foot.appendChild(applyBtn);
+    customWrap.appendChild(foot);
 
     const chips = (Object.keys(SENSITIVITY_LABEL) as BriefSensitivity[]).map((s) => {
       const chip = document.createElement("button");

@@ -59,7 +59,7 @@ export type BriefKind =
   | "zeroConvSegment"      // 세그먼트 비용 임계 이상인데 전환 0 (2026-07-21)
   | "lowCtrSegment"        // 세그먼트 노출 충분한데 클릭률 낮음 (2026-07-21)
   | "highRoasSegment"      // 세그먼트 목표 초과 달성 — 가중치 상향 여지 (2026-07-21)
-  | "productConvDrop"      // 전기 대비 전환 빠진 상품 (Task 8)
+  | "productConvDrop"      // 전기 대비 전환 빠진 상품 — 생성 폐기(2026-07-21), 지난 이력 표시 호환용으로만 유지
   | "changeFollowUp";      // 우리 팀 변경 이력 + 이후 성과 평가 (구조 개편 2차)
 
 /** AE가 고르는 액션. AI가 창작하지 않는다 — 완전자동 모드에서도 이 목록에서만 고른다. */
@@ -166,8 +166,6 @@ export interface BriefRuleInput {
   targetRoas?: number;
   /** 순위가 보강된 키워드 행. brief.ts가 pickRankTargets 대상만 rank를 채워 넘긴다. */
   rankedRows?: BriefKeywordRow[];
-  /** 상품별 현재/전기 지표. 현재 기간에 존재하는 상품만(이름을 얻을 수 있는 것만). */
-  products?: BriefProductDelta[];
   /** 파워링크 소재별 성과(그룹 정보 포함). 이름 못 얻은 소재는 이미 걸러져 온다. */
   plAds?: BriefAdRow[];
   /** 광고그룹별 차원 성과(지면/성별/연령/기기/시간대/지역/일자) — 세그먼트 판정의 유일한 재료. */
@@ -356,7 +354,8 @@ function segmentTable(
  *  - 목표 미달(기존 …Skew kind): 전환은 있으나 목표에 크게 미달 — 하향 검토
  *  - 성과 좋음(highRoasSegment): 목표 이상 — 가중치 상향 여지
  *  - 클릭률 낮음(lowCtrSegment): 노출 충분한데 클릭률 낮음
- * 목표가 필요한 판정(미달/좋음)은 목표 ROAS 미설정 시 만들지 않는다.
+ * 목표가 필요한 판정(미달/좋음)은 목표 ROAS 미설정 시, 그리고 실제로 돌아간 구간이 하나뿐일 때
+ * (기기 전용 그룹 등 비교 대상이 없는 경우) 만들지 않는다.
  */
 function segmentCandidates(
   kind: BriefKind,
@@ -407,7 +406,11 @@ function segmentCandidates(
       ["총비용", "구매완료"], false));
   }
 
-  if (targetRoas != null && targetRoas > 0) {
+  // 실제로 돌아간 구간이 하나뿐이면(예: 모바일 전용 그룹) 가중치를 올리고 내릴 비교 대상이
+  // 없다 — "이 기기가 좋으니 상향" 같은 제안이 성립하지 않으므로 목표 대비 판정은 만들지 않는다.
+  // 그 구간 자체의 성과는 그룹 단위 규칙이 잡는다.
+  const active = eligible.filter((s) => s.metrics.impressions > 0 || s.metrics.cost > 0);
+  if (targetRoas != null && targetRoas > 0 && active.length > 1) {
     // 목표 미달 — 전환 0 구간은 위(zeroConvSegment)가 담당하므로 전환 있는 것만.
     const below = eligible
       .filter((s) => s.metrics.cost >= th.costFloor && s.metrics.purchaseConv > 0 &&
@@ -756,57 +759,6 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           })),
         },
         targets: lowCtr.map((a) => toTarget(`${scope.campaign} > ${scope.group} > ${a.label}`, a.metrics)),
-        selected: false,
-      });
-    }
-  }
-
-  // ⑤ 전기 대비 전환이 빠진 상품 — 보고 로그의 "객단가 높은 [온열 찜질기]에서 전환이
-  // 발생하지 않아"가 이것. 매출 낙폭 임계로 소음을 거른다.
-  if (input.products) {
-    // 광고비를 줄여서 매출이 따라 준 경우는 성과 문제가 아니다 — 매출 감소율이 광고비
-    // 감소율보다 클 때(효율 자체가 나빠졌을 때)만 이슈로 잡는다.
-    const worseThanSpend = (p: BriefProductDelta): boolean => {
-      const costRatio = p.prev.cost > 0 ? p.cur.cost / p.prev.cost : 1;
-      const revRatio = p.prev.revenue > 0 ? p.cur.revenue / p.prev.revenue : 0;
-      return revRatio < costRatio;
-    };
-    const dropped = input.products
-      .filter((p) =>
-        p.cur.purchaseConv < p.prev.purchaseConv &&
-        p.prev.revenue - p.cur.revenue >= th.revenueDropFloor &&
-        worseThanSpend(p),
-      )
-      .sort((a, b) => (b.prev.revenue - b.cur.revenue) - (a.prev.revenue - a.cur.revenue));
-    if (dropped.length > 0) {
-      out.push({
-        kind: "productConvDrop",
-        facts: {
-          기준: "이전 기간 대비 구매완료 전환 감소",
-          products: dropped.map((p) => p.label).join(", "),
-          count: dropped.length,
-          매출감소합계: dropped.reduce((s, p) => s + (p.prev.revenue - p.cur.revenue), 0),
-        },
-        table: {
-          title: "상품별 성과 (이전 기간 대비)",
-          // 시간 순서대로 이전 → 현재. (2026-07-21 열 순서 개편)
-          columns: ["상품", "총비용", "이전 구매완료", "구매완료", "이전 매출액", "매출액", "ROAS"],
-          boldColumns: ["이전 매출액", "매출액"],
-          rows: dropped.map((p) => ({
-            problem: true,
-            cells: [
-              p.label,
-              `${p.cur.cost.toLocaleString()}원`,
-              String(p.prev.purchaseConv),
-              String(p.cur.purchaseConv),
-              `${p.prev.revenue.toLocaleString()}원`,
-              `${p.cur.revenue.toLocaleString()}원`,
-              `${roasPct(p.cur).toFixed(0)}%`,
-            ],
-            band: targetRoas != null ? roasBand(roasPct(p.cur), targetRoas) : undefined,
-          })),
-        },
-        targets: dropped.map((p) => toTarget(p.label, p.cur)),
         selected: false,
       });
     }

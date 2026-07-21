@@ -4668,6 +4668,18 @@ td.dvads-period-delta-down {
 .dvads-brief-head {
   padding: 20px 24px 12px; font-size: 16px; font-weight: 600; color: #171717;
 }
+/* 선택 화면 제목 행 — 오른쪽 끝에 성과 필터(깔때기 아이콘 → 드롭다운) */
+.dvads-brief-head-row { display: flex; align-items: center; gap: 6px; }
+.dvads-brief-pick-filter-btn {
+  margin-left: auto; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 8px; background: none; color: #6b7280; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dvads-brief-pick-filter-btn:hover { background: #f4f5f7; color: #404040; }
+/* 전체 외 필터가 걸려 있으면 주황으로 — 목록이 걸러진 상태임을 표시 */
+.dvads-brief-pick-filter-btn.is-filtering,
+.dvads-brief-pick-filter-btn.is-open { color: #E6783B; }
+.dvads-brief-pick-filter-btn svg { width: 16px; height: 16px; }
 .dvads-brief-notice {
   margin: 0 24px 12px; padding: 8px 12px;
   font-size: 12px; line-height: 1.5; color: #6b7280;
@@ -4932,6 +4944,34 @@ td.dvads-period-delta-down {
 }
 .dvads-brief-custom-input:focus { outline: none; border-color: #E6783B; }
 .dvads-brief-custom-unit { color: #9aa1ab; font-size: 12px; width: 20px; }
+
+/* '맞춤' 기준 입력 카드 — 라벨 위, 입력칸 아래 2열. 단위는 입력칸 안쪽 오른쪽. */
+.dvads-brief-th-card {
+  margin-top: 10px; padding: 12px; border: 1px solid #ECEEF0; border-radius: 8px;
+  background: #FAFAFA;
+}
+.dvads-brief-th-grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px;
+}
+.dvads-brief-th-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.dvads-brief-th-label {
+  font: 500 12px/1.4 Pretendard, -apple-system, sans-serif; color: #6b7280;
+}
+.dvads-brief-th-box {
+  display: flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px;
+  border: 1px solid #e2e5ea; border-radius: 8px; background: #fff;
+}
+.dvads-brief-th-box:focus-within { border-color: #E6783B; }
+.dvads-brief-th-input {
+  flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; text-align: right;
+  font: 400 14px/1.4 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+.dvads-brief-th-input:focus { outline: none; }
+/* 숫자 입력 스피너 — 값이 짧아 화살표가 단위 글자를 밀어낸다. */
+.dvads-brief-th-input::-webkit-outer-spin-button,
+.dvads-brief-th-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.dvads-brief-th-unit { flex-shrink: 0; font-size: 12px; color: #9aa1ab; }
+.dvads-brief-th-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
 
 /* F-Brief 내 말투 설정 다이얼로그 */
 .dvads-brief-tone-hint {

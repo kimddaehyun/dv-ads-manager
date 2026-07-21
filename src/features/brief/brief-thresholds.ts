@@ -2,8 +2,8 @@
  * 이슈 기준(임계값) 해석 — 광고주별 커스텀 (순수 함수).
  *
  * 3단계: ① 자동 보정 - 비용 기준은 계정의 기간 총광고비에 비례(소액/대형 계정 모두 맞게).
- *        ② 프리셋 - 민감하게/보통/느슨하게가 임계값 세트를 통째로 조정.
- *        ③ 직접 설정 - 개별 값 덮어쓰기(잘못된 값은 무시하고 자동값으로).
+ *        ② 프리셋 - 민감/기본/핵심이 임계값 세트를 통째로 조정.
+ *        ③ 맞춤 - 개별 값 덮어쓰기(잘못된 값은 무시하고 자동값으로).
  * 결과는 extractCandidates에 통째로 전달 — 규칙 엔진은 어디서 온 값인지 모른다.
  */
 
@@ -15,10 +15,10 @@ import {
 export type BriefSensitivity = "sensitive" | "normal" | "loose" | "custom";
 
 export const SENSITIVITY_LABEL: Record<BriefSensitivity, string> = {
-  sensitive: "민감하게",
-  normal: "보통",
-  loose: "느슨하게",
-  custom: "직접 설정",
+  sensitive: "민감",
+  normal: "기본",
+  loose: "핵심",
+  custom: "맞춤",
 };
 
 /** 비용 기준 자동 보정 — 기간 총광고비의 이 비율. */

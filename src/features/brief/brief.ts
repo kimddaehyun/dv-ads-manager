@@ -210,7 +210,6 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
       keywords: [...data.plKeywords, ...data.shKeywords],
       targetRoas,
       rankedRows: plRows,
-      products: data.products,
       plAds: data.plAds,
       groups: data.groups,
       groupIds: data.groupIds,
