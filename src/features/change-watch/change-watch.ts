@@ -4,7 +4,7 @@
  * 두 가지를 잡는다:
  *   1. 예산 초과 중단 — `ncc.charge.*_LOCK` (시스템이 올리는 이벤트)
  *   2. 외부 수정      — `ncc.heroes.*`인데 변경자가 제외 목록(`change_watch_identity`)에 없는 경우.
- *                       SYSTEM도 제외할지 말지는 사용자가 설정에서 고른다(하드코딩 안 함).
+ *                       SYSTEM과 GW+숫자(네이버 내부 사번형)는 시스템 변경이라 무조건 제외(2026-07-21).
  *
  * endpoint/schema 정찰 결과는 메모리 `project_f_changewatch_endpoints` 참조.
  */
@@ -59,11 +59,12 @@ const LOCK_LABEL: Record<string, string> = {
   "ncc.charge.ADGROUP_LOCK": "광고그룹",
 };
 
-// 변경자를 특정할 수 없는 행(빈 문자열)만 뺀다 — 예산 잠금 계열이 여기 해당하고 그건 위에서
-// budget으로 따로 처리된다. SYSTEM은 빼지 않고 설정 화면에 후보로 올려서 제외할지 말지를
-// 사용자가 정하게 한다.
+// 변경자를 특정할 수 없는 행(빈 문자열)과 네이버 쪽 시스템 변경자는 뺀다.
+// 빈 문자열은 예산 잠금 계열이라 위에서 budget으로 따로 처리되고,
+// SYSTEM·GW+숫자(네이버 내부 사번형, 전 계정에 공통 등장)는 사람이 아니라
+// 네이버 내부 처리라 알림 대상도 칩 후보도 아니다.
 function isAttributed(actor: string): boolean {
-  return actor !== "";
+  return actor !== "" && actor.toUpperCase() !== "SYSTEM" && !/^GW\d+$/i.test(actor);
 }
 
 // eventType → 사람이 읽는 동작 이름. 없는 건 "설정"으로 폴백 (영문 코드 노출 금지).
@@ -269,7 +270,7 @@ export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): Cha
   return out;
 }
 
-/** 이 계정에서 관측된 변경자 목록 — 설정 화면이 "제외할 변경자" 고르기 칩으로 쓴다. SYSTEM 포함. */
+/** 이 계정에서 관측된 변경자 목록 — 설정 화면이 "제외할 변경자" 고르기 칩으로 쓴다. 시스템 변경자(SYSTEM·GW+숫자) 제외. */
 export function observedActors(rows: RawHistoryRow[]): string[] {
   const set = new Set<string>();
   for (const row of rows) {

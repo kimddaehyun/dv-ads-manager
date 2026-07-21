@@ -3581,7 +3581,7 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
     </div>
     <div class="dvads-actor-chips is-loading"><span class="dvads-actor-spinner"></span>불러오는 중...</div>
     <div class="dvads-actor-input-wrap">
-      <input class="dvads-actor-input" type="text" placeholder="변경자를 선택해 주세요" />
+      <input class="dvads-actor-input" type="text" placeholder="제외시킬 계정을 추가해 주세요" />
       <button class="dvads-actor-input-clear" type="button" aria-label="지우기">×</button>
     </div>
     <div class="dvads-actor-actions">
