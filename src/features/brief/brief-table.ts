@@ -38,9 +38,9 @@ function ellipsize(ctx: CanvasRenderingContext2D, text: string, maxW: number): s
 function measureCols(ctx: CanvasRenderingContext2D, spec: BriefTableSpec, rows: BriefTableRow[]): number[] {
   const widths: number[] = [];
   for (let c = 0; c < spec.columns.length; c++) {
-    ctx.font = `600 13px ${FONT}`;
+    ctx.font = `600 14px ${FONT}`;
     let max = ctx.measureText(spec.columns[c]).width;
-    ctx.font = `400 13px ${FONT}`;
+    ctx.font = `400 14px ${FONT}`;
     for (const r of rows) {
       max = Math.max(max, ctx.measureText(r.cells[c] ?? "").width);
     }
@@ -96,7 +96,7 @@ export async function renderTablePng(spec: BriefTableSpec): Promise<Blob> {
   ctx.fillStyle = "#f4f5f7";
   ctx.fillRect(PAD, y, w - PAD * 2, HEAD_H);
   ctx.fillStyle = "#666666";
-  ctx.font = `600 13px ${FONT}`;
+  ctx.font = `600 14px ${FONT}`;
   let x = PAD;
   for (let c = 0; c < spec.columns.length; c++) {
     ctx.textAlign = c === 0 ? "left" : "right";
@@ -108,7 +108,7 @@ export async function renderTablePng(spec: BriefTableSpec): Promise<Blob> {
   // 본문 — 판정에 쓴 지표 열(boldColumns)은 굵게: 강조(problem/good) 행에만, 강조 행이 없으면 전 행.
   const boldIdx = new Set((spec.boldColumns ?? []).map((c) => spec.columns.indexOf(c)));
   const hasMark = rows.some((r) => r.problem || r.good);
-  ctx.font = `400 13px ${FONT}`;
+  ctx.font = `400 14px ${FONT}`;
   for (const r of rows) {
     if (r.problem || r.good) {
       ctx.fillStyle = r.problem ? PROBLEM_BG : GOOD_BG;
@@ -118,7 +118,7 @@ export async function renderTablePng(spec: BriefTableSpec): Promise<Blob> {
     x = PAD;
     for (let c = 0; c < spec.columns.length; c++) {
       const bold = boldIdx.has(c) && (r.problem || r.good || !hasMark);
-      ctx.font = `${bold ? 700 : 400} 13px ${FONT}`;
+      ctx.font = `${bold ? 700 : 400} 14px ${FONT}`;
       ctx.textAlign = c === 0 ? "left" : "right";
       const text = c === 0 ? ellipsize(ctx, r.cells[c] ?? "", cols[c] - 20) : r.cells[c] ?? "";
       ctx.fillText(text, c === 0 ? x + 10 : x + cols[c] - 10, y + ROW_H / 2);

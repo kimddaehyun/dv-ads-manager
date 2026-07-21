@@ -400,7 +400,7 @@ function segmentCandidates(
       비용합계: flagged.reduce((s, x) => s + x.metrics.cost, 0),
     },
     table: segmentTable(
-      `${gName} - ${dim} 성과`, dim, segments, targetRoas,
+      `${scope.group} - ${dim} 성과`, dim, segments, targetRoas,
       good ? undefined : new Set(flagged.map((s) => s.label)),
       bold,
       good ? new Set(flagged.map((s) => s.label)) : undefined,
@@ -436,9 +436,11 @@ function segmentCandidates(
     .filter((s) => s.metrics.impressions >= th.adImpFloor && ctrPct(s.metrics) < th.lowCtrPct)
     .sort(byCostDesc);
 
-  // 문제 판정 공통 대조군 — 어떤 문제로도 안 걸린 활성 구간이 있어야 "저기로 옮기자"가 성립.
+  // 문제 판정 공통 대조군 — 문제 구간이 활성 구간의 과반이면 그 차원의 문제가 아니라
+  // 그룹 전체 부진이다("화요일 빼고 전부 미달" 문단 방지, 2026-07-21 비율 가드).
   const badLabels = new Set([...zero, ...below, ...lowCtr].map((s) => s.label));
-  const hasHealthy = active.some((s) => !badLabels.has(s.label));
+  const badActive = active.filter((s) => badLabels.has(s.label)).length;
+  const hasHealthy = badActive * 2 <= active.length;
 
   // 전환 0 — 목표 없이도 판정.
   if (zero.length > 0 && hasHealthy) {
@@ -524,6 +526,25 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
       .filter((k) => !isFoldedRow(k.keyword))
       .map((k) => ({ keyword: k.keyword, campaign: g.campaign, group: g.group, metrics: k.metrics }));
 
+    // 대조군 원칙 — 그룹에 키워드가 1개뿐이면 비교가 성립하지 않아 키워드 후보를 만들지 않는다.
+    // 1행짜리 표는 광고주에게 설득력이 없다(2026-07-21 사용자 요구).
+    if (rows.length < 2) continue;
+
+    // 표 문맥 — 걸린 키워드만 실으면 비교군이 없다. 그룹 내 다른 키워드를 비용순으로 채워
+    // 최대 5행을 만들고, 걸린 행만 강조한다. 문맥 키워드는 **비용 문턱(캠페인 최소 금액)을
+    // 넘는 것만** — 2천만원 키워드 옆에 8천원짜리를 놓으면 비교가 안 된다(2026-07-21).
+    // 문턱을 넘는 문맥이 없으면(한 키워드가 그룹을 지배) 걸린 키워드만 싣는다.
+    const withContext = (flagged: BriefKeywordRow[]): Array<{ row: BriefKeywordRow; hit: boolean }> => {
+      const hit = new Set(flagged.map((r) => r.keyword));
+      const filler = rows
+        .filter((r) => !hit.has(r.keyword) && r.metrics.cost >= gFloor)
+        .sort(byCostDesc);
+      const need = Math.max(0, 5 - flagged.length);
+      return [...flagged, ...filler.slice(0, need)]
+        .sort(byCostDesc)
+        .map((row) => ({ row, hit: hit.has(row.keyword) }));
+    };
+
     // ① 비용 임계 이상인데 전환 0인 키워드
     const zeroConv = rows.filter((r) => r.metrics.cost >= gFloor && r.metrics.purchaseConv === 0)
       .sort(byCostDesc);
@@ -539,10 +560,10 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           비용합계: zeroConv.reduce((s, r) => s + r.metrics.cost, 0),
         },
         table: {
-          title: `${gName} - 전환 0 키워드`,
+          title: `${g.group} - 전환 0 키워드`,
           columns: KW_COLUMNS,
           boldColumns: ["총비용", "구매완료"],
-          rows: zeroConv.map((r) => kwRow(r, targetRoas, true)),
+          rows: withContext(zeroConv).map(({ row, hit }) => kwRow(row, targetRoas, hit || undefined)),
         },
         // 라벨에 그룹 경로 접두 — 같은 키워드가 여러 그룹에 있을 때 이력 추적 오매칭 방지(코덱스 리뷰 P2).
         targets: zeroConv.map((r) => toTarget(`${gName} > ${r.keyword}`, r.metrics)),
@@ -570,10 +591,10 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             비용합계: below.reduce((s, r) => s + r.metrics.cost, 0),
           },
           table: {
-            title: `${gName} - 목표 ROAS ${targetRoas}% 미달 키워드`,
+            title: `${g.group} - 목표 ROAS ${targetRoas}% 미달 키워드`,
             columns: KW_COLUMNS,
             boldColumns: ["총비용", "ROAS"],
-            rows: below.map((r) => kwRow(r, targetRoas, true)),
+            rows: withContext(below).map(({ row, hit }) => kwRow(row, targetRoas, hit || undefined)),
           },
           targets: below.map((r) => toTarget(`${gName} > ${r.keyword}`, r.metrics)),
           selected: false,
@@ -601,12 +622,13 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
             평균순위: Math.round(lowRank.reduce((s, r) => s + (r.rank ?? 0), 0) / lowRank.length),
           },
           table: {
-            title: `${gName} - 목표 달성, 순위 상승 여지 키워드`,
+            title: `${g.group} - 목표 달성, 순위 상승 여지 키워드`,
             columns: [...KW_COLUMNS, "추정순위"],
             boldColumns: ["ROAS", "추정순위"],
-            rows: lowRank.map((r) => {
-              const base = kwRow(r, targetRoas);
-              return { ...base, cells: [...base.cells, `${r.rank}위`] };
+            // 순위는 걸린 키워드에만 있다 — 문맥 행은 "-" 표기. 걸린 행은 good(초록)으로 강조.
+            rows: withContext(lowRank).map(({ row, hit }) => {
+              const base = kwRow(row, targetRoas);
+              return { ...base, good: hit || undefined, cells: [...base.cells, row.rank != null ? `${row.rank}위` : "-"] };
             }),
           },
           targets: lowRank.map((r) => toTarget(`${gName} > ${r.keyword}`, r.metrics)),
@@ -629,13 +651,28 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
     const gName = `${gd.campaign} > ${gd.group}`;
     const gdFloor = floorOf(gd.campaign);
 
+    // 같은 그룹의 차원 후보를 모아뒀다가 과다 반복이면 대표만 남긴다(아래 대조군 정리).
+    const dimCands: BriefCandidate[] = [];
+
     // ③ 지면 비용 임계 이상인데 전환 0
     const placements = gd.byPlacement ?? [];
+    const activePlace = placements.filter((p) => !isFoldedRow(p.label) && (p.metrics.impressions > 0 || p.metrics.cost > 0));
     const zeroPlace = placements
       .filter((p) => p.metrics.cost >= gdFloor && p.metrics.purchaseConv === 0 && !isFoldedRow(p.label))
       .sort(byCostDesc);
-    if (zeroPlace.length > 0) {
-      out.push({
+    const lowPlace = targetRoas != null && targetRoas > 0
+      ? placements
+        .filter((p) => p.metrics.cost >= gdFloor && p.metrics.purchaseConv > 0 &&
+          roasBand(roasPct(p.metrics), targetRoas) === "none" && !isFoldedRow(p.label))
+        .sort(byCostDesc)
+      : [];
+    // 대조군 원칙 — 활성 지면이 1개뿐이면(1행짜리 표) 비교가 성립하지 않고, 문제 지면이
+    // 활성의 과반이면 지면 차원 문제가 아니라 그룹 전체 부진이다 — 지면 후보를 만들지 않는다.
+    const badPlace = new Set([...zeroPlace, ...lowPlace].map((p) => p.label));
+    const badPlaceCount = activePlace.filter((p) => badPlace.has(p.label)).length;
+    const placeComparable = activePlace.length >= 2 && badPlaceCount * 2 <= activePlace.length;
+    if (zeroPlace.length > 0 && placeComparable) {
+      dimCands.push({
         kind: "zeroConvPlacement",
         scope,
         facts: {
@@ -645,34 +682,28 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           count: zeroPlace.length,
           비용합계: zeroPlace.reduce((s, p) => s + p.metrics.cost, 0),
         },
-        table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(zeroPlace.map((p) => p.label)), ["총비용", "구매완료"]),
+        table: placementTable(`${gd.group} - 지면별 성과`, placements, targetRoas, new Set(zeroPlace.map((p) => p.label)), ["총비용", "구매완료"]),
         targets: zeroPlace.map((p) => toTarget(`${gName} > ${p.label}`, p.metrics)),
         selected: false,
       });
     }
 
     // ⑦ 지면 전환은 있으나 none 구간 — ③(전환 0)과 겹치지 않게 purchaseConv > 0만.
-    if (targetRoas != null && targetRoas > 0) {
-      const lowPlace = placements
-        .filter((p) => p.metrics.cost >= gdFloor && p.metrics.purchaseConv > 0 &&
-          roasBand(roasPct(p.metrics), targetRoas) === "none" && !isFoldedRow(p.label))
-        .sort(byCostDesc);
-      if (lowPlace.length > 0) {
-        out.push({
-          kind: "lowRoasPlacement",
-          scope,
-          facts: {
-            ...scoped,
-            기준: `지면 수익률이 목표 ${targetRoas}%에 크게 미달`,
-            placements: lowPlace.map((p) => p.label).join(", "),
-            count: lowPlace.length,
-            비용합계: lowPlace.reduce((s, p) => s + p.metrics.cost, 0),
-          },
-          table: placementTable(`${gName} - 지면별 성과`, placements, targetRoas, new Set(lowPlace.map((p) => p.label)), ["총비용", "ROAS"]),
-          targets: lowPlace.map((p) => toTarget(`${gName} > ${p.label}`, p.metrics)),
-          selected: false,
-        });
-      }
+    if (lowPlace.length > 0 && placeComparable) {
+      dimCands.push({
+        kind: "lowRoasPlacement",
+        scope,
+        facts: {
+          ...scoped,
+          기준: `지면 수익률이 목표 ${targetRoas}%에 크게 미달`,
+          placements: lowPlace.map((p) => p.label).join(", "),
+          count: lowPlace.length,
+          비용합계: lowPlace.reduce((s, p) => s + p.metrics.cost, 0),
+        },
+        table: placementTable(`${gd.group} - 지면별 성과`, placements, targetRoas, new Set(lowPlace.map((p) => p.label)), ["총비용", "ROAS"]),
+        targets: lowPlace.map((p) => toTarget(`${gName} > ${p.label}`, p.metrics)),
+        selected: false,
+      });
     }
 
     // ⑧⑨⑪ 세그먼트 목표 미달 — 전체 구간이 정해진 차원(기기/성별/요일)은 노출 0으로 응답에서
@@ -695,7 +726,19 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
       ["regionBidSkew", "지역", gd.byRegion],
     ];
     for (const [kind, dim, segs] of dims) {
-      out.push(...segmentCandidates(kind, dim, segs, targetRoas, th, gdFloor, scope));
+      dimCands.push(...segmentCandidates(kind, dim, segs, targetRoas, th, gdFloor, scope));
+    }
+
+    // 같은 그룹에서 문제 차원 후보가 3개 이상이면 그룹 전체 부진을 차원만 바꿔 반복하는 것 —
+    // 비용합계가 가장 큰 대표 차원 1개만 남긴다(2026-07-21). 기회 후보(highRoasSegment)는 유지.
+    const isProblemDim = (c: BriefCandidate): boolean => c.kind !== "highRoasSegment";
+    const problems = dimCands.filter(isProblemDim);
+    if (problems.length >= 3) {
+      const top = problems.reduce((a, b) =>
+        Number(a.facts.비용합계 ?? 0) >= Number(b.facts.비용합계 ?? 0) ? a : b);
+      out.push(...dimCands.filter((c) => !isProblemDim(c) || c === top));
+    } else {
+      out.push(...dimCands);
     }
   }
 
@@ -731,7 +774,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           count: lowCtr.length,
         },
         table: {
-          title: `${scope.campaign} > ${scope.group} - 클릭률 낮은 소재`,
+          title: `${scope.group} - 클릭률 낮은 소재`,
           columns: ["소재", "노출", "클릭", "클릭률", "총비용", "구매완료", "매출액"],
           boldColumns: ["노출", "클릭률"],
           rows: lowCtr.map((a) => ({

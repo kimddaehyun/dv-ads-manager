@@ -42,8 +42,6 @@ async function loadToken(): Promise<string> {
 }
 
 export interface ComposeResult {
-  /** AI가 말투 샘플의 인사 습관대로 쓴 인사 한 줄. 비어 있으면 클라이언트 기본값 사용. */
-  greeting: string;
   blocks: ComposedBlock[];
 }
 
@@ -65,9 +63,19 @@ export async function composeBlocks(req: ComposeRequest): Promise<ComposeResult>
     }),
   });
   if (res.status === 401) throw new Error("로그인이 만료됐어요. 확장 프로그램 설정에서 다시 로그인해 주세요");
-  if (!res.ok) throw new Error("문구를 만들지 못했어요. 잠시 후 다시 시도해 주세요");
+  if (!res.ok) {
+    // 서버가 upstream 상태를 넘겨준다 — 429는 사용량 한도라 안내가 달라야 한다.
+    const upstream = await res.json().then((d) => d?.upstream).catch(() => undefined);
+    throw new Error(upstream === 429
+      ? "토큰 한도에 도달했어요! 운영팀에 문의해 주세요"
+      : "문구를 만들지 못했어요. 잠시 후 다시 시도해 주세요");
+  }
 
   const data = await res.json();
+  // 문단이 안 온 경우의 원인 추적용 — 서버는 광고주 데이터를 로그에 안 남기므로 여기서만 보인다.
+  if (!Array.isArray(data.blocks) || data.blocks.length === 0) {
+    console.warn("[dv-ads/brief] AI 응답에 문단이 없음", data);
+  }
 
   // 허용 숫자 집합 = 우리가 보낸 모든 값에서 뽑은 숫자.
   const allowed = new Set<string>();
@@ -82,7 +90,6 @@ export async function composeBlocks(req: ComposeRequest): Promise<ComposeResult>
   extractNumbers(req.memo).forEach((n) => allowed.add(n));
 
   return {
-    greeting: typeof data.greeting === "string" ? data.greeting.trim() : "",
     blocks: (data.blocks ?? []).map((b: { text: string; isAiJudgment?: boolean; factIndex?: unknown }) => ({
       text: b.text,
       isAiJudgment: b.isAiJudgment === true,

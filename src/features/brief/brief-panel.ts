@@ -40,20 +40,7 @@ export interface BriefPanelOpts {
   onRepick?: () => void;
   /** 텍스트 블록 복사 시 호출 — 전 텍스트 블록의 현재 값(편집 반영)을 합쳐 넘긴다. 이력 저장용(설계 §7: 복사한 순간). */
   onCopyText?: (fullMessage: string) => void;
-  /** "저장" — 복사 없이 이력만 저장(saved_only). */
-  onSave?: (fullMessage: string) => void;
-  /** 재생성 — toneOverride가 없으면 같은 옵션으로 다시. 편집분 유실 확인은 패널이 한다. */
-  onRegenerate?: (toneOverride?: BriefTone) => void;
-  /** "지난 보고" 버튼 클릭 — 이 계정의 저장된 보고 목록으로. */
-  onShowHistory?: () => void;
 }
-
-const REGEN_BUTTONS: Array<{ label: string; tone?: BriefTone }> = [
-  { label: "다시 생성" },
-  { label: "더 짧게", tone: "short" },
-  { label: "더 부드럽게", tone: "soft" },
-  { label: "숫자 중심", tone: "numeric" },
-];
 
 let disposePanel: (() => void) | null = null;
 
@@ -78,11 +65,20 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
   backdrop.className = "dvads dvads-brief-backdrop";
 
   const card = document.createElement("div");
-  card.className = "dvads-brief-card";
+  // 문서(캔버스) 모드 — 넓은 페이지 + 복사 버튼은 블록 호버 시에만(overlay.css 주석 참조).
+  card.className = "dvads-brief-card dvads-brief-card-doc";
 
   const head = document.createElement("div");
-  head.className = "dvads-brief-head";
-  head.textContent = `광고 성과 측정 - ${opts.advertiserName}`;
+  head.className = "dvads-brief-head dvads-brief-head-row";
+  const headTitle = document.createElement("span");
+  headTitle.textContent = `광고 성과 측정 - ${opts.advertiserName}`;
+  head.appendChild(headTitle);
+  const closeX = document.createElement("button");
+  closeX.type = "button";
+  closeX.className = "dvads-brief-close-x";
+  closeX.textContent = "✕";
+  closeX.addEventListener("click", () => closeBriefPanel());
+  head.appendChild(closeX);
   card.appendChild(head);
 
   if (opts.notice) {
@@ -90,26 +86,6 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
     notice.className = "dvads-brief-notice";
     notice.textContent = opts.notice;
     card.appendChild(notice);
-  }
-
-  // 재생성 버튼군 — 편집한 내용이 있으면 확인 후 진행(재생성은 텍스트를 덮어쓴다).
-  const originalTexts: string[] = [];
-  if (opts.onRegenerate) {
-    const bar = document.createElement("div");
-    bar.className = "dvads-brief-regen-bar";
-    for (const rb of REGEN_BUTTONS) {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "dvads-btn";
-      b.textContent = rb.label;
-      b.addEventListener("click", () => {
-        const edited = textAreas.some((ta, i) => ta.value !== (originalTexts[i] ?? ta.value));
-        if (edited && !window.confirm("다시 만들면 지금까지 수정한 내용이 사라져요. 계속할까요?")) return;
-        opts.onRegenerate?.(rb.tone);
-      });
-      bar.appendChild(b);
-    }
-    card.appendChild(bar);
   }
 
   const body = document.createElement("div");
@@ -132,7 +108,6 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
       };
       ta.addEventListener("input", fit);
       textAreas.push(ta);
-      originalTexts.push(block.text);
       wrap.appendChild(ta);
 
       if (block.numberWarning) {
@@ -187,6 +162,11 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
           if (disposed) return; // 패널이 이미 닫힘 — URL을 만들지 않는다
           const url = URL.createObjectURL(blob);
           objectUrls.push(url);
+          // PNG는 카톡용으로 dpr 배율로 크게 그려진다 — 화면에선 논리 크기로 되돌려
+          // 모든 표의 글자가 같은 크기(14px)로 보이게 한다. max-width:100%는 유지.
+          img.addEventListener("load", () => {
+            img.style.width = `${Math.round(img.naturalWidth / Math.max(1, Math.min(3, window.devicePixelRatio || 1)))}px`;
+          }, { once: true });
           img.src = url;
         })
         .catch((e) => console.warn("[dv-ads/brief] 표 미리보기 실패", e));
@@ -205,28 +185,10 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
     pick.addEventListener("click", () => opts.onRepick?.());
     foot.appendChild(pick);
   }
-  if (opts.onSave) {
-    const save = document.createElement("button");
-    save.type = "button";
-    save.className = "dvads-btn";
-    save.textContent = "저장";
-    save.addEventListener("click", () => {
-      opts.onSave?.(textAreas.map((t) => t.value).filter((v) => v.trim() !== "").join("\n\n"));
-    });
-    foot.appendChild(save);
-  }
-  if (opts.onShowHistory) {
-    const hist = document.createElement("button");
-    hist.type = "button";
-    hist.className = "dvads-btn";
-    hist.textContent = "지난 보고";
-    hist.addEventListener("click", () => opts.onShowHistory?.());
-    foot.appendChild(hist);
-  }
   const close = document.createElement("button");
   close.type = "button";
   close.className = "dvads-btn dvads-btn-primary";
-  close.textContent = "닫기";
+  close.textContent = "완료";
   close.addEventListener("click", () => closeBriefPanel());
   foot.appendChild(close);
   card.appendChild(foot);
@@ -736,7 +698,8 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
   let curCamp: SectionCtrl | undefined;
   let curGroup: SectionCtrl | undefined;
   // 유형 띠 — 성과 필터로 그 유형의 이슈가 전부 숨으면 띠도 같이 숨긴다.
-  let curBand: { el: HTMLElement; picks: BriefCandidate[] } | undefined;
+  // 띠 클릭 = 그 유형 전체 선택 토글(캠페인/그룹 머리글과 동일 규칙) — rows에 행 setter를 모은다.
+  let curBand: { el: HTMLElement; picks: BriefCandidate[]; rows: Array<(on: boolean) => void> } | undefined;
   // 띠는 sticky라 자기 rect가 "붙어 있는 위치"일 수 있다 — 스크롤 목적지는 띠 앞의
   // 높이 0 기준점(anchor)으로 잡는다(원래 위치가 항상 정확).
   const typeBands: Array<{
@@ -766,16 +729,27 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
             : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
           btn.addEventListener("click", (e) => {
             e.stopPropagation();
+            // 목적지 = 띠가 상단에 딱 붙는 지점. anchor(높이 0) 바로 아래 margin-top만큼이
+            // 띠의 원래 위치라, margin을 더해 스크롤해야 어중간하게 걸치지 않는다.
+            const deltaTo = (t: { band: HTMLElement; anchor: HTMLElement }): number => {
+              const margin = parseFloat(getComputedStyle(t.band).marginTop) || 0;
+              return t.anchor.getBoundingClientRect().top - body.getBoundingClientRect().top + margin;
+            };
+            // ↑는 2단계: 유형 중간까지 내려온 상태면 먼저 이 유형의 시작으로, 이미 시작이면 이전 유형으로.
+            // 스크롤 도중 멈췄다가 처음으로 돌아가기 힘들다는 요청(2026-07-21).
+            if (dir < 0) {
+              const selfDelta = deltaTo({ band, anchor });
+              if (selfDelta < -1) {
+                body.scrollTo({ top: body.scrollTop + selfDelta, behavior: "smooth" });
+                return;
+              }
+            }
             // 필터로 숨은 띠는 건너뛴다.
             const visible = typeBands.filter((t) => t.band.style.display !== "none");
             const i = visible.findIndex((t) => t.band === band);
             const target = visible[i + dir];
             if (!target) return;
-            // 목적지 = 띠가 상단에 딱 붙는 지점. anchor(높이 0) 바로 아래 margin-top만큼이
-            // 띠의 원래 위치라, margin을 더해 스크롤해야 어중간하게 걸치지 않는다.
-            const margin = parseFloat(getComputedStyle(target.band).marginTop) || 0;
-            const delta = target.anchor.getBoundingClientRect().top - body.getBoundingClientRect().top + margin;
-            body.scrollTo({ top: body.scrollTop + delta, behavior: "smooth" });
+            body.scrollTo({ top: body.scrollTop + deltaTo(target), behavior: "smooth" });
           });
           nav.appendChild(btn);
           return btn;
@@ -786,10 +760,18 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
         list.appendChild(band);
         typeBands.push({ band, anchor, up, down });
         prevTypeLabel = rawType;
-        const bandRef = { el: band, picks: [] as BriefCandidate[] };
+        const bandRef = { el: band, picks: [] as BriefCandidate[], rows: [] as Array<(on: boolean) => void> };
         curBand = bandRef;
         headSyncs.push(() => {
           bandRef.el.style.display = bandRef.picks.some(isVisiblePick) ? "" : "none";
+          const visible = bandRef.picks.filter(isVisiblePick);
+          bandRef.el.classList.toggle("is-selected", visible.length > 0 && visible.every((p) => p.selected));
+        });
+        band.addEventListener("click", () => {
+          const visible = bandRef.picks.filter(isVisiblePick);
+          const turnOn = !(visible.length > 0 && visible.every((p) => p.selected));
+          bandRef.rows.forEach((set) => set(turnOn));
+          updateComposeEnabled();
         });
       }
       if (section.campaign !== prevCampaign) {
@@ -917,6 +899,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     rowsByIdx.push({ refresh, setSelected });
     curCamp?.rows.push(setSelected);
     curGroup?.rows.push(setSelected);
+    curBand?.rows.push(setSelected);
     curCamp?.items.push(item);
     curGroup?.items.push(item);
     });

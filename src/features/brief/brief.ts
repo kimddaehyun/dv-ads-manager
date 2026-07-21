@@ -29,7 +29,7 @@ import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type Brie
 import { resolveThresholds, type BriefSensitivity } from "./brief-thresholds";
 import { composeBlocks, type ComposedBlock } from "./brief-compose";
 import { renderBriefPanel, renderBriefPickPanel, closeBriefPanel, type BriefBlock, type BriefPickState } from "./brief-panel";
-import { saveBriefHistory, fetchBriefHistory, candidatesToActions, type BriefHistoryRecord, type BriefTone, type BriefSentStatus } from "./brief-history";
+import { saveBriefHistory, fetchBriefHistory, candidatesToActions, type BriefHistoryRecord, type BriefSentStatus } from "./brief-history";
 import { openBriefHistoryPanel } from "./brief-history-panel";
 
 let running = false;
@@ -345,8 +345,8 @@ async function composeAndShow(
 ): Promise<void> {
   showProgress("광고 성과를 측정하는 중...");
   let aiBlocks: ComposedBlock[] = [];
-  // AI 미호출·실패 시 기본 인사 — 인사는 AI(greeting)가 담당하지만 요약만 나갈 때도 인사는 필요하다.
-  let greeting = "안녕하세요:)";
+  // 인사는 고정 문구 — AI에 맡겼더니 "wonbny 광고주님" 같은 계정명 인사가 나와 통일(2026-07-21).
+  const greeting = "안녕하세요 대표님";
   if (selected.length > 0 || state.memo !== "") {
     try {
       const composed = await composeBlocks({
@@ -364,7 +364,10 @@ async function composeAndShow(
         tone: state.tone,
       });
       aiBlocks = composed.blocks;
-      if (composed.greeting) greeting = composed.greeting;
+      // 이슈를 보냈는데 문단이 하나도 안 왔다 — 조용히 표만 내보내면 원인을 알 수 없다.
+      if (selected.length > 0 && aiBlocks.length === 0) {
+        showToast({ message: "분석 문구가 만들어지지 않았어요. 다시 고르기에서 한 번 더 시도해 주세요", variant: "error" });
+      }
     } catch (e) {
       console.warn("[dv-ads/brief] AI 조립 실패 — 선택한 표만 표시", e);
       showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" });
@@ -404,7 +407,15 @@ function showResult(
     { type: "table", spec: buildSummarySpec(data) },
   ];
   selected.forEach((c, i) => {
-    for (const ai of byIndex.get(i + 1) ?? []) blocks.push(toBlock(ai));
+    // 표 제목은 그룹만(길어서 짤림) — 소속 캠페인은 문단 첫 줄 "[캠페인 > 그룹]"으로 밝힌다.
+    const scopeLabel = c.scope ? `[${c.scope.campaign} > ${c.scope.group}]` : "";
+    const matched = byIndex.get(i + 1) ?? [];
+    matched.forEach((ai, j) => {
+      const b = toBlock(ai);
+      if (j === 0 && scopeLabel && b.type === "text") b.text = `${scopeLabel}\n${b.text}`;
+      blocks.push(b);
+    });
+    if (matched.length === 0 && scopeLabel) blocks.push({ type: "text", text: scopeLabel });
     blocks.push({ type: "table", spec: c.table });
   });
   for (const ai of unmatched) blocks.push(toBlock(ai));
@@ -453,31 +464,11 @@ function showResult(
       }
     });
   };
-  const onSave = (fullMessage: string): void => {
-    void persist(fullMessage, "saved_only")
-      .then(() => showToast({ message: "보고 이력에 저장했어요", variant: "success" }))
-      .catch((e) => {
-        console.warn("[dv-ads/brief] 이력 저장 실패", e);
-        showToast({ message: "보고 이력을 저장하지 못했어요", variant: "error" });
-      });
-  };
-
   renderBriefPanel({
     advertiserName: target.name,
     blocks,
     notice: notices.length > 0 ? notices.join(" / ") : undefined,
     onCopyText,
-    onSave,
-    // 재생성 — 같은 선택으로 다시. 톤 버튼은 톤만 바꿔 다시(선택·유형·이력 포함 유지).
-    onRegenerate: (toneOverride?: BriefTone) => {
-      const next: BriefPickState = { ...state, tone: toneOverride ?? state.tone };
-      void composeAndShow(ctx, selected, next);
-    },
-    onShowHistory: () => {
-      closeBriefPanel();
-      openBriefHistoryPanel(target.adAccountNo, target.name, () =>
-        showResult(ctx, selected, state, aiBlocks, greeting));
-    },
     // 다시 고르기 — 재수집 없이 선택 화면으로(직전 선택 상태 복원).
     onRepick: () => showSelection(ctx, state),
   });

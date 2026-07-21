@@ -233,24 +233,22 @@ function approxWon(n: number): string {
 }
 
 /**
- * 요약 블록 — 인사 + 기간/범위 + 3지표 + 전기 대비.
+ * 요약 블록 — 기간/범위 + 3지표 + 전기 대비. 인사는 AI(greeting)가 붙인다.
  * 보고 로그 5건이 전부 이 형태다. AI 미경유(설계 §3 1겹).
  */
 export function buildSummaryText(data: BriefData): string {
   const cur = data.model.totalCurrent;
   const prev = data.model.totalPrev;
-  const scope = data.model.hasDisplay ? "검색광고, GFA 포함" : "검색광고";
+  const scope = data.model.hasDisplay ? "검색광고와 GFA" : "검색광고";
   const curRoas = roasPct(cur);
   const prevRoas = roasPct(prev);
 
   const lines = [
-    "안녕하세요:)",
-    "",
-    `지난 ${dayCount(data.range)}일 동안 ${scope}`,
+    `지난 ${dayCount(data.range)}일 동안 진행된 ${scope} 성과 전달드립니다.`,
     "",
     `▶광고비 : ${won(cur.cost)}`,
     `▶전환매출액 : ${won(cur.revenue)}`,
-    `▶광고수익률 : ${curRoas.toFixed(2)}%로 집계되었습니다.`,
+    `▶광고수익률 : ${curRoas.toFixed(2)}%`,
   ];
 
   // 전기 데이터가 전무하면 비교 문장을 만들지 않는다(신규 계정 등).
@@ -258,9 +256,12 @@ export function buildSummaryText(data: BriefData): string {
     const diff = cur.revenue - prev.revenue;
     const dir = diff >= 0 ? "증가" : "감소";
     const roasDir = curRoas >= prevRoas ? "상승" : "하락";
+    // 매출과 수익률이 같은 방향이면 "~하였으며, 또한", 엇갈리면 "~하였으나"로 잇는다.
+    const sameDir = (diff >= 0) === (curRoas >= prevRoas);
+    const joiner = sameDir ? "하였으며, 수익률 또한" : "하였으나, 수익률은";
     lines.push(
       "",
-      `지난 동기간 대비 매출은 ${approxWon(diff)} ${dir}하였으며, 수익률 또한 ` +
+      `지난 동기간 대비 매출은 ${approxWon(diff)} ${dir}${joiner} ` +
         `${prevRoas.toFixed(0)}% > ${curRoas.toFixed(0)}%로 ${roasDir}하는 추세를 보였습니다.`,
     );
   }
@@ -270,9 +271,11 @@ export function buildSummaryText(data: BriefData): string {
 
 /** 요약 표 — 문구 ①에 딸리는 사진. */
 export function buildSummarySpec(data: BriefData): BriefTableSpec {
+  // "설정 기간/이전 기간"은 리포트 용어 — 광고주 표에는 날짜로(예: "07.13~07.19(7일)").
+  const rangeLabel = (r: DateRange): string => `${rangeText(r)}(${dayCount(r)}일)`;
   const rows = ([
-    ["설정 기간", data.model.totalCurrent],
-    ["이전 기간", data.model.totalPrev],
+    [rangeLabel(data.range), data.model.totalCurrent],
+    [rangeLabel(previousRange(data.range)), data.model.totalPrev],
   ] as Array<[string, ReportMetrics]>).map(([label, m]) => ({
     cells: [
       label,

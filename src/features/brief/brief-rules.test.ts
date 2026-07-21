@@ -140,9 +140,16 @@ describe("extractCandidates", () => {
   });
 
   it("키워드 이슈는 그룹마다 따로 만들어진다 — 다른 그룹 데이터가 섞이지 않는다", () => {
+    // 대조군 원칙(2026-07-21): 그룹에 키워드 1개면 후보 미생성 — 비교용 정상 키워드를 함께 둔다.
     const two: KeywordGroup[] = [
-      { campaign: "A", group: "G1", keywords: [{ keyword: "a전환없음", metrics: m(20_000, 0, 0) }] },
-      { campaign: "B", group: "G2", keywords: [{ keyword: "b전환없음", metrics: m(20_000, 0, 0) }] },
+      { campaign: "A", group: "G1", keywords: [
+        { keyword: "a전환없음", metrics: m(20_000, 0, 0) },
+        { keyword: "a정상", metrics: m(5_000, 1, 50_000) },
+      ] },
+      { campaign: "B", group: "G2", keywords: [
+        { keyword: "b전환없음", metrics: m(20_000, 0, 0) },
+        { keyword: "b정상", metrics: m(5_000, 1, 50_000) },
+      ] },
     ];
     const cands = extractCandidates({ keywords: two, targetRoas: 800 })
       .filter((x) => x.kind === "zeroConvKeyword");
@@ -197,7 +204,11 @@ describe("pickRankTargets", () => {
 describe("extractCandidates - highRoasLowRank", () => {
   const withRank = (): KeywordGroup[] => [{
     campaign: "C", group: "G",
-    keywords: [{ keyword: "고효율", metrics: m(50_000, 5, 450_000) }],
+    keywords: [
+      { keyword: "고효율", metrics: m(50_000, 5, 450_000) },
+      // 대조군 원칙 — 그룹에 키워드 1개면 후보 미생성이라 비교용 키워드를 함께 둔다.
+      { keyword: "보조", metrics: m(5_000, 1, 40_000) },
+    ],
   }];
 
   it("green + 저순위면 후보 (해당 그룹 scope)", () => {
@@ -242,8 +253,14 @@ describe("campaignCostFloor - 캠페인 유형별 비용 문턱 (2026-07-21)", (
   it("캠페인별 문턱이 있으면 계정 공통 문턱 대신 그 값으로 판정한다", () => {
     // 같은 3만원 소진·전환 0이라도 문턱 5만원인 캠페인은 통과, 2만원인 캠페인만 이슈.
     const kw: KeywordGroup[] = [
-      { campaign: "파워링크캠", group: "G", keywords: [{ keyword: "a", metrics: m(30_000, 0, 0) }] },
-      { campaign: "플레이스캠", group: "G", keywords: [{ keyword: "b", metrics: m(30_000, 0, 0) }] },
+      { campaign: "파워링크캠", group: "G", keywords: [
+        { keyword: "a", metrics: m(30_000, 0, 0) },
+        { keyword: "a정상", metrics: m(5_000, 1, 50_000) },
+      ] },
+      { campaign: "플레이스캠", group: "G", keywords: [
+        { keyword: "b", metrics: m(30_000, 0, 0) },
+        { keyword: "b정상", metrics: m(5_000, 1, 50_000) },
+      ] },
     ];
     const floors = new Map([["파워링크캠", 50_000], ["플레이스캠", 20_000]]);
     const cands = extractCandidates({ keywords: kw, campaignCostFloor: floors })
@@ -255,7 +272,10 @@ describe("campaignCostFloor - 캠페인 유형별 비용 문턱 (2026-07-21)", (
 
   it("맵에 없는 캠페인은 계정 공통 문턱으로 폴백한다", () => {
     const kw: KeywordGroup[] = [
-      { campaign: "미지정캠", group: "G", keywords: [{ keyword: "a", metrics: m(30_000, 0, 0) }] },
+      { campaign: "미지정캠", group: "G", keywords: [
+        { keyword: "a", metrics: m(30_000, 0, 0) },
+        { keyword: "a정상", metrics: m(5_000, 1, 50_000) },
+      ] },
     ];
     const cands = extractCandidates({ keywords: kw, campaignCostFloor: new Map() })
       .filter((x) => x.kind === "zeroConvKeyword");
@@ -315,9 +335,16 @@ describe("extractCandidates - lowRoasPlacement (그룹 단위)", () => {
   });
 
   it("지면 이슈는 그룹마다 따로 — 다른 그룹 지면과 섞이지 않는다", () => {
+    // 대조군 원칙 — 활성 지면 1개면 후보 미생성이라 정상 지면을 함께 둔다.
     const two = [
-      gd("A", "G1", 1, { byPlacement: [{ label: "네이버 메인", metrics: m(31_000, 0, 0) }] }),
-      gd("B", "G2", 2, { byPlacement: [{ label: "네이버 메인", metrics: m(31_000, 0, 0) }] }),
+      gd("A", "G1", 1, { byPlacement: [
+        { label: "네이버 메인", metrics: m(31_000, 0, 0) },
+        { label: "네이버 검색", metrics: m(80_000, 10, 800_000) },
+      ] }),
+      gd("B", "G2", 2, { byPlacement: [
+        { label: "네이버 메인", metrics: m(31_000, 0, 0) },
+        { label: "네이버 검색", metrics: m(80_000, 10, 800_000) },
+      ] }),
     ];
     const cands = extractCandidates({ ...base, groups: two })
       .filter((x) => x.kind === "zeroConvPlacement");
@@ -704,6 +731,8 @@ describe("targets 스냅샷", () => {
     const out = extractCandidates({
       keywords: [{ campaign: "C", group: "G", keywords: [
         { keyword: "가방", metrics: { ...ZERO_METRICS, impressions: 100, clicks: 10, cost: 20_000, purchaseConv: 0, revenue: 0 } },
+        // 대조군 원칙 — 그룹에 키워드 1개면 후보 미생성이라 비교용 키워드를 함께 둔다.
+        { keyword: "지갑", metrics: m(5_000, 1, 50_000) },
       ] }],
     });
     const c = out.find((c) => c.kind === "zeroConvKeyword")!;
