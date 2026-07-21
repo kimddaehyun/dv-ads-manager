@@ -8,7 +8,7 @@
 
 import { extractNumbers, verifyBlock } from "./brief-verify";
 import { type BriefCandidate } from "./brief-rules";
-import { type BriefReportType, type BriefTone, type BriefHistoryRecord } from "./brief-history";
+import { type BriefReportType, type BriefTone } from "./brief-history";
 import { getSupabase } from "@/shared/supabase";
 
 // manifest.config.ts의 host_permissions와 동일 도메인이어야 한다 — 다르면 요청이 차단된다.
@@ -23,27 +23,15 @@ export interface ComposeRequest {
   memo: string;
   reportType: BriefReportType;
   tone: BriefTone;
-  /** "이전 보고 이력 포함" 시 최근 1건 — 원문 앞부분만 잘라 보낸다. */
-  prevReport?: { message: string; actions: Array<{ kind: string; actionText?: string }> };
 }
 
 export interface ComposedBlock {
   text: string;
   isAiJudgment: boolean;
+  /** 이 문단이 다루는 이슈 번호(1부터, 서버 [말할 것] 번호). 없으면 매칭 불가 문단. */
+  factIndex?: number;
   /** 검산 실패 — 우리가 안 준 숫자가 문장에 있다. 차단하지 않고 AE에게 표시만. */
   numberWarning: boolean;
-}
-
-/** 지난 보고 원문은 이만큼만 — 말투가 아니라 "무슨 조치를 안내했는지"만 필요하다. */
-const PREV_REPORT_CHARS = 500;
-
-export function toPrevReport(history: BriefHistoryRecord): NonNullable<ComposeRequest["prevReport"]> {
-  return {
-    message: history.message.slice(0, PREV_REPORT_CHARS),
-    actions: history.actions
-      .filter((a) => a.action != null || a.actionText)
-      .map((a) => ({ kind: a.kind, actionText: a.actionText })),
-  };
 }
 
 async function loadToken(): Promise<string> {
@@ -53,7 +41,13 @@ async function loadToken(): Promise<string> {
   return accessToken;
 }
 
-export async function composeBlocks(req: ComposeRequest): Promise<ComposedBlock[]> {
+export interface ComposeResult {
+  /** AI가 말투 샘플의 인사 습관대로 쓴 인사 한 줄. 비어 있으면 클라이언트 기본값 사용. */
+  greeting: string;
+  blocks: ComposedBlock[];
+}
+
+export async function composeBlocks(req: ComposeRequest): Promise<ComposeResult> {
   const token = await loadToken();
   const res = await fetch(FN_URL, {
     method: "POST",
@@ -68,7 +62,6 @@ export async function composeBlocks(req: ComposeRequest): Promise<ComposedBlock[
       memo: req.memo,
       reportType: req.reportType,
       tone: req.tone,
-      prevReport: req.prevReport,
     }),
   });
   if (res.status === 401) throw new Error("로그인이 만료됐어요. 확장 프로그램 설정에서 다시 로그인해 주세요");
@@ -87,14 +80,16 @@ export async function composeBlocks(req: ComposeRequest): Promise<ComposedBlock[
     }
   }
   extractNumbers(req.memo).forEach((n) => allowed.add(n));
-  // 지난 보고 원문의 숫자도 허용 — AI가 이어 말하며 재인용할 수 있다(오탐 방지).
-  if (req.prevReport) extractNumbers(req.prevReport.message).forEach((n) => allowed.add(n));
 
-  return (data.blocks ?? []).map((b: { text: string; isAiJudgment?: boolean }) => ({
-    text: b.text,
-    isAiJudgment: b.isAiJudgment === true,
-    numberWarning: !verifyBlock(b.text, allowed),
-  }));
+  return {
+    greeting: typeof data.greeting === "string" ? data.greeting.trim() : "",
+    blocks: (data.blocks ?? []).map((b: { text: string; isAiJudgment?: boolean; factIndex?: unknown }) => ({
+      text: b.text,
+      isAiJudgment: b.isAiJudgment === true,
+      factIndex: typeof b.factIndex === "number" && Number.isInteger(b.factIndex) ? b.factIndex : undefined,
+      numberWarning: !verifyBlock(b.text, allowed),
+    })),
+  };
 }
 
 /** 채팅 이력 → AI 말투 프롬프트 생성 (T5.5). 광고주 데이터가 아니라 AE 본인의 글이다. */

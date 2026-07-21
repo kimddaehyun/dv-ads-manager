@@ -2708,6 +2708,39 @@ td.dvads-period-delta-down {
   flex: 1;
 }
 
+/* ─── 관리이력 보고 다이얼로그 (기간 + 변경자 칩 + 문구 미리보기) ────────── */
+
+.dvads-hr-dates {
+  margin-top: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-hr-dates .dvads-actor-input {
+  padding-right: 10px;
+}
+.dvads-hr-tilde {
+  color: #9CA3AF;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.dvads-hr-text {
+  margin-top: 10px;
+  height: 180px;
+  padding: 10px;
+  border: 1px solid #E1E4E8;
+  border-radius: 8px;
+  background: #F7F8F9;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #171717;
+  resize: none;
+  outline: none;
+  white-space: pre;
+  overflow: auto;
+}
+
 
 /* 페이지 우상단 햄버거 버튼 알림 배지 (iOS 스타일) — 가로/세로 동일한 정원 고정.
    숫자 자릿수가 늘면 font-size를 줄여 원형 유지 (글자가 원을 깨지 않게). */
@@ -4838,6 +4871,31 @@ td.dvads-period-delta-down {
 .dvads-brief-pick-detail-table tr.dvads-brief-row-good td { background: rgba(22, 163, 74, 0.07); }
 /* 판정에 실제로 쓴 지표 셀 — 굵게 */
 .dvads-brief-pick-detail-table td.dvads-brief-cell-bold { font-weight: 700; }
+/* 캠페인 머리글의 최소 금액 — 이 캠페인의 이슈 판정 비용 문턱. 파랑으로 구분 */
+.dvads-brief-camp-floor {
+  font-weight: 500; font-size: 13px; color: #0072f5; white-space: pre;
+}
+/* 캠페인 유형 띠 — 파워링크/쇼핑검색/플레이스 구간 구분. 연한 파랑 밴드 + 파랑 글자.
+   스크롤 중 상단 고정(sticky) — 다음 유형 띠가 올라오면 나중 형제가 위에 그려져 자연 교체.
+   반투명이면 밑 행이 비쳐 보이므로 배경은 불투명 단색 유지. */
+.dvads-brief-pick-typeband {
+  position: sticky; top: 0; z-index: 2;
+  margin: 18px 0 2px; padding: 4px 8px 4px 12px;
+  background: #EFF6FF; border-radius: 8px;
+  font: 700 13px/1.4 Pretendard, -apple-system, sans-serif; color: #0072f5;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+/* 띠 오른쪽 끝 — 이전/다음 캠페인 유형으로 점프하는 화살표 */
+.dvads-brief-typeband-nav { display: flex; gap: 2px; }
+.dvads-brief-typeband-btn {
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  background: none; color: #0072f5; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dvads-brief-typeband-btn:hover:not(:disabled) { background: rgba(0, 114, 245, 0.12); }
+.dvads-brief-typeband-btn:disabled { opacity: 0.3; cursor: default; }
+.dvads-brief-typeband-btn svg { width: 14px; height: 14px; }
+.dvads-brief-pick-typeband:first-child { margin-top: 4px; }
 /* 캠페인 > 그룹 계층 헤더 — 캠페인은 굵게, 그룹은 들여쓴 소제목 */
 /* 머리글 클릭 = 자식 이슈 전체 선택/해제. 하이라이트가 자식과 한 덩어리로 붙게 여백은 padding으로만. */
 .dvads-brief-pick-camp {

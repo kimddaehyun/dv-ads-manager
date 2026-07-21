@@ -238,94 +238,40 @@ describe("extractCandidates - highRoasLowRank", () => {
   });
 });
 
-describe("extractCandidates - belowTargetGroup", () => {
-  const base = { targetRoas: 800 };
-
-  it("그룹 집계 ROAS가 none이어야만 후보 — 초록·노랑·무색이 섞여도 합산이 기준", () => {
-    // 그룹 합산: 비용 10만, 매출 85만 → ROAS 850% = green → 후보 아님.
-    // 안에 none 키워드(400%)가 섞여 있어도 그룹 후보는 만들지 않는다(키워드 후보가 개별로 다룬다).
-    const mixed: KeywordGroup[] = [{
-      campaign: "C", group: "섞인그룹",
-      keywords: [
-        { keyword: "좋음", metrics: m(50_000, 6, 650_000) },   // 1300% green
-        { keyword: "나쁨", metrics: m(50_000, 2, 200_000) },   // 400% none
-      ],
-    }];
-    expect(extractCandidates({ ...base, keywords: mixed })
-      .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
+describe("campaignCostFloor - 캠페인 유형별 비용 문턱 (2026-07-21)", () => {
+  it("캠페인별 문턱이 있으면 계정 공통 문턱 대신 그 값으로 판정한다", () => {
+    // 같은 3만원 소진·전환 0이라도 문턱 5만원인 캠페인은 통과, 2만원인 캠페인만 이슈.
+    const kw: KeywordGroup[] = [
+      { campaign: "파워링크캠", group: "G", keywords: [{ keyword: "a", metrics: m(30_000, 0, 0) }] },
+      { campaign: "플레이스캠", group: "G", keywords: [{ keyword: "b", metrics: m(30_000, 0, 0) }] },
+    ];
+    const floors = new Map([["파워링크캠", 50_000], ["플레이스캠", 20_000]]);
+    const cands = extractCandidates({ keywords: kw, campaignCostFloor: floors })
+      .filter((x) => x.kind === "zeroConvKeyword");
+    expect(cands).toHaveLength(1);
+    expect(cands[0].scope?.campaign).toBe("플레이스캠");
+    expect(String(cands[0].facts.기준)).toContain("20,000원");
   });
 
-  it("그룹 집계 ROAS none + 비용 임계 이상 → 그 그룹의 후보 1개", () => {
-    // 합산: 비용 6만, 매출 24만 → 400% = none.
-    const bad: KeywordGroup[] = [{
-      campaign: "[DV] 대나무", group: "2. 세부",
-      keywords: [
-        { keyword: "a", metrics: m(30_000, 1, 120_000) },
-        { keyword: "b", metrics: m(30_000, 1, 120_000) },
-      ],
-    }];
-    const c = extractCandidates({ ...base, keywords: bad })
-      .find((x) => x.kind === "belowTargetGroup");
-    expect(c).toBeDefined();
-    expect(c!.scope).toMatchObject({ campaign: "[DV] 대나무", group: "2. 세부" });
-    expect(c!.facts.수익률).toBe("400%");
-    // 그룹 후보는 요약 — 키워드 나열이 아니라 그룹 단위 표. 그룹명 칸은 헤더와 중복이라 없다.
-    expect(c!.table.columns[0]).toBe("노출");
-    expect(c!.table.rows[0].problem).toBe(true);
+  it("맵에 없는 캠페인은 계정 공통 문턱으로 폴백한다", () => {
+    const kw: KeywordGroup[] = [
+      { campaign: "미지정캠", group: "G", keywords: [{ keyword: "a", metrics: m(30_000, 0, 0) }] },
+    ];
+    const cands = extractCandidates({ keywords: kw, campaignCostFloor: new Map() })
+      .filter((x) => x.kind === "zeroConvKeyword");
+    expect(cands).toHaveLength(1); // 기본 COST_FLOOR(1만원) 기준으로 판정
   });
+});
 
-  it("그룹 합산 비용이 임계 미만이면 제외", () => {
-    const small: KeywordGroup[] = [{
-      campaign: "C", group: "소액그룹",
-      keywords: [{ keyword: "a", metrics: m(9_000, 1, 10_000) }],
-    }];
-    expect(extractCandidates({ ...base, keywords: small })
-      .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
-  });
-
-  it("목표 미설정이면 후보를 만들지 않는다", () => {
+// belowTargetGroup(그룹 합산 미달)은 2026-07-21 폐기 — 개별 키워드 후보와 중복이라 생성 안 함.
+describe("extractCandidates - belowTargetGroup 폐기", () => {
+  it("그룹 합산이 미달이어도 그룹 후보는 만들지 않는다", () => {
     const bad: KeywordGroup[] = [{
       campaign: "C", group: "G",
       keywords: [{ keyword: "a", metrics: m(60_000, 2, 240_000) }],
     }];
-    expect(extractCandidates({ keywords: bad })
+    expect(extractCandidates({ targetRoas: 800, keywords: bad })
       .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
-  });
-
-  it("그룹 합산 전환 0이면 후보 아님 — zeroConvKeyword와 중복 방지", () => {
-    const allZero: KeywordGroup[] = [{
-      campaign: "C", group: "전환없는그룹",
-      keywords: [
-        { keyword: "a", metrics: m(30_000, 0, 0) },
-        { keyword: "b", metrics: m(30_000, 0, 0) },
-      ],
-    }];
-    expect(extractCandidates({ ...base, keywords: allZero })
-      .find((x) => x.kind === "belowTargetGroup")).toBeUndefined();
-  });
-
-  it("이름이 같은 그룹이 배열에 두 번 오면(파워링크/쇼핑) 지표를 합치지 않는다", () => {
-    // 각각은 green(1300%)인데 합치면 계산이 달라질 수 있다 — 항목별로 따로 판정.
-    const dup: KeywordGroup[] = [
-      { campaign: "C", group: "기본", keywords: [{ keyword: "a", metrics: m(30_000, 3, 390_000) }] },
-      { campaign: "C", group: "기본", keywords: [{ keyword: "b", metrics: m(30_000, 1, 120_000) }] }, // 400% none
-    ];
-    const cands = extractCandidates({ ...base, keywords: dup })
-      .filter((x) => x.kind === "belowTargetGroup");
-    // 두 번째 항목만 none → 후보 1개. 합쳐졌다면 (60_000, 510_000) = 850% green으로 사라진다.
-    expect(cands).toHaveLength(1);
-  });
-
-  it("같은 그룹명이 다른 캠페인에 있어도 따로 집계한다", () => {
-    // 캠페인A의 "기본"은 none, 캠페인B의 "기본"은 green — A만 후보.
-    const two: KeywordGroup[] = [
-      { campaign: "A", group: "기본", keywords: [{ keyword: "a", metrics: m(60_000, 2, 240_000) }] },
-      { campaign: "B", group: "기본", keywords: [{ keyword: "b", metrics: m(60_000, 8, 600_000) }] },
-    ];
-    const cands = extractCandidates({ ...base, keywords: two })
-      .filter((x) => x.kind === "belowTargetGroup");
-    expect(cands).toHaveLength(1);
-    expect(cands[0].scope?.campaign).toBe("A");
   });
 });
 
@@ -449,12 +395,21 @@ describe("extractCandidates - genderBidSkew / ageBidSkew (목표 미달 구간, 
   it("전환 0 구간은 미달 후보가 아니라 zeroConvSegment로 분리된다", () => {
     const cands = extractCandidates(withGender([
       { label: "남성", metrics: m(50_000, 0, 0) },
-      { label: "여성", metrics: m(50_000, 0, 0) },
+      { label: "여성", metrics: m(50_000, 5, 450_000) }, // 900% green — 대조군
     ]));
     expect(cands.find((x) => x.kind === "genderBidSkew")).toBeUndefined();
     const zero = cands.find((x) => x.kind === "zeroConvSegment");
     expect(zero).toBeDefined();
-    expect(zero!.facts.count).toBe(2);
+    expect(zero!.facts.count).toBe(1);
+  });
+
+  it("전 구간이 나쁘면(대조군 없음) 세그먼트 후보를 만들지 않는다 — 그 차원 조정으로 풀 문제가 아니다", () => {
+    const cands = extractCandidates(withGender([
+      { label: "남성", metrics: m(50_000, 0, 0) },
+      { label: "여성", metrics: m(50_000, 0, 0) },
+    ]));
+    expect(cands.find((x) => x.kind === "zeroConvSegment")).toBeUndefined();
+    expect(cands.find((x) => x.kind === "genderBidSkew")).toBeUndefined();
   });
 
   it("판정은 그룹 안에서만 — 미달 구간이 있는 그룹만 후보", () => {
@@ -558,9 +513,15 @@ describe("extractCandidates - 세그먼트 확장: 전환0 / 상향 여지 / 클
   it("노출 충분 + 클릭률 미만 구간 → lowCtrSegment", () => {
     const seg = (label: string, impressions: number, clicks: number): NamedMetrics =>
       ({ label, metrics: { ...ZERO_METRICS, impressions, clicks, cost: 20_000 } });
-    // 클릭률 0.2% < 0.5% (노출 5000 ≥ 1000)
-    const c = extractCandidates({ ...base, groups: [gd("C", "G", 1, { byHour: [seg("10시~11시", 5_000, 10)] })] })
-      .find((x) => x.kind === "lowCtrSegment");
+    // 클릭률 0.2% < 0.5% (노출 5000 ≥ 1000). 대조군 — 클릭률·전환 모두 건강한 시간대가 있어야 후보.
+    const healthy: NamedMetrics = {
+      label: "11시~12시",
+      metrics: { ...ZERO_METRICS, impressions: 5_000, clicks: 200, cost: 20_000, purchaseConv: 2, revenue: 200_000 },
+    };
+    const c = extractCandidates({
+      ...base,
+      groups: [gd("C", "G", 1, { byHour: [seg("10시~11시", 5_000, 10), healthy] })],
+    }).find((x) => x.kind === "lowCtrSegment");
     expect(c).toBeDefined();
     expect(c!.facts.차원).toBe("시간대");
     expect(c!.facts.구간).toBe("10시~11시");

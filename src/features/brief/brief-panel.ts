@@ -58,8 +58,9 @@ const REGEN_BUTTONS: Array<{ label: string; tone?: BriefTone }> = [
 let disposePanel: (() => void) | null = null;
 
 export function closeBriefPanel(): void {
-  // 성과 필터 등 portal 드롭다운 패널이 body에 남지 않게 함께 정리.
+  // 성과 필터 등 portal 드롭다운 패널·열려 있던 i 툴팁이 body에 남지 않게 함께 정리.
   closeAllOpenDropdowns();
+  hideTooltip();
   disposePanel?.();
   disposePanel = null;
 }
@@ -399,7 +400,6 @@ export interface BriefPickState {
   reportType: BriefReportType;
   tone: BriefTone;
   includePrevHistory: boolean;
-  includeChangeHistory: boolean;
   memo: string;
   /** opts.candidates 기준 인덱스. */
   selectedIdx: number[];
@@ -414,26 +414,31 @@ const REPORT_TYPE_OPTIONS: Array<{ value: BriefReportType; label: string }> = [
 ];
 
 /** 이슈 기준 직접 설정 입력 — 라벨은 비개발자 기준. */
-const THRESHOLD_FIELDS: Array<{ key: keyof BriefThresholds; label: string; unit: string; step?: string }> = [
-  { key: "costFloor", label: "이슈로 볼 최소 광고비", unit: "원" },
-  { key: "lowCtrPct", label: "낮은 클릭률 기준", unit: "%", step: "0.1" },
-  { key: "adImpFloor", label: "소재 판단 최소 노출", unit: "회" },
+const THRESHOLD_FIELDS: Array<{ key: keyof BriefThresholds; label: string; unit: string; step?: string; fallback?: number }> = [
+  // 최소 광고비는 원이 아니라 **캠페인 광고비 대비 %** — 캠페인별 문턱(2026-07-21 캠페인별 분리).
+  { key: "costFloorPct", label: "최소 광고비", unit: "%", step: "0.1", fallback: 1.5 },
+  { key: "lowCtrPct", label: "최소 클릭률", unit: "%", step: "0.1" },
+  { key: "adImpFloor", label: "최소 노출", unit: "회" },
   { key: "lowRankFloor", label: "낮은 순위 기준", unit: "위" },
 ];
 
 /** 토글로 묶여 숨겨질 수 있는 이력성 후보 kind. */
 const PREV_HISTORY_KIND = "pastActionFollowUp";
-const CHANGE_HISTORY_KIND = "changeFollowUp";
 
 export interface BriefPickOpts {
   advertiserName: string;
   /** 광고관리자 URL용 — 있으면 그룹 단위 후보에 "광고관리자에서 열기" 링크를 단다. */
   adAccountNo?: number;
   candidates: BriefCandidate[];
+  /** 캠페인명 → 유형/광고비, "캠페인||그룹" → 그룹 광고비 — 유형 띠 + 광고비순 정렬 재료. */
+  campaignInfo?: {
+    campaigns: Map<string, { type: string; cost: number }>;
+    groups: Map<string, number>;
+    /** 캠페인명 → 비용 문턱(원) — 캠페인 머리글에 "최소 금액 N원"으로 표기. */
+    campaignFloors?: Map<string, number>;
+  };
   /** 저장된 지난 보고가 1건 이상인지 — 없으면 "이전 보고 이력 포함" 비활성. */
   prevHistoryAvailable: boolean;
-  /** 변경 이력 토글을 비활성해야 하는 이유(작업자 목록 없음 등). undefined면 활성. */
-  changeDisabledReason?: string;
   /** 광고주별 저장 선호 등에서 온 초기값. selectedIdx 등은 "다시 고르기" 복귀용. */
   initial?: Partial<BriefPickState>;
   /** "보고문 만들기" — 체크된 후보(액션 반영됨)와 화면 상태 전체를 넘긴다. */
@@ -578,16 +583,12 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     reportType: init.reportType ?? "post_action_report",
     tone: init.tone ?? "detailed",
     includePrevHistory: init.includePrevHistory ?? opts.prevHistoryAvailable,
-    includeChangeHistory:
-      init.includeChangeHistory ??
-      (opts.changeDisabledReason == null && opts.candidates.some((c) => c.kind === CHANGE_HISTORY_KIND)),
     memo: init.memo ?? "",
     selectedIdx: init.selectedIdx ?? [],
     actions: init.actions ?? {},
     advOpen: init.advOpen ?? false,
   };
   if (!opts.prevHistoryAvailable) state.includePrevHistory = false;
-  if (opts.changeDisabledReason != null) state.includeChangeHistory = false;
 
   // ── 고급옵션(접힘): 보고 유형 / 이슈 기준 / 대화 스타일 — 섹션은 아래에서 순서대로 조립 ──
   const optWrap = document.createElement("div");
@@ -610,8 +611,7 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     headSyncs.forEach((sync) => sync());
   };
   const isHiddenKind = (kind: string): boolean =>
-    (kind === PREV_HISTORY_KIND && !state.includePrevHistory) ||
-    (kind === CHANGE_HISTORY_KIND && !state.includeChangeHistory);
+    kind === PREV_HISTORY_KIND && !state.includePrevHistory;
   const passesPerfFilter = (p: BriefCandidate): boolean => {
     if (perfFilter === "all") return true;
     const s = pickRowVisual(p.kind, p.facts).state;
@@ -636,10 +636,28 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     }
     s.picks.push(p);
   }
+  // 정렬: 계정 공통 → 유형(파워링크/쇼핑검색/플레이스/...) → 캠페인 광고비 desc → 그룹 광고비 desc.
+  const TYPE_ORDER = ["파워링크", "쇼핑검색광고", "플레이스", "파워컨텐츠"];
+  const typeOf = (campaign?: string): string | undefined =>
+    campaign ? opts.campaignInfo?.campaigns.get(campaign)?.type : undefined;
+  const typeRank = (campaign?: string): number => {
+    const i = TYPE_ORDER.indexOf(typeOf(campaign) ?? "");
+    return i === -1 ? TYPE_ORDER.length : i;
+  };
+  const campCost = (campaign?: string): number =>
+    (campaign && opts.campaignInfo?.campaigns.get(campaign)?.cost) || 0;
+  const groupCost = (s: PickSection): number =>
+    opts.campaignInfo?.groups.get(`${s.campaign}||${s.group}`) ?? 0;
   sectionList.sort((a, b) => {
     if (!a.campaign) return b.campaign ? -1 : 0;
     if (!b.campaign) return 1;
-    return a.campaign.localeCompare(b.campaign, "ko") || (a.group ?? "").localeCompare(b.group ?? "", "ko");
+    return (
+      typeRank(a.campaign) - typeRank(b.campaign) ||
+      campCost(b.campaign) - campCost(a.campaign) ||
+      a.campaign.localeCompare(b.campaign, "ko") ||
+      groupCost(b) - groupCost(a) ||
+      (a.group ?? "").localeCompare(b.group ?? "", "ko")
+    );
   });
   const hasScoped = sectionList.some((s) => s.campaign);
 
@@ -694,24 +712,93 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       ? `${location.origin}/manage/ad-accounts/${opts.adAccountNo}/sa/adgroups/${adgroupId}`
       : undefined;
 
-  const makeCampHead = (label: string, url?: string): SectionCtrl => {
+  const makeCampHead = (label: string, url?: string, floor?: number): SectionCtrl => {
     const camp = document.createElement("div");
     camp.className = "dvads-brief-pick-camp";
     addHeadTitle(camp, label, url);
+    // "20_파워링크_콘드로이친 30포 / 최소 금액 100,000원" — 이 캠페인의 이슈 판정 비용 문턱.
+    if (floor != null) {
+      const fl = document.createElement("span");
+      fl.className = "dvads-brief-camp-floor";
+      fl.textContent = ` / 최소 금액 ${floor.toLocaleString()}원`;
+      camp.appendChild(fl);
+    }
     list.appendChild(camp);
     const ctrl: SectionCtrl = { picks: [], rows: [], items: [] };
     wireHead(camp, ctrl);
     return ctrl;
   };
 
+  // 유형 띠 라벨 — 리포트 유형 라벨을 화면용으로 짧게.
+  const TYPE_DISPLAY: Record<string, string> = { 쇼핑검색광고: "쇼핑검색" };
   let prevCampaign: string | undefined;
+  let prevTypeLabel: string | undefined;
   let curCamp: SectionCtrl | undefined;
   let curGroup: SectionCtrl | undefined;
+  // 유형 띠 — 성과 필터로 그 유형의 이슈가 전부 숨으면 띠도 같이 숨긴다.
+  let curBand: { el: HTMLElement; picks: BriefCandidate[] } | undefined;
+  // 띠는 sticky라 자기 rect가 "붙어 있는 위치"일 수 있다 — 스크롤 목적지는 띠 앞의
+  // 높이 0 기준점(anchor)으로 잡는다(원래 위치가 항상 정확).
+  const typeBands: Array<{
+    band: HTMLElement; anchor: HTMLElement;
+    up: HTMLButtonElement; down: HTMLButtonElement;
+  }> = [];
   for (const section of sectionList) {
     if (section.campaign) {
+      // 캠페인 유형이 바뀌는 지점에 띠를 깐다 — 유형 정보가 있을 때만.
+      const rawType = typeOf(section.campaign);
+      if (rawType && rawType !== prevTypeLabel) {
+        const anchor = document.createElement("div");
+        list.appendChild(anchor);
+        const band = document.createElement("div");
+        band.className = "dvads-brief-pick-typeband";
+        band.textContent = TYPE_DISPLAY[rawType] ?? rawType;
+        // 오른쪽 끝 위/아래 화살표 — 이전/다음 캠페인 유형 띠로 바로 이동.
+        const nav = document.createElement("span");
+        nav.className = "dvads-brief-typeband-nav";
+        const mkNavBtn = (dir: -1 | 1): HTMLButtonElement => {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "dvads-brief-typeband-btn";
+          btn.setAttribute("aria-label", dir < 0 ? "이전 캠페인 유형으로" : "다음 캠페인 유형으로");
+          btn.innerHTML = dir < 0
+            ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>'
+            : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
+          btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            // 필터로 숨은 띠는 건너뛴다.
+            const visible = typeBands.filter((t) => t.band.style.display !== "none");
+            const i = visible.findIndex((t) => t.band === band);
+            const target = visible[i + dir];
+            if (!target) return;
+            // 목적지 = 띠가 상단에 딱 붙는 지점. anchor(높이 0) 바로 아래 margin-top만큼이
+            // 띠의 원래 위치라, margin을 더해 스크롤해야 어중간하게 걸치지 않는다.
+            const margin = parseFloat(getComputedStyle(target.band).marginTop) || 0;
+            const delta = target.anchor.getBoundingClientRect().top - body.getBoundingClientRect().top + margin;
+            body.scrollTo({ top: body.scrollTop + delta, behavior: "smooth" });
+          });
+          nav.appendChild(btn);
+          return btn;
+        };
+        const up = mkNavBtn(-1);
+        const down = mkNavBtn(1);
+        band.appendChild(nav);
+        list.appendChild(band);
+        typeBands.push({ band, anchor, up, down });
+        prevTypeLabel = rawType;
+        const bandRef = { el: band, picks: [] as BriefCandidate[] };
+        curBand = bandRef;
+        headSyncs.push(() => {
+          bandRef.el.style.display = bandRef.picks.some(isVisiblePick) ? "" : "none";
+        });
+      }
       if (section.campaign !== prevCampaign) {
         const campId = section.picks.find((p) => p.scope?.nccCampaignId)?.scope?.nccCampaignId;
-        curCamp = makeCampHead(section.campaign, campaignUrlOf(campId));
+        curCamp = makeCampHead(
+          section.campaign,
+          campaignUrlOf(campId),
+          opts.campaignInfo?.campaignFloors?.get(section.campaign),
+        );
         prevCampaign = section.campaign;
       }
       const grouphead = document.createElement("div");
@@ -725,11 +812,13 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     } else if (hasScoped) {
       curCamp = makeCampHead("계정 공통");
       curGroup = undefined;
+      curBand = undefined;
     }
 
     section.picks.forEach((pick) => {
     curCamp?.picks.push(pick);
     curGroup?.picks.push(pick);
+    curBand?.picks.push(pick);
     // 행(선택) + 펼침 영역(실제 데이터)을 한 덩어리로 — 구분선은 덩어리 사이에만.
     const item = document.createElement("div");
     item.className = "dvads-brief-pick-item";
@@ -832,6 +921,20 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     curGroup?.items.push(item);
     });
   }
+  // 화살표 활성/비활성 — 보이는 띠 기준으로 맨 위에선 ↑, 맨 아래에선 ↓를 누를 수 없게.
+  // 이 sync는 각 띠의 표시 sync(위에서 push)보다 뒤에 있어야 숨김 반영 후 판정된다.
+  if (typeBands.length > 0) {
+    const syncNav = () => {
+      const visible = typeBands.filter((t) => t.band.style.display !== "none");
+      for (const t of typeBands) {
+        const i = visible.indexOf(t);
+        t.up.disabled = i <= 0;
+        t.down.disabled = i < 0 || i === visible.length - 1;
+      }
+    };
+    headSyncs.push(syncNav);
+    syncNav();
+  }
   body.appendChild(list);
 
   // 고급옵션 안의 소제목 — 굵은 라벨 한 줄.
@@ -846,7 +949,8 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     return t;
   };
 
-  // i 아이콘 — 클릭하면 설명 툴팁. 회색 원 + 흰 i.
+  // i 아이콘 — 클릭하면 설명 툴팁, 다시 클릭하거나 바깥을 클릭하면 닫힘. 호버 이탈로는 안 닫는다.
+  // 툴팁은 body에 fixed로 뜨므로, 열려 있는 동안 스크롤/리사이즈마다 앵커를 따라 재배치한다.
   const makeInfoIcon = (text: string): HTMLElement => {
     const info = document.createElement("button");
     info.type = "button";
@@ -854,13 +958,34 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
     info.setAttribute("aria-label", "설명");
     info.textContent = "i";
     let open = false;
+    const reposition = () => {
+      if (open) showTooltip(info, text, "top"); // 같은 호출로 위치만 재계산된다
+    };
+    const onDocDown = (e: Event) => {
+      if (e.target instanceof Node && info.contains(e.target)) return;
+      close();
+    };
+    const close = () => {
+      if (!open) return;
+      open = false;
+      hideTooltip();
+      window.removeEventListener("scroll", reposition, true);
+      window.removeEventListener("resize", reposition);
+      document.removeEventListener("pointerdown", onDocDown, true);
+    };
     info.addEventListener("click", (e) => {
       e.stopPropagation();
-      open = !open;
-      if (open) showTooltip(info, text, "top");
-      else hideTooltip();
+      if (open) {
+        close();
+        return;
+      }
+      open = true;
+      showTooltip(info, text, "top");
+      window.addEventListener("scroll", reposition, true);
+      window.addEventListener("resize", reposition);
+      // 이 클릭 자체가 document로 버블링돼 바로 닫히는 race 방지 — 다음 tick부터 감시.
+      setTimeout(() => document.addEventListener("pointerdown", onDocDown, true), 0);
     });
-    info.addEventListener("mouseleave", () => { open = false; hideTooltip(); });
     return info;
   };
 
@@ -976,8 +1101,12 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       customWrap.style.display = sensitivity === "custom" ? "" : "none";
       if (sensitivity === "custom") {
         const resolved = resolveThresholds({ sensitivity: "custom", custom: th.custom, totalCost: th.totalCost });
-        for (const [key, input] of inputs) {
-          if (input.value === "") input.value = String(resolved[key]);
+        for (const fdef of THRESHOLD_FIELDS) {
+          const input = inputs.get(fdef.key);
+          if (!input || input.value !== "") continue;
+          // 해석 결과에 없는 키(costFloorPct 등)는 필드 정의의 기본값으로 채운다.
+          const v = resolved[fdef.key];
+          input.value = String(typeof v === "number" ? v : (th.custom[fdef.key] ?? fdef.fallback ?? ""));
         }
       }
     };

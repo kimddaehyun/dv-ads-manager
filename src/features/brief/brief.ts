@@ -25,15 +25,12 @@ import { type RankPosition } from "@/types/storage";
 import { type GetBidEstimateRequest, type GetBidEstimateResponse } from "@/types/messages";
 import { collectBriefData, buildSummaryText, buildSummarySpec, fetchPowerlinkBidMap, won, type BriefData } from "./brief-data";
 import { rangeText } from "@/features/report/report-period";
-import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate, type BriefTargetSnapshot, type BriefRuleInput, type BriefThresholds } from "./brief-rules";
+import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate, type BriefRuleInput, type BriefThresholds } from "./brief-rules";
 import { resolveThresholds, type BriefSensitivity } from "./brief-thresholds";
-import { composeBlocks, toPrevReport, type ComposedBlock } from "./brief-compose";
+import { composeBlocks, type ComposedBlock } from "./brief-compose";
 import { renderBriefPanel, renderBriefPickPanel, closeBriefPanel, type BriefBlock, type BriefPickState } from "./brief-panel";
 import { saveBriefHistory, fetchBriefHistory, candidatesToActions, type BriefHistoryRecord, type BriefTone, type BriefSentStatus } from "./brief-history";
-import { buildFollowUpCandidate, currentTargetMap } from "./brief-followup";
 import { openBriefHistoryPanel } from "./brief-history-panel";
-import { fetchBriefChangeEvents, type BriefChangeFetchResult } from "./brief-change-data";
-import { evaluateChangeImpacts, buildChangeHistoryCandidates } from "./brief-change-rules";
 
 let running = false;
 let runToken = 0;
@@ -126,15 +123,69 @@ interface BriefContext {
   candidates: BriefCandidate[];
   targetRoas: number | undefined;
   lastHistory: BriefHistoryRecord | null;
-  changeRes: BriefChangeFetchResult;
   /** 패널 1회당 이력 레코드 1건(id 고정 upsert) — 재생성해도 같은 보고로 취급. */
   historyId: string;
   /** 이슈 기준 변경 시 재계산 재료 — 재수집 없이 규칙 엔진만 다시 돌린다. */
   ruleInput: Omit<BriefRuleInput, "thresholds">;
   followCand: BriefCandidate | null;
-  changeCands: BriefCandidate[];
   sensitivity: BriefSensitivity;
   customThresholds: Partial<BriefThresholds>;
+  /** 캠페인 유형·광고비 — 선택 화면의 유형 띠·광고비순 정렬 + 브랜드검색 제외 재료. */
+  campaignInfo: BriefCampaignInfo;
+  /** 캠페인명 → 비용 문턱(원) — 캠페인 머리글 "최소 금액" 표기. 이슈 기준 변경 시 재계산. */
+  campaignFloors: Map<string, number>;
+}
+
+/** 캠페인명 → 유형/기간 광고비, "캠페인||그룹" → 그룹 광고비. campGroups에서 추가 호출 없이. */
+export interface BriefCampaignInfo {
+  campaigns: Map<string, { type: string; cost: number }>;
+  groups: Map<string, number>;
+}
+
+const BRAND_TYPE_LABEL = "브랜드검색/신제품검색";
+
+function buildCampaignInfo(data: BriefData): BriefCampaignInfo {
+  const campaigns = new Map<string, { type: string; cost: number }>();
+  const groups = new Map<string, number>();
+  for (const tg of data.campGroups) {
+    for (const r of tg.rows) {
+      if (!r.campaign) continue;
+      const c = campaigns.get(r.campaign) ?? { type: tg.type, cost: 0 };
+      c.cost += r.metrics.cost;
+      campaigns.set(r.campaign, c);
+      const key = `${r.campaign}||${r.group}`;
+      groups.set(key, (groups.get(key) ?? 0) + r.metrics.cost);
+    }
+  }
+  return { campaigns, groups };
+}
+
+/**
+ * 캠페인별 비용 문턱(2026-07-21 캠페인별 분리) — 각 캠페인의 기간 광고비에 이슈 기준과 같은
+ * 비례 공식을 적용한다. 맞춤에서 최소 광고비 %(costFloorPct)를 정하면 그 비율이 우선.
+ * 규칙 엔진 판정과 캠페인 머리글의 "최소 금액" 표기가 같은 맵을 쓴다.
+ */
+function buildCostFloors(
+  info: BriefCampaignInfo,
+  sensitivity: BriefSensitivity,
+  custom: Partial<BriefThresholds>,
+): Map<string, number> {
+  const roundThousand = (n: number): number => Math.round(n / 1_000) * 1_000;
+  const pct = custom.costFloorPct;
+  const byCampaign = new Map<string, number>();
+  for (const [name, c] of info.campaigns) {
+    const floor =
+      sensitivity === "custom" && typeof pct === "number" && pct > 0
+        ? Math.max(1_000, roundThousand((c.cost * pct) / 100))
+        : resolveThresholds({ sensitivity, custom, totalCost: c.cost }).costFloor;
+    byCampaign.set(name, floor);
+  }
+  return byCampaign;
+}
+
+/** 브랜드검색 캠페인의 이슈는 보고에서 제외한다(2026-07-21 사용자 요청). */
+function dropBrandCandidates(cands: BriefCandidate[], info: BriefCampaignInfo): BriefCandidate[] {
+  return cands.filter((c) => !c.scope || info.campaigns.get(c.scope.campaign)?.type !== BRAND_TYPE_LABEL);
 }
 
 /** 이슈 기준(민감도)으로 규칙 엔진만 다시 돌려 후보 목록을 갈아끼운다 — 수집 재사용. */
@@ -144,8 +195,11 @@ function rebuildCandidates(ctx: BriefContext): void {
     custom: ctx.customThresholds,
     totalCost: ctx.data.model.totalCurrent.cost,
   });
-  const next = extractCandidates({ ...ctx.ruleInput, thresholds });
-  next.unshift(...ctx.changeCands);
+  // 캠페인별 비용 문턱도 민감도·맞춤에 따라 달라진다 — 함께 재계산.
+  const floors = buildCostFloors(ctx.campaignInfo, ctx.sensitivity, ctx.customThresholds);
+  ctx.ruleInput.campaignCostFloor = floors;
+  ctx.campaignFloors = floors;
+  const next = dropBrandCandidates(extractCandidates({ ...ctx.ruleInput, thresholds }), ctx.campaignInfo);
   if (ctx.followCand) next.unshift(ctx.followCand);
   ctx.candidates = next;
 }
@@ -167,21 +221,14 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
         .catch((e) => console.warn("[dv-ads/brief] 목표 수익률 저장 실패", e));
     }
 
-    // 기간 경계(ms, KST) — 변경이력 조회 창과 "기간 시작 전/중" 판정에 쓴다.
-    const sinceMs = Date.parse(`${range.since}T00:00:00+09:00`);
-    const untilMs = Date.parse(`${range.until}T23:59:59+09:00`);
-
-    // 성과 수집 ∥ 지난 보고 ∥ 변경 이력 — 서로 독립이라 나란히.
+    // 성과 수집 ∥ 지난 보고 — 서로 독립이라 나란히.
     // collectReportData 내부 병렬 구조는 그대로(성능 감사) — 바깥에서만 병렬을 더한다.
-    const [data, lastHistoryList, changeRes] = await Promise.all([
+    const [data, lastHistoryList] = await Promise.all([
       collectBriefData(target, range),
       fetchBriefHistory(target.adAccountNo, 1).catch((e) => {
         console.warn("[dv-ads/brief] 지난 보고 조회 실패 - 추적 후보만 생략", e);
         return [] as BriefHistoryRecord[];
       }),
-      target.masterCustomerId != null
-        ? fetchBriefChangeEvents(target.masterCustomerId, sinceMs, untilMs)
-        : Promise.resolve({ events: [], actorsMissing: true } as BriefChangeFetchResult),
     ]);
     if (stale()) return;
     const lastHistory = lastHistoryList[0] ?? null;
@@ -195,8 +242,12 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
       sensitivity, custom: customThresholds, totalCost: data.model.totalCurrent.cost,
     });
 
+    // 캠페인별 비용 문턱(2026-07-21) — 순위 조회 대상 선정과 후보 판정이 같은 문턱을 써야 한다.
+    const campaignInfo = buildCampaignInfo(data);
+    const floors = buildCostFloors(campaignInfo, sensitivity, customThresholds);
+
     const plRows = flattenKeywords(data.plKeywords);
-    const rankTargets = pickRankTargets(plRows, targetRoas, thresholds);
+    const rankTargets = pickRankTargets(plRows, targetRoas, thresholds, floors);
     if (rankTargets.length > 0 && target.masterCustomerId != null) {
       try {
         await fillRanks(target.masterCustomerId, rankTargets);
@@ -214,33 +265,20 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
       groups: data.groups,
       groupIds: data.groupIds,
     };
-    const candidates = extractCandidates({ ...ruleInput, thresholds });
+    ruleInput.campaignCostFloor = floors;
+    const candidates = dropBrandCandidates(extractCandidates({ ...ruleInput, thresholds }), campaignInfo);
 
-    // 변경 이력 후보 — 전기 지표는 상품 델타에서만 나온다(추가 API 호출 없음).
-    // 키워드 등 전기 지표가 없는 대상은 "판단 보류"로 변경 사실만 전달된다.
-    const currentMap = currentTargetMap(candidates, plRows);
-    const prevMap = new Map<string, BriefTargetSnapshot>();
-    for (const p of data.products) {
-      prevMap.set(p.label, {
-        label: p.label,
-        cost: p.prev.cost, revenue: p.prev.revenue, purchaseConv: p.prev.purchaseConv,
-        clicks: p.prev.clicks, impressions: p.prev.impressions,
-      });
-    }
-    const changeCands = buildChangeHistoryCandidates(
-      evaluateChangeImpacts(changeRes.events, prevMap, currentMap, sinceMs),
-    );
-    candidates.unshift(...changeCands);
-
-    // 지난 조치 추적 — 후속 언급이 보고의 첫 화제(보고 관례)라 맨 앞에 둔다.
-    const followCand = lastHistory ? buildFollowUpCandidate(lastHistory, currentMap) : null;
-    if (followCand) candidates.unshift(followCand);
+    // 변경 이력 후보는 완전 제거(2026-07-21 사용자 결정) — 보고는 현재 캠페인 데이터만 본다.
+    // 지난 조치 추적 후보도 잠시 내림 — buildFollowUpCandidate(brief-followup.ts)와 이력 저장은
+    // 유지, 여기서 안 만들기만 한다. 되살리려면 currentTargetMap으로 현재 지표 맵을 만들어 넘긴다.
+    const followCand: BriefCandidate | null = null;
 
     hideProgress();
     const ctx: BriefContext = {
-      target, data, candidates, targetRoas, lastHistory, changeRes,
+      target, data, candidates, targetRoas, lastHistory,
       historyId: crypto.randomUUID(),
-      ruleInput, followCand, changeCands, sensitivity, customThresholds,
+      ruleInput, followCand, sensitivity, customThresholds, campaignInfo,
+      campaignFloors: floors,
     };
     // 선택 화면이 먼저다 — AE가 고른 것만 문구가 된다(구조 개편).
     showSelection(ctx, {
@@ -263,10 +301,8 @@ function showSelection(ctx: BriefContext, initial?: Partial<BriefPickState>): vo
     advertiserName: ctx.target.name,
     adAccountNo: ctx.target.adAccountNo,
     candidates: ctx.candidates,
+    campaignInfo: { ...ctx.campaignInfo, campaignFloors: ctx.campaignFloors },
     prevHistoryAvailable: ctx.lastHistory != null,
-    changeDisabledReason: ctx.changeRes.actorsMissing
-      ? "변경이력 알림에서 우리 팀 작업자를 등록하면 쓸 수 있어요"
-      : undefined,
     initial,
     thresholds: {
       sensitivity: ctx.sensitivity,
@@ -309,9 +345,11 @@ async function composeAndShow(
 ): Promise<void> {
   showProgress("광고 성과를 측정하는 중...");
   let aiBlocks: ComposedBlock[] = [];
+  // AI 미호출·실패 시 기본 인사 — 인사는 AI(greeting)가 담당하지만 요약만 나갈 때도 인사는 필요하다.
+  let greeting = "안녕하세요:)";
   if (selected.length > 0 || state.memo !== "") {
     try {
-      aiBlocks = await composeBlocks({
+      const composed = await composeBlocks({
         advertiser: ctx.target.name,
         periodText: rangeText(ctx.data.range),
         totals: {
@@ -324,15 +362,16 @@ async function composeAndShow(
         memo: state.memo,
         reportType: state.reportType,
         tone: state.tone,
-        prevReport: state.includePrevHistory && ctx.lastHistory ? toPrevReport(ctx.lastHistory) : undefined,
       });
+      aiBlocks = composed.blocks;
+      if (composed.greeting) greeting = composed.greeting;
     } catch (e) {
       console.warn("[dv-ads/brief] AI 조립 실패 — 선택한 표만 표시", e);
       showToast({ message: String(e instanceof Error ? e.message : e), variant: "error" });
     }
   }
   hideProgress();
-  showResult(ctx, selected, state, aiBlocks);
+  showResult(ctx, selected, state, aiBlocks, greeting);
 }
 
 function showResult(
@@ -340,26 +379,35 @@ function showResult(
   selected: BriefCandidate[],
   state: BriefPickState,
   aiBlocks: ComposedBlock[],
+  greeting: string,
 ): void {
   const { data, target, targetRoas } = ctx;
   // 후보별 AI 문단을 그 후보의 표 **앞**에 (보고 로그의 문단-사진 1:1 순서).
-  // aiBlocks[i]와 selected[i]는 서버가 "말할 것 하나당 문단 하나"로 만들어 순서가
-  // 대응한다. 개수가 어긋나면(AI가 문단을 합치거나 쪼갬) 남는 문단을 뒤에 붙인다 —
-  // 표를 잃는 것보다 순서가 틀리는 게 낫다.
+  // 서버가 문단마다 factIndex([말할 것] 번호, 1부터)를 달아 주므로 번호로 매칭한다 —
+  // AI가 문단을 빼먹거나 합쳐도 엉뚱한 표에 붙지 않는다. 번호가 없거나 범위 밖인
+  // 문단(AE 메모 등)은 맨 뒤에 붙인다 — 문단을 잃는 것보다 낫다.
+  const byIndex = new Map<number, ComposedBlock[]>();
+  const unmatched: ComposedBlock[] = [];
+  for (const ai of aiBlocks) {
+    if (ai.factIndex != null && ai.factIndex >= 1 && ai.factIndex <= selected.length) {
+      const list = byIndex.get(ai.factIndex) ?? [];
+      list.push(ai);
+      byIndex.set(ai.factIndex, list);
+    } else {
+      unmatched.push(ai);
+    }
+  }
+  const toBlock = (ai: ComposedBlock): BriefBlock =>
+    ({ type: "text", text: ai.text, isAiJudgment: ai.isAiJudgment, numberWarning: ai.numberWarning });
   const blocks: BriefBlock[] = [
-    { type: "text", text: buildSummaryText(data) },
+    { type: "text", text: `${greeting}\n\n${buildSummaryText(data)}` },
     { type: "table", spec: buildSummarySpec(data) },
   ];
   selected.forEach((c, i) => {
-    const ai = aiBlocks[i];
-    if (ai) {
-      blocks.push({ type: "text", text: ai.text, isAiJudgment: ai.isAiJudgment, numberWarning: ai.numberWarning });
-    }
+    for (const ai of byIndex.get(i + 1) ?? []) blocks.push(toBlock(ai));
     blocks.push({ type: "table", spec: c.table });
   });
-  for (const ai of aiBlocks.slice(selected.length)) {
-    blocks.push({ type: "text", text: ai.text, isAiJudgment: ai.isAiJudgment, numberWarning: ai.numberWarning });
-  }
+  for (const ai of unmatched) blocks.push(toBlock(ai));
 
   // 토스트는 금방 사라져 안내로 부적합 — 패널 상단 고정 안내줄 (설계 §5).
   const notices: string[] = [];
@@ -387,8 +435,9 @@ function showResult(
       tone: state.tone,
       aiDraft,
       includedPreviousHistory: state.includePrevHistory,
-      includedChangeHistory: state.includeChangeHistory,
-      relatedChangeIds: selected.map((c) => c.changeEventId).filter((id): id is string => id != null),
+      // 변경 이력 기능 제거(2026-07-21) — 이력 스키마 호환을 위해 필드만 고정값으로 남긴다.
+      includedChangeHistory: false,
+      relatedChangeIds: [],
       sentStatus,
       snapshot: {
         totals: { cost: data.model.totalCurrent.cost, revenue: data.model.totalCurrent.revenue, roas: roasPct(data.model.totalCurrent) },
@@ -427,7 +476,7 @@ function showResult(
     onShowHistory: () => {
       closeBriefPanel();
       openBriefHistoryPanel(target.adAccountNo, target.name, () =>
-        showResult(ctx, selected, state, aiBlocks));
+        showResult(ctx, selected, state, aiBlocks, greeting));
     },
     // 다시 고르기 — 재수집 없이 선택 화면으로(직전 선택 상태 복원).
     onRepick: () => showSelection(ctx, state),
