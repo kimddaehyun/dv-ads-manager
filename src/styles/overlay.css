@@ -2710,23 +2710,130 @@ td.dvads-period-delta-down {
 
 /* ─── 관리이력 보고 다이얼로그 (기간 + 변경자 칩 + 문구 미리보기) ────────── */
 
-.dvads-hr-dates {
+/* 문구 미리보기가 본체라 변경이력 알림 카드(460px)보다 넉넉하게 + 좌측 필터 폭. */
+.dvads-hr-card {
+  width: 880px;
+}
+/* 이 다이얼로그의 기본 텍스트 최소 14px — 진짜 보조 문구가 아니면 12~13px 금지. */
+.dvads-hr-card .dvads-hr-filter-item,
+.dvads-hr-card .dvads-actor-chip,
+.dvads-hr-card .dvads-actor-chips,
+.dvads-hr-card .dvads-hr-dates input,
+.dvads-hr-card .dvads-hr-arrow,
+.dvads-hr-card .dvads-hr-text,
+.dvads-hr-card .dvads-btn {
+  font-size: 14px;
+}
+
+/* 좌측 이력 종류 필터 + 우측 본문 2단 구성. */
+.dvads-hr-body {
   margin-top: 14px;
   display: flex;
+  gap: 14px;
+  min-height: 0;
+}
+.dvads-hr-filter {
+  width: 132px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #F7F8F9;
+  align-self: flex-start;
+}
+.dvads-hr-filter-item {
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4B5563;
+  text-align: left;
+  cursor: pointer;
+}
+.dvads-hr-filter-item:hover {
+  background: #ECEEF0;
+}
+.dvads-hr-filter-item.is-on {
+  background: #ffffff;
+  color: #E6783B;
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.dvads-hr-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 기간 표시 — 광고관리자와 같은 "2026.07.14. → 2026.07.20." 모양의 한 상자. */
+.dvads-hr-dates {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  align-self: flex-start;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid #E1E4E8;
+  border-radius: 8px;
+  background: #ffffff;
 }
-.dvads-hr-dates .dvads-actor-input {
-  padding-right: 10px;
+.dvads-hr-dates input {
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  outline: none;
+  background: transparent;
+  width: 132px;
 }
-.dvads-hr-tilde {
+.dvads-hr-dates:focus-within {
+  border-color: #E6783B;
+  box-shadow: 0 0 0 3px rgba(230, 120, 59, 0.18);
+}
+.dvads-hr-arrow {
   color: #9CA3AF;
   font-size: 13px;
   flex-shrink: 0;
 }
+.dvads-hr-text-wrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+/* 문구 우하단에 떠 있는 복사 아이콘 — 생성 전에는 hidden 속성으로 숨김. */
+.dvads-hr-copy {
+  position: absolute;
+  right: 22px;
+  bottom: 12px;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #E1E4E8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #4B5563;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+.dvads-hr-copy:hover {
+  background: #F7F8F9;
+  color: #171717;
+}
+.dvads-hr-copy[hidden] {
+  display: none;
+}
 .dvads-hr-text {
   margin-top: 10px;
-  height: 180px;
+  height: 420px;
+  max-height: 52vh;
   padding: 10px;
   border: 1px solid #E1E4E8;
   border-radius: 8px;
@@ -4694,17 +4801,18 @@ td.dvads-period-delta-down {
   color: #9CA3AF;
 }
 .dvads-rdp-foot-btns {
-  margin-left: auto;
+  flex: 1;
   display: flex;
   gap: 8px;
 }
 .dvads-rdp-cancel,
 .dvads-rdp-confirm {
-  height: 32px;
+  flex: 1;
+  height: 44px;
   padding: 0 18px;
   border-radius: 8px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -4751,6 +4859,14 @@ td.dvads-period-delta-down {
   display: flex; align-items: center; justify-content: center;
 }
 .dvads-brief-pick-filter-btn:hover { background: #f4f5f7; color: #404040; }
+/* 결과 패널 우측 상단 X 닫기 */
+.dvads-brief-close-x {
+  margin-left: auto; width: 28px; height: 28px; padding: 0;
+  border: 0; border-radius: 8px; background: none; color: #6b7280; cursor: pointer;
+  font-size: 15px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.dvads-brief-close-x:hover { background: #f4f5f7; color: #404040; }
 /* 전체 외 필터가 걸려 있으면 주황으로 — 목록이 걸러진 상태임을 표시 */
 .dvads-brief-pick-filter-btn.is-filtering,
 .dvads-brief-pick-filter-btn.is-open { color: #E6783B; }
@@ -4790,6 +4906,25 @@ td.dvads-period-delta-down {
 .dvads-brief-foot {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 16px 24px 20px;
+}
+
+/* F-Brief 결과 패널 문서(캔버스) 모드 — 넓은 페이지 여백 + 도구는 호버 시에만.
+   블록 경계·상시 버튼을 걷어내 노션류 문서 편집기처럼 읽히게 한다(2026-07-21). */
+.dvads-brief-card-doc { width: min(820px, calc(100vw - 32px)) !important; }
+.dvads-brief-card-doc .dvads-brief-body { padding: 8px 56px 40px; gap: 8px; }
+.dvads-brief-card-doc .dvads-brief-block {
+  padding: 8px 12px; margin: 0 -12px; border-radius: 8px;
+}
+.dvads-brief-card-doc .dvads-brief-block:hover { background: #fafafa; }
+.dvads-brief-card-doc .dvads-brief-text { font-size: 15px; line-height: 1.8; }
+.dvads-brief-card-doc .dvads-brief-copy {
+  position: absolute; top: 8px; right: 8px; margin: 0;
+  opacity: 0; pointer-events: none; transition: opacity 0.12s;
+  background: #fff;
+}
+.dvads-brief-card-doc .dvads-brief-block:hover .dvads-brief-copy,
+.dvads-brief-card-doc .dvads-brief-block:focus-within .dvads-brief-copy {
+  opacity: 1; pointer-events: auto;
 }
 
 /* F-Brief 지난 보고 목록 — 제목 클릭으로 문구 전문 펼침 */
@@ -4880,11 +5015,17 @@ td.dvads-period-delta-down {
    반투명이면 밑 행이 비쳐 보이므로 배경은 불투명 단색 유지. */
 .dvads-brief-pick-typeband {
   position: sticky; top: 0; z-index: 2;
-  margin: 18px 0 2px; padding: 4px 8px 4px 12px;
+  margin: 18px 0 2px; padding: 8px 8px 8px 12px;
   background: #EFF6FF; border-radius: 8px;
   font: 700 13px/1.4 Pretendard, -apple-system, sans-serif; color: #0072f5;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  cursor: pointer;
 }
+/* 띠 클릭 = 유형 전체 선택 — 전부 선택된 상태는 주황으로(캠페인/그룹 머리글과 동일 규칙).
+   sticky 띠라 배경이 반투명이면 스크롤 시 아래 내용이 비쳐 겹쳐 보인다 — 불투명 색 필수. */
+.dvads-brief-pick-typeband.is-selected { background: #FCF2EB; color: #E6783B; }
+.dvads-brief-pick-typeband.is-selected .dvads-brief-typeband-btn { color: #E6783B; }
+.dvads-brief-pick-typeband.is-selected .dvads-brief-typeband-btn:hover:not(:disabled) { background: rgba(230, 120, 59, 0.14); }
 /* 띠 오른쪽 끝 — 이전/다음 캠페인 유형으로 점프하는 화살표 */
 .dvads-brief-typeband-nav { display: flex; gap: 2px; }
 .dvads-brief-typeband-btn {
@@ -5020,12 +5161,6 @@ td.dvads-period-delta-down {
   font: 400 12px/1.5 Pretendard, -apple-system, sans-serif; color: #9aa1ab;
 }
 
-/* F-Brief 결과 패널 재생성 버튼군 */
-.dvads-brief-regen-bar {
-  display: flex; gap: 8px; flex-wrap: wrap;
-  padding: 10px 20px 0;
-}
-
 /* F-Brief 이슈 기준 다이얼로그 (프리셋 칩 + 직접 설정) */
 .dvads-brief-preset-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .dvads-brief-preset-chip {
@@ -5100,3 +5235,73 @@ td.dvads-period-delta-down {
   font: 400 13px/1.6 Pretendard, -apple-system, sans-serif; color: #171717;
 }
 .dvads-brief-tone-ta:focus { outline: none; border-color: #E6783B; }
+
+/* ── F-Report 안내 문구 다이얼로그 (confirm-dialog 베이스 위 폭·textarea) ── */
+.dvads-report-msg-card { width: min(720px, calc(100vw - 32px)); }
+.dvads-report-msg-textarea {
+  width: 100%; height: 520px; max-height: calc(100vh - 220px);
+  margin: 8px 0 4px; padding: 10px 12px; resize: vertical; box-sizing: border-box;
+  border: 1px solid #e2e5ea; border-radius: 8px;
+  font: 400 13px/1.6 Pretendard, -apple-system, sans-serif; color: #171717;
+}
+.dvads-report-msg-textarea:focus { outline: none; border-color: #E6783B; }
+
+/* 다이얼로그 제목 강조 — 제목 속 대상 이름(계정명 등)만 DV 주황으로. 전 다이얼로그 공용 패턴
+   (DESIGN.md "다이얼로그 제목 강조" 절). 굵기는 제목을 따라간다. */
+.dvads-title-accent { color: #E6783B; }
+
+/* 리포트 날짜 선택기 — 입력 행: [문구 생성 ⓘ 토글] [담당자] [목표 ROAS] (네이버 달력의
+   "기간 비교 ⓘ 토글" 배치를 따름, 2026-07-21). 상단 구분선은 이 행이 가져가고,
+   바로 아래 foot(큰 취소/확인)의 구분선은 접어 이중선을 막는다. */
+.dvads-rdp-msgrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px 0;
+  border-top: 1px solid #F3F4F6;
+}
+.dvads-rdp-msgrow + .dvads-rdp-foot { border-top: 0; padding-top: 10px; }
+.dvads-rdp-msg-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin-right: 4px;
+}
+.dvads-rdp-msg-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: #404040;
+  white-space: nowrap;
+}
+/* 입력칸이 행의 남은 폭을 채운다 (기본 160px 고정폭 override).
+   F-Brief는 담당자 대신 목표 ROAS만 남아 그쪽이 폭을 가져간다. */
+.dvads-rdp-msgrow .dvads-rdp-author,
+.dvads-rdp-msgrow .dvads-rdp-roas-wrap {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+/* ─── 다이얼로그 푸터 대형 버튼 통일 (2026-07-21) ───
+   F-Brief 하단 버튼 비율(풀폭 양분, 높이 44px, 14px/600)을 모든 backdrop 다이얼로그
+   푸터에 적용. 파일 끝에 두어 각 푸터의 기존 규칙(36px/13px 등)을 cascade로 덮는다.
+   푸터에 버튼 외 요소(토글 등)가 있으면 그 요소만 고정폭, 버튼이 남은 폭을 나눠 가진다.
+   asset-bulk 카드는 자체 override(48px 그리드)가 더 구체적이라 그대로 유지. */
+.dvads-confirm-actions .dvads-btn,
+.dvads-input-actions .dvads-btn,
+.dvads-actor-actions .dvads-btn,
+.dvads-agency-actions .dvads-btn,
+.dvads-setup-foot .dvads-btn,
+.dvads-rename-cancel,
+.dvads-rename-save {
+  flex: 1;
+  height: 44px;
+  font-size: 14px;
+  font-weight: 600;
+}
+/* 버튼이 풀폭을 나눠 갖게 되면서 우측 정렬용 spacer는 불필요 — 남겨두면 1/N 폭을 차지한다. */
+.dvads-input-actions .dvads-input-actions-spacer,
+.dvads-actor-actions .dvads-cw-spacer {
+  display: none;
+}

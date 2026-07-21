@@ -140,17 +140,143 @@ Deno.serve(async (req) => {
     });
   }
 
+  // ── 모드: 리포트 안내 문구 (F-Report "문구 포함 생성") — 리포트 총계를 카톡 보고 문구로 ──
+  // F-Brief와 달리 규칙 엔진 없이 총계·캠페인별·상위 키워드 요약만 받아 짧은 안내문을 만든다.
+  if (body.mode === "reportSummary") {
+    const t = (body.totals ?? {}) as Record<string, string>;
+    const p = (body.prevTotals ?? {}) as Record<string, string>;
+    const campaignLines = Array.isArray(body.campaignLines) ? body.campaignLines.slice(0, 10) : [];
+    const keywordLines = Array.isArray(body.keywordLines) ? body.keywordLines.slice(0, 10) : [];
+    const lowKeywordLines = Array.isArray(body.lowKeywordLines) ? body.lowKeywordLines.slice(0, 10) : [];
+    const lowGroupLines = Array.isArray(body.lowGroupLines) ? body.lowGroupLines.slice(0, 10) : [];
+    const periodDesc = typeof body.periodDesc === "string" && body.periodDesc ? body.periodDesc : "해당 기간";
+    const summaryPrompt = [
+      "너는 네이버 검색광고 대행사의 퍼포먼스 마케터야.",
+      "아래 네이버 광고 데이터를 보고, 광고주(대표님)에게 카카오톡으로 보낼 성과 리포트 안내 문구를 작성해줘.",
+      "",
+      "[작성 규칙]",
+      "1. 형식 - 아래 템플릿의 구조와 줄바꿈을 그대로 따라라. 빈 줄도 템플릿 그대로 넣어라.",
+      "   (괄호)는 채워 넣을 자리이고, 분석 코멘트는 문장 1~2개마다 문단을 나누고 문단 사이에 빈 줄을 넣어라.",
+      "",
+      "===템플릿 시작===",
+      "안녕하세요 대표님,",
+      `${periodDesc} 네이버 광고 성과 공유드립니다.`,
+      "",
+      "■ 성과 요약",
+      `- 기간: ${body.periodText}`,
+      "- 광고비: (데이터 그대로)",
+      "- 전환매출: (데이터 그대로)",
+      "- ROAS: (데이터 그대로)",
+      "- 전환수: (데이터 그대로)",
+      "",
+      "(분석 코멘트 문단 1 - 잘된 부분)",
+      "",
+      "(분석 코멘트 문단 2 - 아쉬운 부분 + 다음 액션)",
+      "",
+      "자세한 데이터는 함께 보내드린 리포트 파일을 참고 부탁드립니다!",
+      "===템플릿 끝===",
+      "",
+      "2. 분석 코멘트 기준:",
+      "- 아래 예시 문단의 문장 구조와 어투를 따라라 (숫자와 이름은 이번 데이터의 것으로):",
+      "  예시) 지난주는 전체 광고비가 이전 기간보다 줄었음에도 ROAS는 509.79%로 소폭 상승했습니다. 특히 [고려은단콘드로이친] 키워드에서 적은 비용으로 많은 매출이 발생하면서 전체 효율을 유지하였습니다.",
+      "- 캠페인명, 그룹명, 키워드명, 상품명을 언급할 때는 반드시 대괄호로 감싸라. 예: [전체상품 저입찰] 캠페인, [원피스] 키워드",
+      "- 캠페인 유형(파워링크, 쇼핑검색광고, 브랜드검색, 플레이스, 파워컨텐츠)은 이름이 아니다 - 대괄호로 감싸지 마라. '쇼핑검색광고의 [OO] 캠페인'처럼 유형은 풀어서 써라. [데이터]의 (X 유형) 표기가 유형이다.",
+      "- 반드시 네이버 검색광고 운영과 직접 관련된 내용만 작성",
+      "- 캠페인별 ROAS 차이가 크면 구체적으로 언급",
+      "- 특정 키워드가 매출 대부분을 차지하면 키워드명 언급",
+      "- ROAS 낮을 때 다음 액션 예시: 입찰가 하향 조정, 저효율 키워드 제외, 소재 문구 수정, 확장소재 추가, 조정 후 데이터 확인 등",
+      "- ROAS 양호할 때: 현재 세팅 유지하면서 데이터 확인, 주요 키워드 입찰가 조정 검토 등",
+      "- 이전 기간 대비 변화가 있으면 간단히 언급",
+      "- [저효율] 목록에 항목이 있으면 아쉬운 부분 문단에서 대표 1~2개를 이름과 함께 짚고 다음 액션을 붙여라. 목록을 다 나열하지는 마라",
+      "- 쉽고 자연스러운 말투로, 카톡 메시지답게 작성",
+      "",
+      "3. 금지 사항 (절대 사용 금지):",
+      "- 광고 외 내용 금지: 상세페이지 수정, 랜딩페이지 개선, 홈페이지 변경, 상품 구성 변경 등 광고 운영 외 제안 절대 금지",
+      "- 어려운 표현 금지: 견인, 도모, 제고, 끌어올리다, 스케일업, 레버리지, 효율 극대화, 뒷받침, 기여했습니다 등 사용 금지. 쉬운 말로 바꿔서 쓸 것 (예: '매출 대부분이 [OO] 키워드에서 나왔습니다')",
+      "- 보장/확신 표현 금지: '끌어올리겠습니다', '개선하겠습니다', '높이겠습니다' 등 결과를 보장하는 표현 금지. 대신 '조정해 보겠습니다', '조정하고 지켜보겠습니다', '테스트해 보겠습니다', '확인해 보겠습니다' 등 사용",
+      "- 마크다운 문법 금지. em dash(—) 금지, 하이픈(-)만. 가운뎃점(·) 금지",
+      "- 분석 코멘트는 최대 3문단 - 길게 늘어놓지 마라",
+      "- 불확실한 추측 금지",
+      "- 'AI가 분석했습니다' 같은 표현 금지",
+      "",
+      "[데이터]",
+      `- 업체명: ${body.advertiser}`,
+      `- 기간: ${body.periodText}`,
+      ...Object.entries(t).map(([k, v]) => `- ${k}: ${v}`),
+      "",
+      "[이전 기간]",
+      ...Object.entries(p).map(([k, v]) => `- ${k}: ${v}`),
+      "",
+      "[캠페인별]",
+      ...(campaignLines.length > 0 ? campaignLines : ["(없음)"]),
+      "",
+      "[전환매출 상위 키워드]",
+      ...(keywordLines.length > 0 ? keywordLines : ["(없음)"]),
+      "",
+      "[저효율 - 광고비를 썼는데 전환이 없는 키워드]",
+      ...(lowKeywordLines.length > 0 ? lowKeywordLines : ["(없음)"]),
+      "",
+      "[저효율 - 광고비를 썼는데 전환이 없는 광고그룹]",
+      ...(lowGroupLines.length > 0 ? lowGroupLines : ["(없음)"]),
+      "",
+      "숫자는 제공된 데이터를 정확히 사용해. 임의로 반올림하거나 변경하지 마.",
+      "설명이나 머리말, ===템플릿=== 표시 없이 카톡에 그대로 붙여넣을 문구만 출력해.",
+      "줄바꿈과 빈 줄을 템플릿대로 반드시 유지해 - 한 덩어리로 이어 붙이지 마.",
+      "마지막 점검: 뒷받침/견인/도모/제고/기여 같은 단어가 한 번이라도 들어갔으면 쉬운 말로 바꾼 뒤 출력해라.",
+    ].join("\n");
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${API_KEY}`;
+    const callGemini = async (text: string): Promise<string | null> => {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text }] }],
+          generationConfig: { temperature: 0.4, maxOutputTokens: 1500 },
+        }),
+      });
+      if (!res.ok) {
+        console.error("gemini error", res.status); // 상태코드만 — 본문엔 광고주 데이터가 있다
+        return null;
+      }
+      const data = await res.json();
+      return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    };
+    let message = await callGemini(summaryPrompt);
+    if (message === null) {
+      return new Response(JSON.stringify({ error: "upstream" }), {
+        status: 502, headers: { "content-type": "application/json", ...CORS_HEADERS },
+      });
+    }
+    // 금지 표현 검출 시 1회 고쳐쓰기 — 소형 모델이 목록 중간 규칙을 흘려버리는 일이 잦아
+    // 프롬프트만으론 안 막힌다. 고쳐쓰기 실패(null)면 원문 유지(문구 자체는 유효하므로).
+    const BANNED = /뒷받침|견인|도모|제고|스케일업|레버리지|기여했/;
+    if (BANNED.test(message)) {
+      const rewritten = await callGemini([
+        "아래 문구에서 '뒷받침, 견인, 도모, 제고, 스케일업, 레버리지, 기여했습니다' 같은 딱딱한 한자어 표현만 쉬운 일상 존댓말로 바꿔라.",
+        "예: '전체 효율을 뒷받침했습니다' → '전체 성과를 끌어올린 주요 요인이었습니다' 대신 '매출 대부분이 여기서 나왔습니다'처럼 평이하게.",
+        "그 외의 문장, 숫자, 줄바꿈, 빈 줄은 절대 바꾸지 마라. 고친 전체 문구만 출력해라.",
+        "",
+        message,
+      ].join("\n"));
+      if (rewritten) message = rewritten;
+    }
+    return new Response(JSON.stringify({ message }), {
+      headers: { "content-type": "application/json", ...CORS_HEADERS },
+    });
+  }
+
   const facts = (body.facts ?? []) as Array<Record<string, unknown>>;
   if (facts.length === 0 && !body.memo) {
     return new Response(JSON.stringify({ blocks: [] }), { headers: { "content-type": "application/json", ...CORS_HEADERS } });
   }
 
-  const factLines = facts.map((f) => {
+  // 번호는 클라이언트의 factIndex 매칭 기준 — 문단이 어느 표 앞에 붙을지 이 번호로 정해진다.
+  const factLines = facts.map((f, i) => {
     const action = typeof f.action === "string" ? (f.actionText || ACTION_LABEL[f.action] || f.action) : "";
     const detail = Object.entries(f.facts ?? {}).map(([k, v]) => `${k}: ${v}`).join(" / ");
-    return `- ${detail}${action ? ` → 액션: ${action}` : ""}`;
+    return `${i + 1}. ${detail}${action ? ` → 액션: ${action}` : ""}`;
   });
-  if (body.memo) factLines.push(`- AE 메모: ${body.memo}`);
+  if (body.memo) factLines.push(`${facts.length + 1}. AE 메모: ${body.memo}`);
 
   // AE 개인 말투 — brief_tone에 저장된 프롬프트가 있으면 그걸 쓰고, 없으면 기본 샘플.
   // 클라이언트 payload가 아니라 서버가 JWT의 사용자 id로 직접 읽는다(조작 방지).
@@ -190,25 +316,13 @@ Deno.serve(async (req) => {
   };
   const toneRule = TONE_RULE[String(body.tone ?? "")] ?? TONE_RULE.detailed;
 
-  // 지난 보고 — 이어지는 보고로 쓰되 지난 수치를 새 수치처럼 재사용하지 않게.
-  const prevReport = body.prevReport as { message?: string; actions?: Array<{ kind?: string; actionText?: string }> } | undefined;
-  const prevLines = prevReport?.message
-    ? [
-        "",
-        "[지난 보고]",
-        String(prevReport.message).slice(0, 800),
-        "- 지난 보고와 자연스럽게 이어지게 써라 (예: 지난번 안내드린 ~ 이후).",
-        "- 지난 보고의 숫자를 이번 성과 숫자처럼 재사용하지 마라 - 비교 언급만 허용.",
-      ]
-    : [];
-
   const prompt = [
-    "너는 디브이마케팅 AE다. 아래 말투로 광고주 보고 문구를 써라.",
+    "너는 네이버 광고 대행사의 마케터다. 아래 말투로 광고주 보고 문구를 써라.",
     "",
     "[말투 샘플]",
     toneSection,
     "",
-    "[이번 데이터]",
+    "[이번 데이터 - 참고용 맥락일 뿐, 이 총계를 문단으로 다시 서술하지 마라]",
     `광고주: ${body.advertiser}`,
     `기간: ${body.periodText}`,
     `광고비 ${body.totals?.cost} / 전환매출 ${body.totals?.revenue} / ROAS ${body.totals?.roas}%`,
@@ -216,22 +330,32 @@ Deno.serve(async (req) => {
     "",
     "[말할 것]",
     ...factLines,
-    ...prevLines,
     "",
     "[규칙]",
     "- 위에 준 사실 외에는 쓰지 마라. 시즌·트렌드 등 일반 상식을 끼워 넣지 마라.",
     "- 숫자를 바꾸지 마라. 위에 없는 숫자를 만들지 마라.",
-    "- 인사말과 지표 요약은 쓰지 마라 — 이미 따로 만들었다. 진단과 액션만 써라.",
+    "- 인사말을 쓰지 마라 - 인사는 이미 따로 만들었다.",
+    "- blocks에는 인사말과 지표 요약을 쓰지 마라 - '기간 성과를 전달드립니다', '광고비는 ~원, ROAS ~%를 기록했습니다' 같은 총계 소개 문단은 이미 따로 만들었다. 도입부 없이 각 '말할 것' 항목의 진단과 액션만 써라.",
+    "- 캠페인명과 그룹명을 문장에 쓰지 마라 - 문단 위에 [캠페인 > 그룹] 제목이 따로 붙는다. '해당 그룹', '이 그룹의 ~ 지면'처럼만 지칭해라. 키워드명, 지면명, 구간명은 써도 된다.",
+    "- 어려운 표현 금지: 견인, 도모, 제고, 레버리지, 스케일업, 효율 극대화 등은 쉬운 말로 바꿔 써라.",
+    "- 결과를 보장하는 표현 금지: '개선하겠습니다', '높이겠습니다' 대신 '조정하고 지켜보겠습니다', '테스트해 보겠습니다'처럼 써라.",
+    "- 광고 운영 외 제안 금지: 상세페이지, 홈페이지, 상품 구성 변경 등은 쓰지 마라.",
+    "- 'AI가 분석했습니다' 같은 표현 금지. 마크다운 문법(별표, 샵 등) 금지.",
     "- 말할 것 하나당 문단 하나. 문단은 빈 줄로 구분.",
+    "- 각 문단은 두 줄로 써라: 첫 줄은 진단, 둘째 줄은 조치. 두 줄 사이는 줄바꿈(\\n) 하나. '진단', '조치' 같은 라벨이나 ▶ 기호는 붙이지 마라.",
+    "- 진단 줄: 무엇이 문제/기회인지 근거 숫자와 함께 한 문장 (예: [자전거스탠드] 키워드에서 11,110원의 광고비가 소진되었으나 구매 전환이 발생하지 않았습니다). 여러 구간은 쉼표로 짧게 나열해라.",
+    "- 조치 줄: 무엇을 했는지 짧은 존댓말 한 문장 (예: 해당 키워드는 제외처리 하였습니다).",
+    "- 키워드명, 지면명, 구간명은 [대괄호]로 감싸라.",
     "- em dash(—)를 쓰지 마라. 일반 하이픈(-)만.",
     "- 가운뎃점(·)을 쓰지 마라. 나열은 쉼표(,)로, 구분은 하이픈(-)으로.",
     ...typeLines,
     toneRule,
+    "- 여러 문단을 쓸 때 같은 문장 패턴을 반복하지 마라 - '~이 소진되었으나 ~에 미달하였습니다'를 문단마다 똑같이 쓰지 말고 어미와 문장 구성을 다르게 써라.",
     "- 말투 샘플에 없는 상투어 금지: '흐름입니다', '~하는 모습입니다', '~로 보여집니다' 등을 쓰지 말고 샘플의 어미만 써라.",
-    "- '지난 보고에서 조치한 항목의 이번 성과 비교' 항목은 당시/이번 숫자를 그대로 써서, 좋아졌으면 조치 결과 어조로, 나빠졌으면 아쉬움+새 계획 어조로 써라.",
-    "- '우리 팀이 진행한 변경 내역과 이후 성과' 항목은 '지난 ~에 ~를 조정하였으며, 이후 ~한 것을 확인했습니다. 이에 ~하겠습니다' 구조로 써라. 평가가 '판단 보류'면 성과를 단정하지 말고 변경 사실만 전해라.",
+    "- 지난 보고나 과거 조치를 언급하지 마라 - 이번 기간 데이터로만 말해라.",
     "",
-    "JSON만 출력: {\"blocks\":[{\"text\":\"문단\",\"isAiJudgment\":true}]}",
+    "JSON만 출력: {\"blocks\":[{\"factIndex\":1,\"text\":\"문단\",\"isAiJudgment\":true}]}",
+    "factIndex는 그 문단이 다루는 [말할 것] 번호(정수).",
     "isAiJudgment는 그 문단에 액션 선언·판단이 들어갔으면 true, 데이터 서술뿐이면 false.",
   ].join("\n");
 
@@ -243,13 +367,16 @@ Deno.serve(async (req) => {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.4, maxOutputTokens: 2000, responseMimeType: "application/json" },
+      // 이슈를 많이 고르면 문단이 많아진다 — 2000이면 JSON이 중간에 잘려 빈 blocks로
+      // 떨어지는 사고(2026-07-21). 잘림 방지로 넉넉하게.
+      generationConfig: { temperature: 0.4, maxOutputTokens: 8192, responseMimeType: "application/json" },
     }),
   });
 
   if (!res.ok) {
     console.error("gemini error", res.status); // 상태코드만 — 본문엔 광고주 데이터가 있다
-    return new Response(JSON.stringify({ error: "upstream" }), {
+    // upstream 상태를 넘겨 클라이언트가 한도 초과(429)를 구분해 안내할 수 있게 한다.
+    return new Response(JSON.stringify({ error: "upstream", upstream: res.status }), {
       status: 502, headers: { "content-type": "application/json", ...CORS_HEADERS },
     });
   }
@@ -257,6 +384,10 @@ Deno.serve(async (req) => {
   const data = await res.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   // responseMimeType로 JSON을 받지만, 방어적으로 첫 { ~ 마지막 } 만 취한다.
-  const json = text.match(/\{[\s\S]*\}/)?.[0] ?? '{"blocks":[]}';
-  return new Response(json, { headers: { "content-type": "application/json", ...CORS_HEADERS } });
+  const match = text.match(/\{[\s\S]*\}/)?.[0];
+  if (!match) {
+    // 원인 추적용 — 본문 없이 종료 사유만 남긴다(MAX_TOKENS=잘림, SAFETY=차단 등).
+    console.error("gemini empty text", data.candidates?.[0]?.finishReason ?? "no-candidate");
+  }
+  return new Response(match ?? '{"blocks":[]}', { headers: { "content-type": "application/json", ...CORS_HEADERS } });
 });

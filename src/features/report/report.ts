@@ -8,11 +8,16 @@
  * 디스플레이(GFA)는 분해 endpoint 미정찰이라 현재 검색광고만 채움(디스플레이 시트는 자동 제거).
  */
 
-import { zipSync } from "fflate";
+import { zipSync, strToU8 } from "fflate";
 import { showToast } from "@/shared/toast";
 import { friendlyApiError } from "@/shared/friendly-error";
-import { buildReportBytes, type ReportTarget } from "@/features/report/report-build";
+import {
+  buildReportBytes, buildReportBytesFromData, collectReportData, type ReportTarget,
+} from "@/features/report/report-build";
 import { type DateRange } from "@/features/report/report-period";
+import {
+  buildSummaryPayload, composeReportMessage, showReportMessageDialog,
+} from "./report-message";
 import { openReportDatePicker } from "./report-datepicker";
 import { closePopover } from "@/features/multi-account/multi-account";
 
@@ -92,11 +97,13 @@ export function openReportFlow(anchor: HTMLElement, target: ReportTarget): void 
   openReportDatePicker({
     anchor,
     subText: target.name,
-    onConfirm: (range, author) => void runSingle(target, range, author),
+    // 문구 포함 생성 = 담당자명 옆 토글로 선택 (2026-07-21, 드롭다운 방식 폐기).
+    showMessageToggle: true,
+    onConfirm: (range, author, _roas, withMessage) => void runSingle(target, range, author, withMessage),
   });
 }
 
-async function runSingle(target: ReportTarget, range: DateRange, author: string): Promise<void> {
+async function runSingle(target: ReportTarget, range: DateRange, author: string, withMessage: boolean): Promise<void> {
   if (running) return;
   running = true;
   const token = ++runToken;
@@ -105,10 +112,29 @@ async function runSingle(target: ReportTarget, range: DateRange, author: string)
   showProgress("리포트를 만드는 중...", cancelRun);
   try {
     const meta = { authorName: author, createdDate: fmtDate(new Date()) };
-    const bytes = await buildReportBytes(target, range, meta);
+    // 문구 포함이면 수집 결과를 엑셀 렌더와 문구 조립이 공유한다(수집 2회 방지).
+    const data = withMessage ? await collectReportData(target, range, meta) : null;
+    const bytes = data ? await buildReportBytesFromData(data) : await buildReportBytes(target, range, meta);
     if (stale()) return; // 결과 폐기 — 오버레이·running은 취소/새 실행이 이미 처리
     const filename = `${safeFile(target.name)}_리포트_${range.since}~${range.until}.xlsx`;
     downloadBytes(bytes, filename);
+    if (data) {
+      showProgress("안내 문구를 만드는 중...", cancelRun);
+      try {
+        const message = await composeReportMessage(buildSummaryPayload(target.name, data, range));
+        if (stale()) return;
+        hideProgress();
+        showToast({ message: "리포트를 내려받았어요", variant: "success", keyword: filename });
+        showReportMessageDialog(target.name, message);
+      } catch (e) {
+        // 엑셀은 이미 내려받았다 — 문구 실패만 안내하고 성공 흐름으로 마무리.
+        console.warn("[dv-ads/report] 안내 문구 생성 실패", e);
+        if (stale()) return;
+        hideProgress();
+        showToast({ message: e instanceof Error ? e.message : "안내 문구를 만들지 못했어요", variant: "error" });
+      }
+      return;
+    }
     hideProgress();
     showToast({ message: "리포트를 내려받았어요", variant: "success", keyword: filename });
   } catch (e) {
@@ -133,11 +159,12 @@ export function openReportFlowBatch(anchor: HTMLElement, targets: ReportTarget[]
     anchor,
     anchorRect,
     subText: `${valid.length}개 광고주`,
-    onConfirm: (range, author) => void runBatch(valid, range, author),
+    showMessageToggle: true,
+    onConfirm: (range, author, _roas, withMessage) => void runBatch(valid, range, author, withMessage),
   });
 }
 
-async function runBatch(targets: ReportTarget[], range: DateRange, author: string): Promise<void> {
+async function runBatch(targets: ReportTarget[], range: DateRange, author: string, withMessage: boolean): Promise<void> {
   if (running) return;
   running = true;
   const token = ++runToken;
@@ -157,8 +184,19 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
       while (next < targets.length && !stale()) {
         const t = targets[next++];
         try {
-          const bytes = await buildReportBytes(t, range, meta);
-          files[`${safeFile(t.name)}_${range.since}~${range.until}.xlsx`] = bytes;
+          if (withMessage) {
+            // 수집 결과를 엑셀과 문구가 공유. 문구 실패는 엑셀을 막지 않는다(txt만 빠짐).
+            const data = await collectReportData(t, range, meta);
+            files[`${safeFile(t.name)}_${range.since}~${range.until}.xlsx`] = await buildReportBytesFromData(data);
+            try {
+              const message = await composeReportMessage(buildSummaryPayload(t.name, data, range));
+              files[`${safeFile(t.name)}_안내문구.txt`] = strToU8(message);
+            } catch (e) {
+              console.warn(`[dv-ads/report] ${t.name} 안내 문구 실패`, e);
+            }
+          } else {
+            files[`${safeFile(t.name)}_${range.since}~${range.until}.xlsx`] = await buildReportBytes(t, range, meta);
+          }
         } catch (e) {
           console.warn(`[dv-ads/report] ${t.name} 리포트 실패`, e);
         }
@@ -170,7 +208,8 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
       Array.from({ length: Math.min(REPORT_CONCURRENCY, targets.length) }, worker),
     );
     if (stale()) return; // 취소됨 — zip/다운로드 생략
-    const made = Object.keys(files).length;
+    // 문구 txt는 부속물 — 개수 집계·성공 판정은 엑셀 기준.
+    const made = Object.keys(files).filter((f) => f.endsWith(".xlsx")).length;
     if (made === 0) throw new Error("생성된 리포트가 없어요");
     showProgress("압축하는 중...");
     const zip = zipSync(files, { level: 6, mtime: Date.UTC(1980, 0, 1) });

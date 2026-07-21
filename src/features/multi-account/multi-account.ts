@@ -435,6 +435,11 @@ async function openPopover() {
   // 그 안의 날짜/프리셋 클릭이 popover를 닫지 않도록 "내부"로 취급. (팝오버+달력+리스트 동시 유지)
   const inReportPicker = (t: Node): boolean =>
     !!document.querySelector(".dvads-rdp")?.contains(t);
+  // 행 메뉴·설정 메뉴·리포트 모드 메뉴 등 dropdown 패널도 body portal이라 popover 밖이다.
+  // 옵션 버튼은 stopPropagation으로 새지 않지만, 패널의 구분선/여백 클릭이 popover를 닫는
+  // 사고가 있었다(2026-07-21) — 패널 내부는 전부 "내부"로 취급.
+  const inDropdownPanel = (t: Node): boolean =>
+    [...document.querySelectorAll(".dvads-dropdown-panel")].some((p) => p.contains(t));
 
   let mousedownInsidePopover = false;
   const onMouseDown = (e: MouseEvent) => {
@@ -445,7 +450,8 @@ async function openPopover() {
       (buttonEl?.contains(t) ?? false) ||
       inAuxModal(t) ||
       inBrandTooltip(t) ||
-      inReportPicker(t);
+      inReportPicker(t) ||
+      inDropdownPanel(t);
   };
   const onClickOutside = (e: MouseEvent) => {
     if (!popoverEl) return;
@@ -462,6 +468,8 @@ async function openPopover() {
     if (inBrandTooltip(e.target as Node)) return;
     // 리포트 날짜 선택기 내부 클릭도 popover 닫지 않음.
     if (inReportPicker(e.target as Node)) return;
+    // dropdown 패널(행 메뉴 등) 내부 클릭도 popover 닫지 않음 — 패널 자기 닫힘에만 맡긴다.
+    if (inDropdownPanel(e.target as Node)) return;
     closePopover();
   };
   // 스크롤 잠금 — 위에 뜬 창만 스크롤되고 그 아래 창(계정 목록·호스트 페이지)은 멈춘다.

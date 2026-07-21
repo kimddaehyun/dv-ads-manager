@@ -11,6 +11,7 @@
 
 import { rangeForPreset, PRESET_LABELS, type ReportPreset, type DateRange } from "@/features/report/report-period";
 import { registerMenuSibling, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
+import { attachTooltip } from "@/shared/tooltip";
 // 담당자명은 사용자 설정 묶음(user_settings)의 일부 — 저장/조회는 multi-account-storage가 담당.
 import { loadReportAuthor, saveReportAuthor } from "@/features/multi-account/multi-account-storage";
 
@@ -53,7 +54,9 @@ export interface OpenDatePickerOpts {
   /** 목표 ROAS 입력란 표시(F-Brief). 값은 초기값(미설정이면 null). */
   roasInitial?: number | null;
   showRoas?: boolean;
-  onConfirm: (range: DateRange, author: string, targetRoas: number | null) => void;
+  /** "문구 포함 생성" 토글 표시(F-Report). 켜면 onConfirm의 withMessage가 true. */
+  showMessageToggle?: boolean;
+  onConfirm: (range: DateRange, author: string, targetRoas: number | null, withMessage: boolean) => void;
 }
 
 export function closeReportDatePicker(): void {
@@ -95,12 +98,19 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
         <div class="dvads-rdp-scroll"></div>
       </div>
     </div>
-    <div class="dvads-rdp-foot">
+    <div class="dvads-rdp-msgrow">
+      <span class="dvads-rdp-msg-group">
+        <span class="dvads-rdp-msg-label">문구 생성</span>
+        <button type="button" class="dvads-brief-info-icon dvads-rdp-msg-info" aria-label="문구 생성 설명">i</button>
+        <input type="checkbox" class="dvads-asset-bulk-switch dvads-rdp-msg-toggle" aria-label="문구 생성" />
+      </span>
       <input type="text" class="dvads-rdp-author" placeholder="담당자명" />
       <span class="dvads-rdp-roas-wrap">
         <input type="text" class="dvads-rdp-roas" placeholder="목표 ROAS" inputmode="numeric" />
         <span class="dvads-rdp-roas-suffix" aria-hidden="true">%</span>
       </span>
+    </div>
+    <div class="dvads-rdp-foot">
       <div class="dvads-rdp-foot-btns">
         <button type="button" class="dvads-rdp-cancel">취소</button>
         <button type="button" class="dvads-rdp-confirm">확인</button>
@@ -115,8 +125,18 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   const fieldStart = el.querySelector<HTMLInputElement>('.dvads-rdp-field[data-field="start"]')!;
   const fieldEnd = el.querySelector<HTMLInputElement>('.dvads-rdp-field[data-field="end"]')!;
   const authorInput = el.querySelector<HTMLInputElement>(".dvads-rdp-author")!;
+  const msgToggle = el.querySelector<HTMLInputElement>(".dvads-rdp-msg-toggle")!;
   const roasWrap = el.querySelector<HTMLElement>(".dvads-rdp-roas-wrap")!;
   const roasInput = el.querySelector<HTMLInputElement>(".dvads-rdp-roas")!;
+
+  if (opts.showMessageToggle) {
+    const info = el.querySelector<HTMLElement>(".dvads-rdp-msg-info")!;
+    attachTooltip(info, "엑셀과 함께 보고 문구도 만들어요", { placement: "top" });
+  } else {
+    // 토글 묶음만 제거 — msgrow는 담당자/목표 ROAS 입력이 함께 살아 유지된다.
+    // (msgToggle 참조는 위에서 이미 잡아둬 detached여도 checked=false로 안전)
+    el.querySelector(".dvads-rdp-msg-group")?.remove();
+  }
 
   if (opts.showRoas) {
     if (opts.roasInitial != null) roasInput.value = String(opts.roasInitial);
@@ -376,7 +396,7 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
       );
     }
     finish();
-    opts.onConfirm(range, author, targetRoas);
+    opts.onConfirm(range, author, targetRoas, msgToggle.checked);
   }
   el.querySelector(".dvads-rdp-cancel")?.addEventListener("click", finish);
   el.querySelector(".dvads-rdp-confirm")?.addEventListener("click", confirmReport);
