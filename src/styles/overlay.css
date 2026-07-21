@@ -2697,12 +2697,30 @@ td.dvads-period-delta-down {
   justify-content: flex-end;
   gap: 8px;
 }
-/* 켜기/끄기 토글은 좌측, [취소][확인]은 우측 — spacer가 둘을 가른다. */
+/* 켜기/끄기 토글은 입력창 오른쪽에 나란히. */
+.dvads-cw-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.dvads-cw-input-row .dvads-actor-input-wrap {
+  flex: 1;
+  margin-top: 0;
+}
 .dvads-cw-toggle {
   display: flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
+  flex-shrink: 0;
+}
+/* 다이얼로그 본문 텍스트 최소 14px (보조 문구 제외). */
+.dvads-actor-card .dvads-actor-chip,
+.dvads-actor-card .dvads-actor-chips,
+.dvads-actor-card .dvads-actor-input,
+.dvads-actor-card .dvads-btn {
+  font-size: 14px;
 }
 .dvads-cw-spacer {
   flex: 1;

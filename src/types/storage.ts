@@ -177,6 +177,13 @@ export interface MultiAccountUserMeta {
    */
   changeWatch?: boolean;
   /**
+   * 관리이력 보고에 포함할 이력 종류(그룹 key 목록). undefined = 전체 포함.
+   * 다이얼로그 좌측 필터에서 고르며 계정별로 기억한다.
+   */
+  historyReportGroups?: string[];
+  /** 관리이력 보고에서 마지막으로 고른 변경자 목록. undefined = 미저장(제외 변경자 목록으로 초기화). */
+  historyReportActors?: string[];
+  /**
    * 목표 광고수익률(%). F-Brief 키워드 구간 분류(초록/노랑/무색) 기준.
    * undefined = 미설정 - 구간 분류 후보를 만들지 않는다(자동 추정 안 함).
    */

@@ -3153,6 +3153,15 @@ function renderTableRow(
           label: "변경이력 알림",
           onClick: () => void openChangeWatchDialogFor([entry.adAccountNo]),
         },
+        {
+          label: "관리이력 보고",
+          onClick: () =>
+            void openHistoryReportDialogFor({
+              adAccountNo: entry.adAccountNo,
+              masterCustomerId: entry.masterCustomerId,
+              name: meta?.displayName?.trim() || entry.name,
+            }),
+        },
         { separator: true },
         {
           label: "삭제",
@@ -3607,12 +3616,14 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
       <button class="dvads-actor-close" type="button" aria-label="닫기">×</button>
     </div>
     <div class="dvads-actor-chips is-loading"><span class="dvads-actor-spinner"></span>불러오는 중...</div>
-    <div class="dvads-actor-input-wrap">
-      <input class="dvads-actor-input" type="text" placeholder="제외시킬 계정을 추가해 주세요" />
-      <button class="dvads-actor-input-clear" type="button" aria-label="지우기">×</button>
+    <div class="dvads-cw-input-row">
+      <div class="dvads-actor-input-wrap">
+        <input class="dvads-actor-input" type="text" placeholder="제외시킬 계정을 추가해 주세요" />
+        <button class="dvads-actor-input-clear" type="button" aria-label="지우기">×</button>
+      </div>
+      <label class="dvads-cw-toggle"><input class="dvads-cw-on dvads-asset-bulk-switch" type="checkbox"${isOn ? " checked" : ""} aria-label="알림 켜기" /></label>
     </div>
     <div class="dvads-actor-actions">
-      <label class="dvads-cw-toggle"><input class="dvads-cw-on dvads-asset-bulk-switch" type="checkbox"${isOn ? " checked" : ""} aria-label="알림 켜기" /></label><div class="dvads-cw-spacer"></div>
       <button class="dvads-cw-cancel dvads-btn dvads-btn-secondary" type="button">취소</button>
       <button class="dvads-cw-confirm dvads-btn dvads-btn-primary" type="button">확인</button>
     </div>
@@ -3729,6 +3740,229 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
     });
     chipsEl.appendChild(chip);
   }
+}
+
+/**
+ * 관리이력 보고 — 기간 내 우리(대행사) 작업 내역을 카톡으로 보낼 한글 텍스트로 정리.
+ *
+ * 변경자 칩의 기본 선택은 F-ChangeWatch의 제외 변경자 목록(`change_watch_identity`)을
+ * 재사용한다 — "알림에서 제외할 사람" = "우리 쪽 사람"이라 의미가 같다.
+ * 조회는 [문구 생성]을 누를 때마다 새로 한다 — 기간을 바꿔가며 뽑는 흐름이 자연스럽고,
+ * 이력 조회 1콜이라 부담이 없다.
+ */
+async function openHistoryReportDialogFor(target: {
+  adAccountNo: number;
+  masterCustomerId?: number;
+  name: string;
+}): Promise<void> {
+  if (!target.masterCustomerId) {
+    showToast({ message: "이 계정은 아직 정보 수집 전이에요. 새로고침 후 다시 시도해 주세요", variant: "error" });
+    return;
+  }
+  const customerId = target.masterCustomerId;
+  closeRenameDialog();
+  const [identity, metaMap, groupMod] = await Promise.all([
+    loadChangeWatchIdentity(),
+    loadAllUserMeta(),
+    import("@/features/change-watch/history-report"),
+  ]);
+  const { GROUP_ORDER, GROUP_LABEL } = groupMod;
+  // 변경자 초기값 — 이 계정에서 마지막으로 고른 목록이 있으면 그걸, 없으면 우리 쪽 사람 목록.
+  const chosen = new Set(metaMap[target.adAccountNo]?.historyReportActors ?? identity);
+  // 이력 종류 필터 — 계정별 저장값에서 복원. 비어있으면(미저장) 전체 포함.
+  const savedGroups = metaMap[target.adAccountNo]?.historyReportGroups;
+  const pickedGroups = new Set<string>(
+    (savedGroups ?? []).filter((k) => (GROUP_ORDER as string[]).includes(k)),
+  );
+
+  const toDateInput = (d: Date) => {
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  };
+  const today = new Date();
+  const weekAgo = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+
+  const backdrop = document.createElement("div");
+  backdrop.className = "dvads dvads-actor-backdrop";
+  const card = document.createElement("div");
+  card.className = "dvads-actor-card dvads-hr-card";
+  card.innerHTML = `
+    <div class="dvads-actor-head">
+      <div class="dvads-actor-title">관리이력 보고</div>
+      <button class="dvads-actor-close" type="button" aria-label="닫기">×</button>
+    </div>
+    <div class="dvads-hr-body">
+      <div class="dvads-hr-filter" role="listbox" aria-label="이력 종류 필터"></div>
+      <div class="dvads-hr-main">
+        <div class="dvads-hr-dates">
+          <input class="dvads-hr-since" type="date" aria-label="시작일" />
+          <span class="dvads-hr-arrow">→</span>
+          <input class="dvads-hr-until" type="date" aria-label="종료일" />
+        </div>
+        <div class="dvads-actor-chips is-loading"><span class="dvads-actor-spinner"></span>변경자를 불러오는 중...</div>
+        <div class="dvads-hr-text-wrap">
+          <textarea class="dvads-hr-text" readonly placeholder="확인할 계정을 선택 후, '생성'을 클릭해 주세요"></textarea>
+          <button class="dvads-hr-copy" type="button" aria-label="복사" title="복사" hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="dvads-actor-actions">
+      <div class="dvads-cw-spacer"></div>
+      <button class="dvads-hr-cancel dvads-btn dvads-btn-secondary" type="button">닫기</button>
+      <button class="dvads-hr-make dvads-btn dvads-btn-primary" type="button">생성</button>
+    </div>
+  `;
+  backdrop.appendChild(card);
+  document.body.appendChild(backdrop);
+
+  // ─── 좌측 이력 종류 필터 — 맨 위 [전체보기] + 종류별 토글(선택 = 포함) ───
+  const filterEl = card.querySelector<HTMLDivElement>(".dvads-hr-filter")!;
+  const renderFilter = () => {
+    filterEl.innerHTML = "";
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.className = "dvads-hr-filter-item";
+    allBtn.textContent = "전체보기";
+    allBtn.classList.toggle("is-on", pickedGroups.size === 0);
+    allBtn.addEventListener("click", () => {
+      pickedGroups.clear();
+      renderFilter();
+    });
+    filterEl.appendChild(allBtn);
+    for (const key of GROUP_ORDER) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "dvads-hr-filter-item";
+      btn.textContent = GROUP_LABEL[key];
+      btn.classList.toggle("is-on", pickedGroups.has(key));
+      btn.addEventListener("click", () => {
+        if (pickedGroups.has(key)) pickedGroups.delete(key);
+        else pickedGroups.add(key);
+        // 전부 고르면 전체보기와 같으니 전체보기 상태로 되돌린다.
+        if (pickedGroups.size === GROUP_ORDER.length) pickedGroups.clear();
+        renderFilter();
+      });
+      filterEl.appendChild(btn);
+    }
+  };
+  renderFilter();
+
+  const sinceInput = card.querySelector<HTMLInputElement>(".dvads-hr-since")!;
+  const untilInput = card.querySelector<HTMLInputElement>(".dvads-hr-until")!;
+  const chipsEl = card.querySelector<HTMLDivElement>(".dvads-actor-chips")!;
+  const textEl = card.querySelector<HTMLTextAreaElement>(".dvads-hr-text")!;
+  const copyBtn = card.querySelector<HTMLButtonElement>(".dvads-hr-copy")!;
+  const makeBtn = card.querySelector<HTMLButtonElement>(".dvads-hr-make")!;
+  sinceInput.value = toDateInput(weekAgo);
+  untilInput.value = toDateInput(today);
+
+  // 변경자·종류 필터 선택을 계정별로 저장 — [생성]뿐 아니라 창을 닫을 때도 저장해야
+  // 칩만 바꾸고 닫은 선택이 다음에 유지된다. 실패는 warn만 (보고 흐름과 무관).
+  const persistSelections = () => {
+    void updateUserMetaMany([target.adAccountNo], {
+      historyReportGroups: pickedGroups.size > 0 ? [...pickedGroups] : undefined,
+      historyReportActors: [...chosen],
+    }).catch((e) => console.warn("[dv-ads/history-report] 선택 저장 실패", e));
+  };
+
+  const cleanup = () => {
+    persistSelections();
+    backdrop.remove();
+    document.removeEventListener("keydown", onKey, true);
+  };
+  const onKey = (e: KeyboardEvent) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+  };
+  wireBackdropDismiss(backdrop, cleanup);
+  card.addEventListener("click", (e) => e.stopPropagation());
+  document.addEventListener("keydown", onKey, true);
+  card.querySelector<HTMLButtonElement>(".dvads-actor-close")?.addEventListener("click", cleanup);
+  card.querySelector<HTMLButtonElement>(".dvads-hr-cancel")?.addEventListener("click", cleanup);
+
+  /** 날짜 입력값 → [자정, 다음날 자정) ms 구간. 잘못된 입력이면 null. */
+  const periodMs = (): { since: number; until: number } | null => {
+    const s = new Date(`${sinceInput.value}T00:00:00`);
+    const u = new Date(`${untilInput.value}T00:00:00`);
+    if (Number.isNaN(s.getTime()) || Number.isNaN(u.getTime()) || s > u) return null;
+    return { since: s.getTime(), until: u.getTime() + 24 * 60 * 60 * 1000 - 1 };
+  };
+
+  const renderChips = (actors: string[]) => {
+    chipsEl.innerHTML = "";
+    chipsEl.classList.remove("is-loading");
+    if (actors.length === 0) {
+      chipsEl.textContent = "해당 기간 이력에 변경자가 없어요";
+      return;
+    }
+    for (const a of actors) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "dvads-actor-chip";
+      chip.textContent = a;
+      chip.classList.toggle("is-on", chosen.has(a));
+      chip.addEventListener("click", () => {
+        if (chosen.has(a)) chosen.delete(a);
+        else chosen.add(a);
+        chip.classList.toggle("is-on", chosen.has(a));
+      });
+      chipsEl.appendChild(chip);
+    }
+  };
+
+  // 변경자 후보 — 열자마자 기본 기간(최근 7일)의 이력에서 긁는다. 저장된 우리 쪽 목록은
+  // 그 기간에 안 나타났어도 칩으로 보여준다(선택 상태 확인용).
+  const initialPeriod = periodMs()!;
+  try {
+    const rows = await fetchChangeHistory(customerId, initialPeriod.since, initialPeriod.until);
+    if (!backdrop.isConnected) return;
+    renderChips([...new Set([...observedActors(rows), ...identity, ...chosen])].sort());
+  } catch (err) {
+    console.warn("[dv-ads/history-report] 변경자 수집 실패", err);
+    if (!backdrop.isConnected) return;
+    renderChips([...new Set([...identity, ...chosen])].sort());
+  }
+
+  makeBtn.addEventListener("click", () => {
+    const period = periodMs();
+    if (!period) {
+      showToast({ message: "기간을 다시 확인해 주세요", variant: "error" });
+      return;
+    }
+    if (chosen.size === 0) {
+      showToast({ message: "보고에 담을 변경자를 골라 주세요", variant: "error" });
+      return;
+    }
+    makeBtn.disabled = true;
+    makeBtn.textContent = "생성 중...";
+    void (async () => {
+      try {
+        const { collectHistoryReport, formatHistoryReportText } = groupMod;
+        const report = await collectHistoryReport(customerId, period.since, period.until, [...chosen]);
+        if (pickedGroups.size > 0) {
+          report.groups = report.groups.filter((g) => pickedGroups.has(g.key));
+          report.total = report.groups.reduce((n, g) => n + g.items.length, 0);
+        }
+        textEl.value = formatHistoryReportText(target.name, period.since, period.until, report);
+        copyBtn.hidden = false;
+        persistSelections();
+      } catch (err) {
+        console.warn("[dv-ads/history-report] 생성 실패", err);
+        showToast({ message: "관리 내역을 불러오지 못했어요. 잠시 후 다시 시도해 주세요", variant: "error" });
+      } finally {
+        makeBtn.disabled = false;
+        makeBtn.textContent = "생성";
+      }
+    })();
+  });
+
+  copyBtn.addEventListener("click", () => {
+    void navigator.clipboard
+      .writeText(textEl.value)
+      .then(() => showToast({ message: "복사했어요. 카톡에 붙여넣어 주세요", variant: "success" }))
+      .catch(() => showToast({ message: "복사하지 못했어요. 문구를 직접 선택해 복사해 주세요", variant: "error" }));
+  });
 }
 
 async function openBrandSearchDialogFor(nos: number[]) {
