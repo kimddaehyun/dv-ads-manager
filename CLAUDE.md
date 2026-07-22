@@ -52,6 +52,8 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - internal API 응답 검증/디버깅은 Playwright MCP `browser_evaluate` 페이지 컨텍스트 fetch로 — 확장 미로드여도 라이브 응답 확인 가능.
 - `chrome.storage.local`은 확장별 격리 — 다른 확장의 자격증명을 못 읽으므로 사용자가 본 확장 옵션에 별도 입력. **광고 데이터는 네이버와 사내 서버(Supabase Edge Function) 외로 나가지 않는다** — F-Brief AI 조립 시 AE가 체크한 facts만 전송, 서버 저장·로깅 없음(2026-07-16 개정, PRD 데이터 모델 참조).
 - 버전은 `package.json`의 `version`이 단일 소스 — `manifest.config.ts`에서 자동 import.
+- **확장 reload 직후엔 크롬이 페이지 로드에 콘텐츠 스크립트를 못 넣는 공백이 있다** — background `onInstalled`가 열린 탭에 재주입(`reinjectContentScripts`, `scripting` 권한). 재주입 시 이전 고아 컨텍스트의 루프와 DOM 싸움 방지는 `src/shared/takeover.ts` 세대 표식(`claimTakeover`/`isStale`) — 새 주기 루프(interval·observer)를 만들면 isStale 은퇴 체크를 넣을 것 (2026-07-22).
+- **Vite 동적 import의 CSS preload는 페이지 도메인 기준 `/assets/*.css`로 나가 원천적으로 잘못된 URL** — 서버가 관대하면 우연히 통과하지만 진짜 404/차단이면 link error가 모듈 import 전체를 실패시킨다("다계정 모듈 로드 실패"). CSS는 manifest css로 크롬이 직접 주입하므로 콘텐츠 진입점의 `vite:preloadError` preventDefault 가드가 방어선 — 제거 금지 (2026-07-22 실사고).
 - **`tsc -b` incremental cache에 stale 에러가 남을 수 있음** — `rm -f tsconfig.*.tsbuildinfo && npm run typecheck`로 클린 재실행.
 - **사용자 노출 한글 메시지에 영문 기술용어 금지** (`reload`/`fetch`/`background` 등). `friendly-error.ts` 패턴 따라 일상 한글로. 배지 툴팁·토스트·다이얼로그 모두 동일.
 - **F-Accounts 전면 잠금**: 로그인(`approved`) 없으면 전 기능 잠금. 가입 즉시 사용 가능(기본 approved, 2026-07-17 개정) — 관리자는 사후 차단만. 게이트는 `src/shared/auth-gate.ts`의 `requireApproved()`가 콘텐츠 스크립트 진입점에서 단일 관문(미승인이면 콘텐츠 스크립트 자체를 미주입, 팝업/옵션은 안내만). 상세는 `src/shared/CLAUDE.md`.

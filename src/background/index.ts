@@ -43,7 +43,46 @@ chrome.runtime.onInstalled.addListener(() => {
   void pruneExpiredCache().catch((e) =>
     console.warn("[dv-ads] initial prune failed", e),
   );
+  // 이미 열려 있는 광고관리자 탭에 콘텐츠 스크립트 재주입 — 확장 reload/업데이트 직후엔
+  // 크롬이 새 페이지 로드에 스크립트를 못 넣는 공백이 있어(이때 F5하면 아무것도 안 뜸),
+  // 사용자가 페이지를 한 번 더 새로고침해야 했다. 여기서 직접 주입하면 새로고침 자체가 불필요.
+  void reinjectContentScripts().catch((e) =>
+    console.warn("[dv-ads] content script reinject failed", e),
+  );
 });
+
+/**
+ * manifest에 선언된 콘텐츠 스크립트를 현재 열려 있는 매칭 탭에 즉시 주입.
+ * 파일명은 빌드 해시가 붙으므로 getManifest()에서 동적으로 읽는다. 각 스크립트는
+ * 자체 중복 가드(__dvadsMultiAccountInit, __dvadsFetchPatched 등)가 있어 재주입에 안전.
+ * 개별 탭 실패(권한 없는 페이지 등)는 무시하고 계속 진행.
+ */
+async function reinjectContentScripts(): Promise<void> {
+  for (const cs of chrome.runtime.getManifest().content_scripts ?? []) {
+    if (!cs.matches?.length) continue;
+    const tabs = await chrome.tabs.query({ url: cs.matches });
+    for (const tab of tabs) {
+      if (tab.id === undefined) continue;
+      const target = { tabId: tab.id, allFrames: cs.all_frames === true };
+      try {
+        if (cs.css?.length) {
+          await chrome.scripting.insertCSS({ target, files: cs.css });
+        }
+        if (cs.js?.length) {
+          await chrome.scripting.executeScript({
+            target,
+            files: cs.js,
+            // chrome 타입 정의에 manifest content_scripts의 world 필드가 아직 없음
+            world:
+              (cs as { world?: string }).world === "MAIN" ? "MAIN" : "ISOLATED",
+          });
+        }
+      } catch (e) {
+        console.warn("[dv-ads] reinject skip tab", tab.id, e);
+      }
+    }
+  }
+}
 
 chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendResponse) => {
   if (msg?.type === "OPEN_OPTIONS") {

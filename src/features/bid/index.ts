@@ -42,9 +42,21 @@ import { initShoppingImageImport } from "@/features/asset-bulk/shopping-image-im
 import { attachTooltip } from "@/shared/tooltip";
 import { requireApproved } from "@/shared/auth-gate";
 import { initScrollLock } from "@/shared/scroll-lock";
+import { claimTakeover, isStale } from "@/shared/takeover";
 
 declare const __APP_VERSION__: string;
 console.log(`[dv-ads] content script loaded · v${__APP_VERSION__}`);
+
+// 동적 import(다계정·리포트 등) 시 Vite preload 헬퍼가 CSS를 페이지 도메인 기준
+// `/assets/*.css`로 로드하는데 이 URL은 원래부터 잘못됐다(확장 리소스는 chrome-extension://).
+// 서버가 200류로 응답하면 우연히 통과하지만 진짜 404/차단이면 link error → import 전체가
+// 던져져 "다계정 모듈 로드 실패"가 난다(2026-07-22 실사고). CSS는 manifest의 css 항목으로
+// 크롬이 직접 주입하므로 preload 실패는 무시해도 손실이 없다 — preventDefault로 throw 억제.
+window.addEventListener("vite:preloadError", (e) => e.preventDefault());
+
+// 세대 교체 표식 — 재주입(background onInstalled)으로 새 컨텍스트가 뜨면 이전 고아
+// 컨텍스트의 루프가 isStale()로 감지해 스스로 물러난다 (src/shared/takeover.ts).
+claimTakeover();
 
 
 const KEYWORD_CELL_SELECTOR = "td.ad-cms-table-cell-fix-start";
@@ -150,6 +162,14 @@ function isKeywordPage(): boolean {
 // ─── scan & mount ───
 
 function scan() {
+  // 새 컨텍스트가 재주입됐으면 이 컨텍스트는 은퇴 — 배지 정리 + 감시 중단.
+  // 안 하면 두 컨텍스트가 같은 셀의 배지를 서로 지웠다 붙였다 반복한다.
+  if (isStale()) {
+    teardown();
+    domObserver?.disconnect();
+    urlObserver?.disconnect();
+    return;
+  }
   if (!isKeywordPage()) {
     teardown();
     return;
@@ -1156,6 +1176,10 @@ function teardown() {
 
 // ─── observe DOM + URL changes ───
 
+// 세대 교체(isStale) 시 disconnect하기 위해 관찰자 reference를 모듈 스코프에 보관.
+let domObserver: MutationObserver | null = null;
+let urlObserver: MutationObserver | null = null;
+
 let scanRaf: number | null = null;
 function schedule() {
   if (scanRaf !== null) return;
@@ -1216,11 +1240,11 @@ async function main(): Promise<void> {
   // 모달의 네이티브 이미지 업로드칸 하단에 후보 그리드 추가, 클릭 시 file input에 주입.
   initShoppingImageImport();
 
-  const observer = new MutationObserver(schedule);
-  observer.observe(document.body, { childList: true, subtree: true });
+  domObserver = new MutationObserver(schedule);
+  domObserver.observe(document.body, { childList: true, subtree: true });
 
   let lastUrl = location.href;
-  new MutationObserver(() => {
+  urlObserver = new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       // SPA navigation — 캐시는 유지, 배지만 새 페이지에서 재mount
@@ -1229,7 +1253,8 @@ async function main(): Promise<void> {
       // 첫 진입이 무관 페이지였다가 SPA로 광고계정 URL에 도달하는 경우 커버
       maybeInitMultiAccount();
     }
-  }).observe(document, { childList: true, subtree: true });
+  });
+  urlObserver.observe(document, { childList: true, subtree: true });
 
   schedule();
 }

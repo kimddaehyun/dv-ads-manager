@@ -86,6 +86,7 @@ import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "@/
 import { openInputDialog } from "@/shared/input-dialog";
 import { wireBackdropDismiss } from "@/shared/dialog-dismiss";
 import { showToast } from "@/shared/toast";
+import { isStale } from "@/shared/takeover";
 import { trackUsage } from "@/shared/usage";
 // "@/features/setup/setup"·"@/features/report/report"은 write-excel-file/fflate(무거운 의존성)을 끌어와 콘텐츠 초기 번들을
 // 부풀린다. 호출 직전 동적 import로 분리해 별도 청크로 빠지게 한다(첫 클릭 시 1회 로드).
@@ -141,6 +142,13 @@ export function initMultiAccount() {
 
   let lastUrl = location.href;
   const onTick = () => {
+    // 새 컨텍스트가 재주입됐으면(확장 reload 후 onInstalled 재주입) 이 컨텍스트는 은퇴 —
+    // 버튼 정리 + 인터벌 중단. 안 하면 두 컨텍스트가 서로의 버튼을 제거/재mount 반복.
+    if (isStale()) {
+      clearInterval(tickTimer);
+      unmountButton();
+      return;
+    }
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       // SPA 전환 시 헤더가 다시 그려지므로 칩 순회 백오프를 풀어 즉시 재탐색.
@@ -152,7 +160,7 @@ export function initMultiAccount() {
     // 매 tick: 헤더 칩 옆에 버튼 살아있는지 확인. SPA가 헤더 다시 그리면 re-mount.
     syncMount();
   };
-  setInterval(onTick, 300);
+  const tickTimer = setInterval(onTick, 300);
   window.addEventListener("popstate", () => {
     lastUrl = location.href;
     // 뒤로/앞으로도 SPA 전환이므로 칩 순회 백오프를 풀어 즉시 재탐색(onTick과 동일).

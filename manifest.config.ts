@@ -16,7 +16,10 @@ export default defineManifest({
     "48": "src/assets/icon-128.png",
     "128": "src/assets/icon-128.png",
   },
-  permissions: ["storage", "tabs"],
+  // scripting — 확장 설치/새로고침 직후 이미 열려 있는 광고관리자 탭에 콘텐츠 스크립트를
+  // 재주입(onInstalled). reload 직후엔 크롬이 페이지 로드에 스크립트를 못 넣는 공백이 있어
+  // 사용자가 페이지를 다시 새로고침해야 했다(2026-07-22).
+  permissions: ["storage", "tabs", "scripting"],
   host_permissions: [
     "https://ads.naver.com/*",
     "https://api.searchad.naver.com/*",
