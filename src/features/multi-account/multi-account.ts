@@ -554,7 +554,7 @@ let listSearchQuery = "";
 // 상태 컬럼 필터 — null이면 전체. '상태' 헤더 클릭 드롭다운에서 선택.
 // 판정 값은 syncIssueChip이 row.dataset.statusKind에 남긴다 (이슈 겹침(danger)도 "warn"으로
 // 기록 — 배지가 "확인 필요"로 보이므로 필터도 확인 필요에 묶인다).
-type StatusKind = "ok" | "warn" | "budget" | "stopped";
+type StatusKind = "ok" | "warn" | "budget" | "external" | "stopped";
 let statusFilter: StatusKind | null = null;
 
 // 항목 설명(툴팁)은 두지 않는다 — 라벨이 상태 배지와 같은 말이라 그 자체로 뜻이 통하고,
@@ -567,6 +567,7 @@ const STATUS_FILTER_OPTIONS: {
   { value: "ok", label: "이상 없음" },
   { value: "warn", label: "확인 필요" },
   { value: "budget", label: "예산 도달" },
+  { value: "external", label: "수정 이력" },
   { value: "stopped", label: "광고 중단" },
 ];
 
@@ -2827,7 +2828,7 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       onClick: () => openBrandSearchDialogFor(Array.from(selectedAccountNos)),
     },
     {
-      label: "변경이력 알림",
+      label: "변경 이력 알림",
       disabled: !hasSelection,
       onClick: () => void openChangeWatchDialogFor(Array.from(selectedAccountNos)),
     },
@@ -3659,7 +3660,7 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
   card.className = "dvads-actor-card";
   card.innerHTML = `
     <div class="dvads-actor-head">
-      <div class="dvads-actor-title">변경이력 알림</div>
+      <div class="dvads-actor-title">변경 이력 알림</div>
       <button class="dvads-actor-close" type="button" aria-label="닫기">×</button>
     </div>
     <div class="dvads-actor-chips is-loading"><span class="dvads-actor-spinner"></span>불러오는 중...</div>
@@ -3838,7 +3839,7 @@ async function openHistoryReportDialogFor(target: {
   card.className = "dvads-actor-card dvads-hr-card";
   card.innerHTML = `
     <div class="dvads-actor-head">
-      <div class="dvads-actor-title">관리이력 보고</div>
+      <div class="dvads-actor-title">관리 이력 보고</div>
       <button class="dvads-actor-close" type="button" aria-label="닫기">×</button>
     </div>
     <div class="dvads-hr-body">
@@ -4239,7 +4240,8 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
  * '상태' 컬럼 배지 — 이슈 종류별 4단계:
  *   - "광고 중단"(빨강) = 계정 자체 중단(비즈머니 소진, 잔액 ≤ 0)
  *   - "예산 도달"(주황) = 캠페인/그룹/공유예산 잠금(변경이력 budget)
- *   - "확인 필요"(호박) = 외부 수정 unread + 광고주센터 알림 이슈
+ *   - "수정 이력"(파랑) = 외부 수정 unread(변경이력 external)
+ *   - "확인 필요"(호박) = 광고주센터 알림 이슈
  *   - 이슈 종류가 2개 이상 겹치면 "확인 필요"를 빨강으로
  *   - 아무것도 없으면 "정상"(초록)
  * 배지 클릭 → 계정 이슈 패널. 확인(패널 [모두 읽음])하면 정상으로 돌아간다.
@@ -4251,10 +4253,10 @@ function syncIssueChip(row: HTMLTableRowElement) {
   const change = Number(row.dataset.statusChangeCount ?? "0");
   const budget = Number(row.dataset.statusChangeBudget ?? "0");
   const bizDepleted = row.dataset.statusBizDepleted === "1";
-  const external = change - budget + naver;
-  const kinds = [bizDepleted, budget > 0, external > 0].filter(Boolean).length;
+  const external = change - budget;
+  const kinds = [bizDepleted, budget > 0, external > 0, naver > 0].filter(Boolean).length;
   row.classList.toggle("dvads-multi-tr-issues", kinds > 0);
-  badge.classList.remove("is-ok", "is-warn", "is-budget", "is-stopped", "is-danger");
+  badge.classList.remove("is-ok", "is-warn", "is-budget", "is-external", "is-stopped", "is-danger");
   if (kinds >= 2) {
     badge.textContent = "확인 필요";
     badge.classList.add("is-danger");
@@ -4268,6 +4270,10 @@ function syncIssueChip(row: HTMLTableRowElement) {
     badge.classList.add("is-budget");
     row.dataset.statusKind = "budget";
   } else if (external > 0) {
+    badge.textContent = "수정 이력";
+    badge.classList.add("is-external");
+    row.dataset.statusKind = "external";
+  } else if (naver > 0) {
     badge.textContent = "확인 필요";
     badge.classList.add("is-warn");
     row.dataset.statusKind = "warn";

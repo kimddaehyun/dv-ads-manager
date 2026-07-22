@@ -2345,8 +2345,17 @@ td.dvads-period-delta-down {
   background: #FFF7ED;
   color: #EA580C;
 }
-/* 광고 중단(계정 중단)과 이슈 겹침(확인필요 강조)은 같은 빨강 계열. */
-.dvads-multi-status-badge.is-stopped,
+/* 수정 이력(외부 수정 unread) — 경고보단 정보성이라 파랑. */
+.dvads-multi-status-badge.is-external {
+  background: #EFF6FF;
+  color: #2563EB;
+}
+/* 광고 중단(계정 중단) — 운영이 멈춘 상태라 경고색 대신 회색. */
+.dvads-multi-status-badge.is-stopped {
+  background: #F3F4F6;
+  color: #6B7280;
+}
+/* 이슈 겹침(확인필요 강조)은 빨강. */
 .dvads-multi-status-badge.is-danger {
   background: #FEF2F2;
   color: #DC2626;
@@ -2358,7 +2367,7 @@ td.dvads-period-delta-down {
 .dvads-change-panel {
   position: fixed;
   z-index: 2147483647;
-  width: 320px;
+  width: 334px;
   max-width: 92vw;
   background: #ffffff;
   border-radius: 10px;
@@ -2526,7 +2535,7 @@ td.dvads-period-delta-down {
 }
 .dvads-change-target {
   margin-top: 2px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2534,7 +2543,7 @@ td.dvads-period-delta-down {
 }
 .dvads-change-summary {
   margin-top: 1px;
-  font-size: 12px;
+  font-size: 14px;
   color: #6B7280;
   word-break: break-all;
 }

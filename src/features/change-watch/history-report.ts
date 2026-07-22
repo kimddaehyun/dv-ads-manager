@@ -614,7 +614,7 @@ export function formatHistoryReportText(
 
   if (report.truncated) {
     lines.push("");
-    lines.push("※ 내역이 많아 일부가 빠졌을 수 있습니다.");
+    lines.push("※ 5,000건이 초과되어 일부 내역이 제외되었습니다.");
   }
   return lines.join("\n");
 }

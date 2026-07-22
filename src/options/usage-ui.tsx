@@ -33,7 +33,7 @@ const FEATURE_COLUMNS: Array<{ event: string; label: string }> = [
   { event: "report_excel", label: "리포트" },
   { event: "setup_excel", label: "세팅안" },
   { event: "brief_generate", label: "보고문구" },
-  { event: "history_report", label: "관리이력" },
+  { event: "history_report", label: "관리 이력" },
   { event: "bid_change", label: "입찰변경" },
   { event: "asset_bulk", label: "확장소재" },
   { event: "agency_check", label: "대행권점검" },
