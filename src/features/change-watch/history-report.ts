@@ -8,7 +8,7 @@
  */
 
 import {
-  fetchChangeHistory,
+  fetchChangeHistoryAll,
   diffSummary,
   rowTime,
   type RawHistoryRow,
@@ -43,7 +43,7 @@ export interface HistoryReport {
   groups: HistoryReportGroup[];
   /** 전체 건수 (그룹 합계) */
   total: number;
-  /** 5000행 한도로 일부가 잘렸을 가능성 */
+  /** 기간을 최소 폭까지 쪼개도 5,000행 한도에 걸려 일부가 잘린 극단적 경우 */
   truncated: boolean;
 }
 
@@ -378,8 +378,8 @@ export async function collectHistoryReport(
   untilMs: number,
   actors: string[],
 ): Promise<HistoryReport> {
-  const rows = await fetchChangeHistory(customerId, sinceMs, untilMs);
-  const report = buildHistoryReport(rows, actors);
+  const { rows, truncated } = await fetchChangeHistoryAll(customerId, sinceMs, untilMs);
+  const report = buildHistoryReport(rows, actors, truncated);
   // 서로 다른 API로 다른 필드(where/campaignType)만 채운다 — 의존성 없어 병렬.
   await Promise.all([
     enrichTargetNames(customerId, report),
@@ -483,7 +483,11 @@ async function enrichTargetNames(customerId: number, report: HistoryReport): Pro
 }
 
 /** 조회 결과 → 보고 구조. 테스트를 위해 fetch와 분리. */
-export function buildHistoryReport(rows: RawHistoryRow[], actors: string[]): HistoryReport {
+export function buildHistoryReport(
+  rows: RawHistoryRow[],
+  actors: string[],
+  truncated = false,
+): HistoryReport {
   const ours = new Set(actors.map((a) => a.trim().toLowerCase()).filter(Boolean));
   const byGroup = new Map<GroupKey, HistoryReportItem[]>();
 
@@ -533,7 +537,7 @@ export function buildHistoryReport(rows: RawHistoryRow[], actors: string[]): His
   return {
     groups,
     total: groups.reduce((n, g) => n + g.items.length, 0),
-    truncated: rows.length >= 5000,
+    truncated,
   };
 }
 
@@ -616,7 +620,7 @@ export function formatHistoryReportText(
 
   if (report.truncated) {
     lines.push("");
-    lines.push("※ 5,000건이 초과되어 일부 내역이 제외되었습니다.");
+    lines.push("※ 변경 내역이 너무 많아 일부가 제외되었습니다.");
   }
   return lines.join("\n");
 }

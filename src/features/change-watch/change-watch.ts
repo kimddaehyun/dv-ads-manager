@@ -209,6 +209,39 @@ export async function fetchChangeHistory(
   return rows;
 }
 
+// 쪼개도 이 폭 이하면 포기 — 1분 안에 5,000건은 사실상 없으니 무한 재귀 방지용.
+const MIN_SPLIT_SPAN_MS = 60_000;
+
+/**
+ * 5,000건 한도 없는 전체 조회 — 결과가 한도에 걸리면 기간을 반으로 쪼개 재귀 조회 후
+ * 합친다(관리이력 보고처럼 전수가 필요할 때 사용). 경계 겹침은 eventId로 중복 제거.
+ * `truncated`는 최소 폭까지 쪼갰는데도 한도에 걸린 극단적 경우에만 true.
+ */
+export async function fetchChangeHistoryAll(
+  customerId: number,
+  sinceMs: number,
+  untilMs: number,
+): Promise<{ rows: RawHistoryRow[]; truncated: boolean }> {
+  const rows = await fetchChangeHistory(customerId, sinceMs, untilMs);
+  if (rows.length < MAX_ROWS) return { rows, truncated: false };
+  if (untilMs - sinceMs <= MIN_SPLIT_SPAN_MS) return { rows, truncated: true };
+  const mid = Math.floor((sinceMs + untilMs) / 2);
+  const [head, tail] = await Promise.all([
+    fetchChangeHistoryAll(customerId, sinceMs, mid),
+    fetchChangeHistoryAll(customerId, mid, untilMs),
+  ]);
+  const seen = new Set<string>();
+  const merged: RawHistoryRow[] = [];
+  for (const row of [...head.rows, ...tail.rows]) {
+    if (row.eventId) {
+      if (seen.has(row.eventId)) continue;
+      seen.add(row.eventId);
+    }
+    merged.push(row);
+  }
+  return { rows: merged, truncated: head.truncated || tail.truncated };
+}
+
 /**
  * 원본 행 → 알림 목록. `ourActors`가 비어있으면 외부 수정은 판별이 불가능하므로
  * (우리 것도 남의 것으로 보임) 예산 알림만 만든다.

@@ -338,11 +338,13 @@ describe("formatHistoryReportText", () => {
     expect(text).toContain("정리할 관리 내역이 없습니다");
   });
 
-  it("5000행 잘림이면 누락 안내를 붙인다", () => {
-    const rows = Array.from({ length: 5000 }, () =>
-      row({ before: { bidAmt: "1" }, after: { bidAmt: "2" } }),
+  it("잘림 플래그가 켜지면 누락 안내를 붙인다", () => {
+    const rows = [row({ before: { bidAmt: "1" }, after: { bidAmt: "2" } })];
+    const text = formatHistoryReportText(
+      since,
+      until,
+      buildHistoryReport(rows, ["dvcompany:naver"], true),
     );
-    const text = formatHistoryReportText(since, until, buildHistoryReport(rows, ["dvcompany:naver"]));
-    expect(text).toContain("5,000건이 초과되어 일부 내역이 제외되었습니다");
+    expect(text).toContain("변경 내역이 너무 많아 일부가 제외되었습니다");
   });
 });
