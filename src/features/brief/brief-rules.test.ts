@@ -118,6 +118,20 @@ describe("extractCandidates", () => {
     expect(String(c!.facts.keywords)).not.toContain("소액키워드");
   });
 
+  it("키워드 표 문맥은 10행 목표 — 문턱 넘는 문맥 먼저, 모자라면 문턱 미만도 비용순으로 채운다", () => {
+    const kws = [
+      { keyword: "걸림", metrics: m(30_000, 0, 0) }, // 전환 0 → 후보
+      { keyword: "큰문맥", metrics: m(20_000, 2, 200_000) },
+      ...Array.from({ length: 12 }, (_, i) => ({ keyword: `소액${i}`, metrics: m(1_000 + i, 1, 10_000) })),
+    ];
+    const c = extractCandidates({ keywords: [{ campaign: "C", group: "G", keywords: kws }], targetRoas: 800 })
+      .find((x) => x.kind === "zeroConvKeyword")!;
+    expect(c.table.rows).toHaveLength(10);
+    expect(c.table.rows.filter((r) => r.problem)).toHaveLength(1);
+    // 문턱 넘는 문맥이 우선 포함된다.
+    expect(c.table.rows.some((r) => r.cells[0] === "큰문맥")).toBe(true);
+  });
+
   it("노랑 구간 키워드는 belowTargetKeyword에 안 들어간다", () => {
     // 이게 깨지면 유지해야 할 키워드에 "하향하겠습니다"가 광고주에게 나간다.
     const c = extractCandidates(base).find((x) => x.kind === "belowTargetKeyword");
@@ -503,17 +517,51 @@ describe("extractCandidates - 세그먼트 확장: 전환0 / 상향 여지 / 클
     expect(cands.find((x) => x.kind === "deviceBidSkew")).toBeUndefined();
   });
 
-  it("목표 이상 구간 → highRoasSegment, 표에서 good(초록) 행", () => {
-    const cands = extractCandidates(withDevice([
-      { label: "PC", metrics: m(50_000, 2, 200_000) },     // 400% none
-      { label: "모바일", metrics: m(50_000, 5, 450_000) },  // 900% green
-    ]));
+  it("좋은 구간이 나쁜 구간보다 적으면 상향만 → highRoasSegment, 표에서 good(초록) 행", () => {
+    // 상향 여지는 목표(800%)의 1.5배(1200%) 이상만 — 겨우 넘긴 구간은 제안하지 않는다.
+    const cands = extractCandidates({ ...base, groups: [gd("C", "G", 1, { byAge: [
+      { label: "25세 ~ 29세", metrics: m(50_000, 5, 650_000) }, // 1300% - 목표 1.5배 이상
+      { label: "30세 ~ 34세", metrics: m(50_000, 2, 200_000) }, // 400% none
+      { label: "40세 ~ 44세", metrics: m(50_000, 2, 210_000) }, // 420% none
+    ] })] });
     const good = cands.find((x) => x.kind === "highRoasSegment");
     expect(good).toBeDefined();
-    expect(good!.facts.구간).toBe("모바일");
-    expect(good!.table.rows.find((r) => r.good)!.cells[0]).toBe("모바일");
+    expect(good!.facts.구간).toBe("25세 ~ 29세");
+    expect(good!.table.rows.find((r) => r.good)!.cells[0]).toBe("25세 ~ 29세");
     // 상향 여지 표는 빨강(problem) 강조를 쓰지 않는다.
     expect(good!.table.rows.some((r) => r.problem)).toBe(false);
+    // 방향 단일화(2026-07-22) — 하향(미달) 후보를 같은 차원에서 함께 만들지 않는다.
+    expect(cands.find((x) => x.kind === "ageBidSkew")).toBeUndefined();
+  });
+
+  it("목표를 겨우 넘긴 구간(1.5배 미만)은 상향 여지로 잡지 않는다", () => {
+    const cands = extractCandidates(withDevice([
+      { label: "PC", metrics: m(50_000, 5, 420_000) },     // 840% - 목표는 넘지만 1.5배 미만
+      { label: "모바일", metrics: m(50_000, 5, 410_000) },  // 820% - 동일
+    ]));
+    expect(cands.find((x) => x.kind === "highRoasSegment")).toBeUndefined();
+  });
+
+  it("좋은 구간이 더 많으면 하향만 — 상향(highRoasSegment)은 만들지 않는다", () => {
+    const cands = extractCandidates({ ...base, groups: [gd("C", "G", 1, { byAge: [
+      { label: "25세 ~ 29세", metrics: m(50_000, 5, 650_000) }, // 1300% - 목표 1.5배 이상
+      { label: "30세 ~ 34세", metrics: m(50_000, 5, 660_000) }, // 1320% - 목표 1.5배 이상
+      { label: "40세 ~ 44세", metrics: m(50_000, 2, 200_000) }, // 400% none
+    ] })] });
+    const below = cands.find((x) => x.kind === "ageBidSkew");
+    expect(below).toBeDefined();
+    expect(below!.facts.구간).toBe("40세 ~ 44세");
+    expect(cands.find((x) => x.kind === "highRoasSegment")).toBeUndefined();
+  });
+
+  it("좋은 구간과 나쁜 구간이 같은 수면 하향만 — 상승·하향 중복 금지", () => {
+    // 좋은 구간(1.5배 이상)과 나쁜 구간이 1:1 동수 — good < down이 아니므로 하향만.
+    const cands = extractCandidates(withDevice([
+      { label: "PC", metrics: m(50_000, 2, 200_000) },     // 400% none
+      { label: "모바일", metrics: m(50_000, 5, 650_000) },  // 1300% - 목표 1.5배 이상
+    ]));
+    expect(cands.find((x) => x.kind === "deviceBidSkew")).toBeDefined();
+    expect(cands.find((x) => x.kind === "highRoasSegment")).toBeUndefined();
   });
 
   it("목표 미설정이면 상향 여지 후보 없음 (전환 0 후보는 그대로)", () => {
@@ -526,6 +574,15 @@ describe("extractCandidates - 세그먼트 확장: 전환0 / 상향 여지 / 클
     });
     expect(cands.find((x) => x.kind === "highRoasSegment")).toBeUndefined();
     expect(cands.find((x) => x.kind === "zeroConvSegment")).toBeDefined();
+  });
+
+  it("전 구간 전환 0이면(문턱 미만 구간 포함) zeroConvSegment를 만들지 않는다 — 전환 나는 대조 구간 필수", () => {
+    // PC는 문턱 미만이라 '문제' 집합엔 안 들지만 전환도 없다 — 기기 조정으로 풀 문제가 아니다.
+    const cands = extractCandidates(withDevice([
+      { label: "PC", metrics: m(4_000, 0, 0) },
+      { label: "모바일", metrics: m(50_000, 0, 0) },
+    ]));
+    expect(cands.find((x) => x.kind === "zeroConvSegment")).toBeUndefined();
   });
 
   it("한 구간만 돌아간 그룹(모바일 전용)은 목표 대비 후보를 만들지 않는다", () => {

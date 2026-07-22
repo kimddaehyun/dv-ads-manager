@@ -412,15 +412,25 @@ function showResult(
     // 표 제목은 그룹만(길어서 짤림) — 소속 캠페인은 문단 첫 줄 "[캠페인 > 그룹]"으로 밝힌다.
     const scopeLabel = c.scope ? `[${c.scope.campaign} > ${c.scope.group}]` : "";
     const matched = byIndex.get(i + 1) ?? [];
+    const start = blocks.length; // 이 이슈 세트의 첫 블록 — 패널이 앞에 구분선을 그린다.
     matched.forEach((ai, j) => {
       const b = toBlock(ai);
-      if (j === 0 && scopeLabel && b.type === "text") b.text = `${scopeLabel}\n${b.text}`;
+      // AI가 이미 같은 라벨로 시작하는 문단을 주면(서버 프롬프트에 따라) 중복 부착 금지.
+      if (j === 0 && scopeLabel && b.type === "text" && !b.text.trimStart().startsWith(scopeLabel)) {
+        b.text = `${scopeLabel}\n${b.text}`;
+      }
       blocks.push(b);
     });
     if (matched.length === 0 && scopeLabel) blocks.push({ type: "text", text: scopeLabel });
     blocks.push({ type: "table", spec: c.table });
+    blocks[start].sectionStart = true;
   });
-  for (const ai of unmatched) blocks.push(toBlock(ai));
+  // 미매칭 문단(AE 메모 등)도 마지막 이슈 세트와 붙지 않게 새 섹션으로 구분.
+  unmatched.forEach((ai, i) => {
+    const b = toBlock(ai);
+    if (i === 0) b.sectionStart = true;
+    blocks.push(b);
+  });
 
   // 토스트는 금방 사라져 안내로 부적합 — 패널 상단 고정 안내줄 (설계 §5).
   const notices: string[] = [];

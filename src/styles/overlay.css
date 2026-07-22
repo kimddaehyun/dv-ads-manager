@@ -2838,8 +2838,8 @@ td.dvads-period-delta-down {
 /* 문구 우하단에 떠 있는 복사 아이콘 — 생성 전에는 hidden 속성으로 숨김. */
 .dvads-hr-copy {
   position: absolute;
-  right: 22px;
-  bottom: 12px;
+  right: 24px;
+  bottom: 14px;
   width: 32px;
   height: 32px;
   border: 1px solid #E1E4E8;
@@ -4969,22 +4969,30 @@ td.dvads-period-delta-down {
   color: #171717; background: transparent; padding: 0;
 }
 .dvads-brief-text:focus { outline: none; }
-/* AI 판단 문단 — 좌측 3px 주황 선. DESIGN.md Threshold Alert Cue(2026-05-22)와 동일 구조.
-   배경을 칠하지 않는 이유: DV 주황 사용 면적 ~3% 규칙. 세로 선은 면적이 사실상 0. */
-.dvads-brief-block-ai {
-  padding-left: 12px;
-}
-.dvads-brief-block-ai::before {
-  content: ""; position: absolute; left: 0; top: 0; bottom: 0;
-  width: 3px; background: #E6783B; border-radius: 2px;
-}
 .dvads-brief-img {
   max-width: 100%; display: block;
   border: 1px solid #eef0f3; border-radius: 8px;
 }
+/* 결과 패널 이슈 세트 구분선 — 같은 세트(문단+표)는 붙이고 세트 사이만 띄운다 */
+.dvads-brief-divider {
+  border-top: 1px solid #e2e5ea; margin: 24px 0 16px;
+}
+/* 복사한 블록 — 연한 파란 배경으로 '이미 보낸 내용' 표시(패널 닫을 때까지 유지) */
+.dvads-brief-block-copied,
+.dvads-brief-card-doc .dvads-brief-block.dvads-brief-block-copied,
+.dvads-brief-card-doc .dvads-brief-block.dvads-brief-block-copied:hover {
+  background: #EFF6FF;
+}
+/* 블록 복사 — 아이콘 버튼(라벨 없음, title 툴팁). 블록 오른쪽 아래에 뜬다. */
 .dvads-brief-copy {
   margin-top: 8px;
+  width: 28px; height: 28px; padding: 5px;
+  border: 1px solid #e2e5ea; border-radius: 8px;
+  background: #fff; color: #6b7280; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
 }
+.dvads-brief-copy svg { width: 16px; height: 16px; }
+.dvads-brief-copy:hover { background: #f4f5f7; color: #404040; }
 .dvads-brief-foot {
   display: flex; justify-content: flex-end; gap: 8px;
   padding: 16px 24px 20px;
@@ -5000,7 +5008,7 @@ td.dvads-period-delta-down {
 .dvads-brief-card-doc .dvads-brief-block:hover { background: #fafafa; }
 .dvads-brief-card-doc .dvads-brief-text { font-size: 15px; line-height: 1.8; }
 .dvads-brief-card-doc .dvads-brief-copy {
-  position: absolute; top: 8px; right: 8px; margin: 0;
+  position: absolute; bottom: 8px; right: 8px; margin: 0;
   opacity: 0; pointer-events: none; transition: opacity 0.12s;
   background: #fff;
 }
@@ -5123,14 +5131,14 @@ td.dvads-period-delta-down {
 /* 머리글 클릭 = 자식 이슈 전체 선택/해제. 하이라이트가 자식과 한 덩어리로 붙게 여백은 padding으로만. */
 .dvads-brief-pick-camp {
   font-size: 16px; font-weight: 700; color: #171717;
-  padding: 14px 2px 4px;
+  padding: 18px 2px 8px;
   display: flex; align-items: center;
   cursor: pointer; border-radius: 8px;
 }
-.dvads-brief-pick-camp:first-child { padding-top: 2px; }
+.dvads-brief-pick-camp:first-child { padding-top: 6px; }
 .dvads-brief-pick-grouphead {
   font-size: 14px; font-weight: 600; color: #525252;
-  padding: 8px 2px 2px 10px;
+  padding: 12px 2px 6px 10px;
   cursor: pointer; border-radius: 8px;
 }
 /* 머리글 호버 — 머리글 자신 + 자식 영역(그룹 소제목·이슈·펼친 표)이 함께 밝아진다. 선택 주황은 유지. */
@@ -5264,7 +5272,7 @@ td.dvads-period-delta-down {
 
 /* '맞춤' 기준 입력 카드 — 라벨 위, 입력칸 아래 2열. 단위는 입력칸 안쪽 오른쪽. */
 .dvads-brief-th-card {
-  margin-top: 10px; padding: 12px; border: 1px solid #ECEEF0; border-radius: 8px;
+  margin-top: 10px; padding: 16px 12px; border-radius: 8px;
   background: #FAFAFA;
 }
 .dvads-brief-th-grid {
@@ -5275,10 +5283,10 @@ td.dvads-period-delta-down {
   font: 500 12px/1.4 Pretendard, -apple-system, sans-serif; color: #6b7280;
 }
 .dvads-brief-th-box {
-  display: flex; align-items: center; gap: 4px; height: 32px; padding: 0 10px;
-  border: 1px solid #e2e5ea; border-radius: 8px; background: #fff;
+  display: flex; align-items: center; gap: 4px; height: 40px; padding: 0 10px;
+  border-radius: 8px; background: #fff;
 }
-.dvads-brief-th-box:focus-within { border-color: #E6783B; }
+.dvads-brief-th-box:focus-within { box-shadow: inset 0 0 0 1px #E6783B; }
 .dvads-brief-th-input {
   flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; text-align: right;
   font: 400 14px/1.4 Pretendard, -apple-system, sans-serif; color: #171717;
@@ -5288,11 +5296,17 @@ td.dvads-period-delta-down {
 .dvads-brief-th-input::-webkit-outer-spin-button,
 .dvads-brief-th-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .dvads-brief-th-unit { flex-shrink: 0; font-size: 12px; color: #9aa1ab; }
-.dvads-brief-th-foot { display: flex; justify-content: flex-end; margin-top: 12px; }
+/* 이슈 기준 서브 안내 — 기준을 바꾸면 화면이 다시 그려진다는 예고 */
+.dvads-brief-th-caption {
+  margin-top: 0;
+  font: 400 12px/1.4 Pretendard, -apple-system, sans-serif; color: #9aa1ab;
+}
+.dvads-brief-th-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
 /* F-Brief 내 말투 설정 다이얼로그 */
+/* 이슈 기준 서브 안내(.dvads-brief-th-caption)와 같은 크기·색으로 통일 */
 .dvads-brief-tone-hint {
-  font: 400 14px/1.6 Pretendard, -apple-system, sans-serif; color: #6b7280;
+  font: 400 12px/1.4 Pretendard, -apple-system, sans-serif; color: #9aa1ab;
   margin-bottom: 8px;
 }
 /* 말투 규칙 생성 화살표 — 두 입력칸 사이 중앙 */

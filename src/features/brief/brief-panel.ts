@@ -17,9 +17,15 @@ import { loadBriefTone, saveBriefTone } from "./brief-tone";
 import { showTooltip, hideTooltip } from "@/shared/tooltip";
 import { attachActionMenu, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
 
+/** 블록 복사 아이콘 — 라벨 대신 아이콘 + 툴팁(title)로만 안내. */
+const COPY_ICON_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+
 export interface BriefTextBlock {
   type: "text";
   text: string;
+  /** 이슈(요약/후보) 세트의 첫 블록 — 앞에 구분선을 그려 영역을 나눈다. */
+  sectionStart?: boolean;
   /** AI가 창작한 액션 문장이면 true — 좌측 주황 선. */
   isAiJudgment?: boolean;
   /** 검산 실패 — 우리가 안 준 숫자가 있다. 차단하지 않고 배지만(오탐 있음, 판단은 AE). */
@@ -28,6 +34,8 @@ export interface BriefTextBlock {
 export interface BriefTableBlock {
   type: "table";
   spec: BriefTableSpec;
+  /** 이슈(요약/후보) 세트의 첫 블록 — 앞에 구분선을 그려 영역을 나눈다. */
+  sectionStart?: boolean;
 }
 export type BriefBlock = BriefTextBlock | BriefTableBlock;
 
@@ -71,7 +79,11 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
   const head = document.createElement("div");
   head.className = "dvads-brief-head dvads-brief-head-row";
   const headTitle = document.createElement("span");
-  headTitle.textContent = `광고 성과 측정 - ${opts.advertiserName}`;
+  headTitle.append("광고 성과 측정 ");
+  const headName = document.createElement("span");
+  headName.className = "dvads-brief-head-name";
+  headName.textContent = opts.advertiserName;
+  headTitle.appendChild(headName);
   head.appendChild(headTitle);
   const closeX = document.createElement("button");
   closeX.type = "button";
@@ -91,13 +103,19 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
   const body = document.createElement("div");
   body.className = "dvads-brief-body";
 
+  let firstBlock = true;
   for (const block of opts.blocks) {
+    // 이슈 세트(문단+표) 사이 구분선 — 같은 세트는 붙이고 세트 간격만 벌린다(2026-07-22).
+    if (block.sectionStart && !firstBlock) {
+      const divider = document.createElement("div");
+      divider.className = "dvads-brief-divider";
+      body.appendChild(divider);
+    }
+    firstBlock = false;
     const wrap = document.createElement("div");
     wrap.className = "dvads-brief-block";
 
     if (block.type === "text") {
-      // 주황 선(::before)은 textarea에 안 먹어 wrap에 붙인다.
-      if (block.isAiJudgment) wrap.classList.add("dvads-brief-block-ai");
       const ta = document.createElement("textarea");
       ta.className = "dvads-brief-text";
       ta.value = block.text;
@@ -107,6 +125,14 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
         ta.style.height = `${ta.scrollHeight}px`;
       };
       ta.addEventListener("input", fit);
+      // 텍스트 위에서 휠이 안 굴러가는 버그 — 높이를 내용에 맞춰도 줄바꿈 재계산 등으로
+      // 내용이 1px이라도 넘치면 textarea가 휠을 삼킨다(이미지 위에서만 스크롤되던 증상).
+      // 휠을 패널 스크롤로 직접 넘긴다. ctrl+휠(확대/축소)은 건드리지 않는다.
+      ta.addEventListener("wheel", (e) => {
+        if (e.ctrlKey) return;
+        e.preventDefault();
+        body.scrollTop += e.deltaY;
+      }, { passive: false });
       textAreas.push(ta);
       wrap.appendChild(ta);
 
@@ -119,12 +145,15 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
 
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "dvads-btn dvads-brief-copy";
-      btn.textContent = "복사";
+      btn.className = "dvads-brief-copy";
+      btn.setAttribute("aria-label", "복사");
+      btn.title = "복사";
+      btn.innerHTML = COPY_ICON_SVG;
       btn.addEventListener("click", () => {
         // 편집된 현재 값을 복사한다. 주황 선은 CSS라 텍스트에 안 딸려간다.
         void navigator.clipboard.writeText(ta.value)
           .then(() => {
+            wrap.classList.add("dvads-brief-block-copied");
             showToast({ message: "문구를 복사했어요", variant: "success" });
             // 저장 시점 = 복사한 순간(설계 §7). 문구 전문은 전 텍스트 블록의 현재 값.
             opts.onCopyText?.(textAreas.map((t) => t.value).filter((v) => v.trim() !== "").join("\n\n"));
@@ -143,11 +172,16 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
 
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "dvads-btn dvads-brief-copy";
-      btn.textContent = "이미지 복사";
+      btn.className = "dvads-brief-copy";
+      btn.setAttribute("aria-label", "이미지 복사");
+      btn.title = "이미지 복사";
+      btn.innerHTML = COPY_ICON_SVG;
       btn.addEventListener("click", () => {
         void copyTablePng(block.spec)
-          .then(() => showToast({ message: "표 이미지를 복사했어요. 카카오톡에 붙여넣으세요", variant: "success" }))
+          .then(() => {
+            wrap.classList.add("dvads-brief-block-copied");
+            showToast({ message: "표 이미지를 복사했어요. 카카오톡에 붙여넣으세요", variant: "success" });
+          })
           .catch((e) => {
             console.warn("[dv-ads/brief] 표 이미지 복사 실패", e);
             showToast({ message: "표 이미지를 복사하지 못했어요", variant: "error" });
@@ -217,6 +251,8 @@ export function renderBriefPanel(opts: BriefPanelOpts): void {
 function shortList(raw: unknown, count: unknown): string {
   const items = String(raw ?? "").split(", ").filter((s) => s !== "");
   if (items.length === 0) return "";
+  // 규칙 엔진이 이미 "대표 외 n개"로 요약한 값은 그대로 — 또 붙이면 "외 8개 외 8개"가 된다.
+  if (items.length === 1 && /외 \d+개$/.test(items[0])) return items[0];
   const shown = items.slice(0, 2).join(", ");
   const rest = (typeof count === "number" ? count : items.length) - Math.min(items.length, 2);
   return rest > 0 ? `${shown} 외 ${rest}개` : shown;
@@ -1006,7 +1042,15 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       "핵심 - 굵직한 변화만 이슈로 잡아요\n" +
       "맞춤 - 기준값을 하나하나 직접 정해요",
     ));
+    // 화면이 통째로 다시 그려지는 게 버그처럼 보이지 않게 미리 알린다(2026-07-22 논의).
+    const caption = document.createElement("div");
+    caption.className = "dvads-brief-th-caption";
+    caption.textContent = "기준 변경 시 성과 측정이 새로고침됩니다";
+    optWrap.appendChild(caption);
+    // sensitivity = 화면에서 고른 칩, applied = 실제 반영된 기준 — 맞춤은 폼만 열고
+    // "적용"을 눌러야 반영되므로 둘이 다를 수 있다(취소 시 applied로 복귀).
     let sensitivity: BriefSensitivity = th.sensitivity;
+    let appliedSensitivity: BriefSensitivity = th.sensitivity;
 
     const chipRow = document.createElement("div");
     chipRow.className = "dvads-brief-preset-row";
@@ -1041,13 +1085,24 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       grid.appendChild(field);
       inputs.set(f.key, input);
     }
-    // 맞춤은 타이핑마다 목록을 다시 만들 수 없어(재계산) 적용 버튼으로 확정.
+    // 맞춤은 취소/적용 버튼으로 확정(2026-07-22 자동 적용 폐기 — 칩만 눌러도 화면이
+    // 새로고침되는 게 어색하다는 사용자 결정). 적용을 눌러야만 재계산·저장한다.
     const foot = document.createElement("div");
     foot.className = "dvads-brief-th-foot";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "dvads-btn";
+    cancelBtn.textContent = "취소";
+    cancelBtn.addEventListener("click", () => {
+      // 입력을 저장된 값으로 되돌리고, 마지막으로 반영된 기준 칩으로 복귀(재계산 없음).
+      for (const input of inputs.values()) input.value = "";
+      sensitivity = appliedSensitivity;
+      refreshThreshold();
+    });
     const applyBtn = document.createElement("button");
     applyBtn.type = "button";
     applyBtn.className = "dvads-btn dvads-btn-secondary";
-    applyBtn.textContent = "기준 적용";
+    applyBtn.textContent = "적용";
     applyBtn.addEventListener("click", () => {
       const custom: Partial<BriefThresholds> = {};
       for (const [key, input] of inputs) {
@@ -1058,9 +1113,10 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
         showToast({ message: "기준값을 입력해 주세요", variant: "error" });
         return;
       }
+      appliedSensitivity = "custom";
       th.onChange("custom", custom);
     });
-    foot.appendChild(applyBtn);
+    foot.append(cancelBtn, applyBtn);
     customWrap.appendChild(foot);
 
     const chips = (Object.keys(SENSITIVITY_LABEL) as BriefSensitivity[]).map((s) => {
@@ -1071,8 +1127,10 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
       chip.addEventListener("click", () => {
         sensitivity = s;
         refreshThreshold();
-        // 프리셋은 고르는 즉시 반영. 직접 설정만 값 입력 후 "기준 적용".
-        if (s !== "custom") {
+        // 프리셋은 고르는 즉시 반영. 맞춤은 폼만 열고 "적용"을 눌러야 반영된다.
+        // 이미 반영된 기준으로 되돌아오면(맞춤 폼만 열었다 복귀 등) 재계산 없음 — 새로고침 방지.
+        if (s !== "custom" && s !== appliedSensitivity) {
+          appliedSensitivity = s;
           th.onChange(s, {});
         }
       });

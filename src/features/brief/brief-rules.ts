@@ -41,6 +41,8 @@ export function roasPct(m: ReportMetrics): number {
 
 /** 비용 임계 — 보고 로그 5건 중 4건이 "1만원 이상" 문구를 쓴다. */
 export const COST_FLOOR = 10_000;
+/** 상향 여지(highRoasSegment) 판정 배수 — 목표를 이만큼 상회해야 "성과 좋음"으로 제안한다. */
+export const HIGH_ROAS_RATIO = 1.5;
 
 export type BriefKind =
   | "pastActionFollowUp"   // 지난 보고 조치의 이번 성과 추적 (2단계 §7)
@@ -337,10 +339,11 @@ function segmentTable(
   problemLabels?: ReadonlySet<string>,
   boldColumns: string[] = ["총비용", "ROAS"],
   goodLabels?: ReadonlySet<string>,
+  withCtr = false, // 클릭률 판정 표는 판정 지표인 클릭률 열을 함께 싣는다(2026-07-22)
 ): BriefTableSpec {
   return {
     title,
-    columns: [dim, "노출", "클릭", "총비용", "구매완료", "매출액", "ROAS"],
+    columns: [dim, "노출", "클릭", ...(withCtr ? ["클릭률"] : []), "총비용", "구매완료", "매출액", "ROAS"],
     boldColumns,
     rows: segments.map((s) => ({
       problem: problemLabels?.has(s.label) || undefined,
@@ -349,6 +352,7 @@ function segmentTable(
         s.label,
         s.metrics.impressions.toLocaleString(),
         s.metrics.clicks.toLocaleString(),
+        ...(withCtr ? [`${ctrPct(s.metrics).toFixed(2)}%`] : []),
         `${s.metrics.cost.toLocaleString()}원`,
         String(s.metrics.purchaseConv),
         `${s.metrics.revenue.toLocaleString()}원`,
@@ -389,6 +393,7 @@ function segmentCandidates(
     기준: string,
     bold: string[],
     good: boolean,
+    withCtr = false,
   ): BriefCandidate => ({
     kind: kindOf,
     scope,
@@ -404,6 +409,7 @@ function segmentCandidates(
       good ? undefined : new Set(flagged.map((s) => s.label)),
       bold,
       good ? new Set(flagged.map((s) => s.label)) : undefined,
+      withCtr,
     ),
     targets: flagged.map((s) => toTarget(`${gName} > ${s.label}`, s.metrics)),
     selected: false,
@@ -426,10 +432,12 @@ function segmentCandidates(
         roasBand(roasPct(s.metrics), targetRoas) === "none")
       .sort(byCostDesc)
     : [];
+  // 상향 여지는 목표를 **크게**(1.5배 이상) 상회할 때만 — 목표 300%에 313%를 "성과 좋음"으로
+  // 올리자고 하면 말이 안 된다(2026-07-22 사용자 지적). 표 색칠(green)은 기존 band 그대로.
   const good = targetRoas != null && targetRoas > 0
     ? eligible
       .filter((s) => s.metrics.cost >= costFloor &&
-        roasBand(roasPct(s.metrics), targetRoas) === "green")
+        roasPct(s.metrics) >= targetRoas * HIGH_ROAS_RATIO)
       .sort(byCostDesc)
     : [];
   const lowCtr = eligible
@@ -442,24 +450,35 @@ function segmentCandidates(
   const badActive = active.filter((s) => badLabels.has(s.label)).length;
   const hasHealthy = badActive * 2 <= active.length;
 
-  // 전환 0 — 목표 없이도 판정.
-  if (zero.length > 0 && hasHealthy) {
+  // ── 가중치 방향 단일화(2026-07-22 사용자 요구) — 같은 차원에서 "좋은 구간 상향"과
+  // "나쁜 구간 하향"이 같은 표로 두 번 나오면 중복 재료다. 좋은 구간이 나쁜 구간보다
+  // **적을 때만** 상향(소수의 잘되는 쪽에 힘을 모은다), 같거나 많으면 나쁜 쪽 하향만
+  // 만든다(잘되는 다수는 두고 처지는 소수를 정리).
+  const downCount = zero.length + below.length;
+  const emitUp = good.length > 0 && (downCount === 0 || good.length < downCount);
+  const emitDown = !emitUp;
+
+  // 전환 0 — 목표 없이도 판정. 단, 전환이 실제로 나는 대조 구간이 있어야 한다 —
+  // 전 구간 전환 0이면(문턱 미만 구간 포함) 그 차원 조정으로 풀 문제가 아니라
+  // 키워드·그룹 규칙의 몫이다(2026-07-22 사용자 지적: PC·모바일 둘 다 구매 0인데 기기 이슈).
+  const hasConverting = active.some((s) => s.metrics.purchaseConv > 0);
+  if (zero.length > 0 && emitDown && hasHealthy && hasConverting) {
     out.push(mk("zeroConvSegment", zero,
       `${dim} 구간이 광고비 ${costFloor.toLocaleString()}원 이상 소진, 구매완료 전환 0건 - 제외 또는 가중치 하향 검토`,
       ["총비용", "구매완료"], false));
   }
 
   // 목표 미달 — 전환 0 구간은 zeroConvSegment가 담당하므로 전환 있는 것만.
-  if (below.length > 0 && hasHealthy) {
+  if (below.length > 0 && emitDown && hasHealthy) {
     out.push(mk(kind, below,
       `${dim} ROAS가 목표 ${targetRoas}%에 크게 미달 - 해당 구간 가중치 하향 검토`,
       ["총비용", "ROAS"], false));
   }
 
   // 목표 이상 — 가중치 상향 여지(기회). 전 구간이 다 좋으면 옮겨올 데가 없어 이것도 생략.
-  if (good.length > 0 && good.length < active.length) {
+  if (emitUp && good.length < active.length) {
     out.push(mk("highRoasSegment", good,
-      `${dim} ROAS가 목표 ${targetRoas}% 이상 - 가중치 상향 검토`,
+      `${dim} ROAS가 목표 ${targetRoas}%를 크게 상회(${Math.round((targetRoas ?? 0) * HIGH_ROAS_RATIO)}% 이상) - 가중치 상향 검토`,
       ["총비용", "ROAS"], true));
   }
 
@@ -467,7 +486,7 @@ function segmentCandidates(
   if (lowCtr.length > 0 && hasHealthy) {
     out.push(mk("lowCtrSegment", lowCtr,
       `${dim} 구간 노출 ${th.adImpFloor.toLocaleString()}회 이상인데 클릭률 ${th.lowCtrPct}% 미만`,
-      ["노출", "클릭"], false));
+      ["노출", "클릭률"], false, true));
   }
 
   return out;
@@ -531,19 +550,26 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
     if (rows.length < 2) continue;
 
     // 표 문맥 — 걸린 키워드만 실으면 비교군이 없다. 그룹 내 다른 키워드를 비용순으로 채워
-    // 최대 5행을 만들고, 걸린 행만 강조한다. 문맥 키워드는 **비용 문턱(캠페인 최소 금액)을
-    // 넘는 것만** — 2천만원 키워드 옆에 8천원짜리를 놓으면 비교가 안 된다(2026-07-21).
-    // 문턱을 넘는 문맥이 없으면(한 키워드가 그룹을 지배) 걸린 키워드만 싣는다.
+    // **최소 10행**을 목표로 하고, 걸린 행만 강조한다(2026-07-21 5행 → 2026-07-22 사용자 요구로 확대).
+    // 문턱(캠페인 최소 금액)을 넘는 문맥을 먼저, 모자라면 문턱 미만 키워드도 비용순으로 채운다 —
+    // 1~2행짜리 표는 비교가 성립하지 않는다. 그룹 키워드가 10개 미만이면 있는 만큼만.
     const withContext = (flagged: BriefKeywordRow[]): Array<{ row: BriefKeywordRow; hit: boolean }> => {
       const hit = new Set(flagged.map((r) => r.keyword));
-      const filler = rows
-        .filter((r) => !hit.has(r.keyword) && r.metrics.cost >= gFloor)
-        .sort(byCostDesc);
-      const need = Math.max(0, 5 - flagged.length);
+      const rest = rows.filter((r) => !hit.has(r.keyword)).sort(byCostDesc);
+      const filler = [
+        ...rest.filter((r) => r.metrics.cost >= gFloor),
+        ...rest.filter((r) => r.metrics.cost < gFloor),
+      ];
+      const need = Math.max(0, 10 - flagged.length);
       return [...flagged, ...filler.slice(0, need)]
         .sort(byCostDesc)
         .map((row) => ({ row, hit: hit.has(row.keyword) }));
     };
+
+    // facts용 키워드 요약 — 전체 나열은 문구가 길어져 최다 소진 1개 + "외 n개"로 줄인다
+    // (2026-07-22 사용자 요구). 표와 targets에는 전체가 그대로 실린다. 목록은 비용순 전제.
+    const summarizeKeywords = (flagged: BriefKeywordRow[]): string =>
+      flagged.length === 1 ? flagged[0].keyword : `${flagged[0].keyword} 외 ${flagged.length - 1}개`;
 
     // ① 비용 임계 이상인데 전환 0인 키워드
     const zeroConv = rows.filter((r) => r.metrics.cost >= gFloor && r.metrics.purchaseConv === 0)
@@ -555,7 +581,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
         facts: {
           ...scoped,
           기준: `광고비 ${gFloor.toLocaleString()}원 이상 소진, 구매완료 전환 0건`,
-          keywords: zeroConv.map((r) => r.keyword).join(", "),
+          keywords: summarizeKeywords(zeroConv),
           count: zeroConv.length,
           비용합계: zeroConv.reduce((s, r) => s + r.metrics.cost, 0),
         },
@@ -586,7 +612,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           facts: {
             ...scoped,
             기준: `목표 수익률 ${targetRoas}% 미달`,
-            keywords: below.map((r) => r.keyword).join(", "),
+            keywords: summarizeKeywords(below),
             count: below.length,
             비용합계: below.reduce((s, r) => s + r.metrics.cost, 0),
           },
@@ -617,7 +643,7 @@ export function extractCandidates(input: BriefRuleInput): BriefCandidate[] {
           facts: {
             ...scoped,
             기준: `목표 수익률 ${targetRoas}% 달성, 추정 순위 ${th.lowRankFloor}위 이하`,
-            keywords: lowRank.map((r) => r.keyword).join(", "),
+            keywords: summarizeKeywords(lowRank),
             count: lowRank.length,
             평균순위: Math.round(lowRank.reduce((s, r) => s + (r.rank ?? 0), 0) / lowRank.length),
           },

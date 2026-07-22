@@ -288,7 +288,8 @@ export function buildSummarySpec(data: BriefData): BriefTableSpec {
     ],
   }));
   return {
-    title: `${data.advertiserName} - ${rangeText(data.range)}`,
+    // 계정명은 빼고 날짜만(2026-07-22 사용자 요구) — 광고주에게 보내는 표라 계정명이 군더더기다.
+    title: rangeText(data.range),
     columns: ["구분", "노출", "클릭", "총비용", "구매완료", "매출액", "ROAS"],
     rows,
   };
