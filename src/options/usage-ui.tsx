@@ -13,7 +13,9 @@ import { rangeForPreset, type DateRange } from "@/features/report/report-period"
 // 달력(dvads-rdp) 스타일은 콘텐츠 스크립트 전용 CSS에 있어 옵션 페이지에선 직접 로드.
 import "@/styles/overlay.css";
 
-const AI_EVENTS = ["ai_brief", "ai_report_msg", "ai_tone"];
+// AI 호출 분류: 리포트 문구(ai_report_msg) vs 광고 성과 측정(F-Brief: ai_brief, ai_tone)
+const AI_REPORT_EVENTS = ["ai_report_msg"];
+const AI_BRIEF_EVENTS = ["ai_brief", "ai_tone"];
 
 // Gemini 3.1 Flash-Lite 요금 (USD / 100만 토큰, 2026-07 기준). 모델 교체 시 함께 갱신.
 const PRICE_IN_PER_M = 0.25;
@@ -42,9 +44,12 @@ const FEATURE_COLUMNS: Array<{ event: string; label: string }> = [
 interface UsageRow {
   userId: string;
   name: string;
-  aiCalls: number;
-  tokensIn: number;
-  tokensOut: number;
+  reportCalls: number;
+  reportTokensIn: number;
+  reportTokensOut: number;
+  briefCalls: number;
+  briefTokensIn: number;
+  briefTokensOut: number;
   features: Record<string, number>;
   alertBizmoney: number;
   alertBrand: number;
@@ -89,7 +94,9 @@ export function UsageCard() {
           let r = byUser.get(userId);
           if (!r) {
             r = {
-              userId, name: userId, aiCalls: 0, tokensIn: 0, tokensOut: 0,
+              userId, name: userId,
+              reportCalls: 0, reportTokensIn: 0, reportTokensOut: 0,
+              briefCalls: 0, briefTokensIn: 0, briefTokensOut: 0,
               features: {}, alertBizmoney: 0, alertBrand: 0, alertChangeWatch: 0,
             };
             byUser.set(userId, r);
@@ -98,10 +105,14 @@ export function UsageCard() {
         };
         for (const u of (usageRes.data ?? []) as Array<{ user_id: string; event: string; total_count: number; total_tokens_in: number; total_tokens_out: number }>) {
           const r = ensure(u.user_id);
-          if (AI_EVENTS.includes(u.event)) {
-            r.aiCalls += u.total_count;
-            r.tokensIn += u.total_tokens_in;
-            r.tokensOut += u.total_tokens_out;
+          if (AI_REPORT_EVENTS.includes(u.event)) {
+            r.reportCalls += u.total_count;
+            r.reportTokensIn += u.total_tokens_in;
+            r.reportTokensOut += u.total_tokens_out;
+          } else if (AI_BRIEF_EVENTS.includes(u.event)) {
+            r.briefCalls += u.total_count;
+            r.briefTokensIn += u.total_tokens_in;
+            r.briefTokensOut += u.total_tokens_out;
           } else {
             r.features[u.event] = (r.features[u.event] ?? 0) + u.total_count;
           }
@@ -165,30 +176,36 @@ export function UsageCard() {
         <p className="text-sm text-gray-500">기록된 사용량이 없어요.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm whitespace-nowrap">
+          <table className="w-full text-xs whitespace-nowrap">
             <thead>
-              <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
+              <tr className="text-left text-gray-500 border-b border-gray-200">
                 <th className="py-2 pr-4 font-medium">사용자</th>
-                <th className="py-2 px-3 font-medium text-right">AI 호출</th>
+                <th className="py-2 px-3 font-medium text-right">AI 호출(리포트)</th>
+                <th className="py-2 px-3 font-medium text-right">AI 호출(성과 측정)</th>
                 <th className="py-2 px-3 font-medium text-right">토큰(입력)</th>
                 <th className="py-2 px-3 font-medium text-right">토큰(출력)</th>
-                <th className="py-2 px-3 font-medium text-right">비용</th>
+                <th className="py-2 px-3 font-medium text-right">비용(리포트)</th>
+                <th className="py-2 px-3 font-medium text-right">비용(성과 측정)</th>
+                <th className="py-2 px-3 font-medium text-right">비용(합계)</th>
                 {FEATURE_COLUMNS.map((c) => (
                   <th key={c.event} className="py-2 px-3 font-medium text-right">{c.label}</th>
                 ))}
-                <th className="py-2 px-3 font-medium text-right">비즈머니알림 계정</th>
-                <th className="py-2 px-3 font-medium text-right">브랜드알림 계정</th>
-                <th className="py-2 px-3 font-medium text-right">변경이력알림 계정</th>
+                <th className="py-2 px-3 font-medium text-right">비즈머니 알림</th>
+                <th className="py-2 px-3 font-medium text-right">브랜드검색 알림</th>
+                <th className="py-2 px-3 font-medium text-right">변경 이력 알림</th>
               </tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.userId} className="border-b border-gray-100 last:border-0">
                   <td className="py-2 pr-4 text-gray-900">{r.name}</td>
-                  <td className="py-2 px-3 text-right">{fmtNum(r.aiCalls)}</td>
-                  <td className="py-2 px-3 text-right">{fmtNum(r.tokensIn)}</td>
-                  <td className="py-2 px-3 text-right">{fmtNum(r.tokensOut)}</td>
-                  <td className="py-2 px-3 text-right">{fmtKrw(estimateCostKrw(r.tokensIn, r.tokensOut))}</td>
+                  <td className="py-2 px-3 text-right">{fmtNum(r.reportCalls)}</td>
+                  <td className="py-2 px-3 text-right">{fmtNum(r.briefCalls)}</td>
+                  <td className="py-2 px-3 text-right">{fmtNum(r.reportTokensIn + r.briefTokensIn)}</td>
+                  <td className="py-2 px-3 text-right">{fmtNum(r.reportTokensOut + r.briefTokensOut)}</td>
+                  <td className="py-2 px-3 text-right">{fmtKrw(estimateCostKrw(r.reportTokensIn, r.reportTokensOut))}</td>
+                  <td className="py-2 px-3 text-right">{fmtKrw(estimateCostKrw(r.briefTokensIn, r.briefTokensOut))}</td>
+                  <td className="py-2 px-3 text-right">{fmtKrw(estimateCostKrw(r.reportTokensIn + r.briefTokensIn, r.reportTokensOut + r.briefTokensOut))}</td>
                   {FEATURE_COLUMNS.map((c) => (
                     <td key={c.event} className="py-2 px-3 text-right">{fmtNum(r.features[c.event] ?? 0)}</td>
                   ))}
