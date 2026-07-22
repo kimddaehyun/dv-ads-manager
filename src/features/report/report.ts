@@ -135,9 +135,11 @@ async function runSingle(target: ReportTarget, range: DateRange, author: string,
         showReportMessageDialog(target.name, message);
       } catch (e) {
         // 엑셀은 이미 내려받았다 — 문구 실패만 안내하고 성공 흐름으로 마무리.
+        // 에러 토스트만 띄우면 전체가 실패한 걸로 오인한다 — 내려받음 안내를 먼저 (runBatch와 동일 패턴).
         console.warn("[dv-ads/report] 안내 문구 생성 실패", e);
         if (stale()) return;
         hideProgress();
+        showToast({ message: "리포트를 내려받았어요", variant: "success", keyword: filename });
         showToast({ message: e instanceof Error ? e.message : "리포트 문구를 만들지 못했어요", variant: "error" });
       }
       return;
@@ -188,6 +190,16 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
     // report-gfa-detail의 전역 게이트(기본 1초, 403 시 7초 복귀)가 간격을 관리한다.
     const REPORT_CONCURRENCY = 2;
     let next = 0;
+    // 동명 계정이 있으면 zip 키가 같아 조용히 덮어써 파일이 사라진다 — 겹칠 때만 계정번호로 구분.
+    const nameCount = new Map<string, number>();
+    for (const t of targets) {
+      const k = safeFile(t.name);
+      nameCount.set(k, (nameCount.get(k) ?? 0) + 1);
+    }
+    const fileBase = (t: ReportTarget) => {
+      const k = safeFile(t.name);
+      return (nameCount.get(k) ?? 1) > 1 ? `${k}_${t.adAccountNo}` : k;
+    };
     showProgress(`리포트를 만드는 중... (0/${targets.length})`, cancelRun);
     const worker = async () => {
       // 취소되면 남은 광고주는 시작도 안 한다(진행 중인 것만 흘려보냄).
@@ -200,17 +212,17 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
               ? collectPrevKeywordMetrics(t.masterCustomerId, range)
               : null;
             const data = await collectReportData(t, range, meta);
-            files[`${safeFile(t.name)}_${range.since}~${range.until}.xlsx`] = await buildReportBytesFromData(data);
+            files[`${fileBase(t)}_${range.since}~${range.until}.xlsx`] = await buildReportBytesFromData(data);
             try {
               const message = await composeReportMessage(buildSummaryPayload(t.name, data, range, await prevKwP));
-              files[`${safeFile(t.name)}_리포트문구.txt`] = strToU8(message);
+              files[`${fileBase(t)}_리포트문구.txt`] = strToU8(message);
               messages.push({ name: t.name, text: message });
             } catch (e) {
               console.warn(`[dv-ads/report] ${t.name} 안내 문구 실패`, e);
               msgFailed++;
             }
           } else {
-            files[`${safeFile(t.name)}_${range.since}~${range.until}.xlsx`] = await buildReportBytes(t, range, meta);
+            files[`${fileBase(t)}_${range.since}~${range.until}.xlsx`] = await buildReportBytes(t, range, meta);
           }
         } catch (e) {
           console.warn(`[dv-ads/report] ${t.name} 리포트 실패`, e);

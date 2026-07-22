@@ -273,7 +273,8 @@ Deno.serve(async (req) => {
         body: JSON.stringify({
           contents: [{ role: "user", parts: [{ text }] }],
           // 문구가 매번 비슷하다는 피드백(2026-07-22)으로 0.4 → 0.7 상향 - 표현 변주용.
-          generationConfig: { temperature: 0.7, maxOutputTokens: 1500 },
+          // 토큰 한도는 blocks 모드의 잘림 사고(2026-07-21)와 같은 계열 위험 방지로 여유 있게.
+          generationConfig: { temperature: 0.7, maxOutputTokens: 4096 },
         }),
       });
       if (!res.ok) {
@@ -282,6 +283,9 @@ Deno.serve(async (req) => {
       }
       const data = await res.json();
       await recordAiUsage("ai_report_msg", data.usageMetadata); // 고쳐쓰기 포함 Gemini 호출당 1회
+      const finishReason = data.candidates?.[0]?.finishReason;
+      // 잘린 문구가 조용히 나가면 원인 추적이 안 된다 — enum만 로깅(본문엔 광고주 데이터).
+      if (finishReason && finishReason !== "STOP") console.error("gemini finish", finishReason);
       return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
     let message = await callGemini(summaryPrompt);
@@ -292,7 +296,7 @@ Deno.serve(async (req) => {
     }
     // 금지 표현 검출 시 1회 고쳐쓰기 — 소형 모델이 목록 중간 규칙을 흘려버리는 일이 잦아
     // 프롬프트만으론 안 막힌다. 고쳐쓰기 실패(null)면 원문 유지(문구 자체는 유효하므로).
-    const BANNED = /뒷받침|견인|도모|제고|스케일업|레버리지|기여했|탄탄하|탄탄히|탄탄해|견고히|견고하|효자 노릇|날개를 달|보탬|긍정적인 변화|큰 역할을|이끌었|흐름을 보여|만들어내며|보여주고 있습니다|하는 모습입니다/;
+    const BANNED = /뒷받침|견인|도모|제고|스케일업|레버리지|기여했|탄탄하|탄탄히|탄탄해|견고히|견고하|효자 노릇|날개를 달|보탬|긍정적인 변화|큰 역할을|이끌었|흐름을 보여|만들어내며|보여주고 있습니다|하는 모습입니다|끌어올|효율 극대화|유의미한 전환/;
     if (BANNED.test(message)) {
       const rewritten = await callGemini([
         "아래 문구에서 '뒷받침, 견인, 도모, 제고, 스케일업, 레버리지, 기여했습니다, 탄탄하게, 견고히 다졌습니다, 성과를 이끌었습니다, 흐름을 보여주고 있습니다' 같은 비유적이거나 묘사적인 표현만 직설적인 서술(발생했습니다, 개선되었습니다, 저조합니다 등)로 바꿔라.",
