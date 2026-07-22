@@ -567,7 +567,7 @@ const STATUS_FILTER_OPTIONS: {
   { value: "ok", label: "이상 없음" },
   { value: "warn", label: "확인 필요" },
   { value: "budget", label: "예산 도달" },
-  { value: "external", label: "수정 이력" },
+  { value: "external", label: "변경 이력" },
   { value: "stopped", label: "광고 중단" },
 ];
 
@@ -4296,7 +4296,7 @@ function syncIssueChip(row: HTMLTableRowElement) {
     badge.classList.add("is-budget");
     row.dataset.statusKind = "budget";
   } else if (external > 0) {
-    badge.textContent = "수정 이력";
+    badge.textContent = "변경 이력";
     badge.classList.add("is-external");
     row.dataset.statusKind = "external";
   } else if (naver > 0) {
@@ -4388,7 +4388,7 @@ function formatEventTime(ts: number): string {
 const CHANGE_PANEL_TABS = [
   { id: "all", label: "전체" },
   { id: "budget", label: "예산" },
-  { id: "external", label: "수정" },
+  { id: "external", label: "변경" },
   { id: "unread", label: "읽지 않음" },
 ] as const;
 type ChangePanelTab = (typeof CHANGE_PANEL_TABS)[number]["id"];
