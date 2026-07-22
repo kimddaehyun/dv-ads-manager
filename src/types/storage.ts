@@ -329,4 +329,10 @@ export interface ChangeWatchState {
   fetched_at: string;
   /** 점검 실패 사유 (사용자 친화 한글 메시지) */
   error?: string;
+  /**
+   * 서버에 마지막으로 올린 scanned_until (epoch ms). 로컬 전용 — 서버 컬럼 아님.
+   * 새 알림 없는 점검은 서버 쓰기를 생략하되, 이 값이 1시간 이상 뒤처지면 체크포인트를
+   * 올려 로컬 저장소 유실(재설치) 시 놓치는 구간을 최대 1시간으로 묶는다.
+   */
+  server_synced_until?: number;
 }

@@ -454,12 +454,18 @@ const CHANGE_WATCH_IDENTITY_KEY = "change_watch_identity";
 const CHANGE_WATCH_PREFIX = "change_watch_state:";
 
 /** 점검 주기. 이보다 최근에 본 계정은 재조회 skip — 페이지 상주 중 반복 호출 방지. */
-export const CHANGE_WATCH_TTL_MS = 30 * 60 * 1000; // 30분
+export const CHANGE_WATCH_TTL_MS = 10 * 60 * 1000; // 10분
 /**
  * 알림 보관 기간. 확인(모두 읽음) 여부와 무관하게 계정별로 이 기간만큼 이력을 남긴다 —
  * 확인했다고 지워버리면 "그때 무슨 일이 있었는지" 되짚을 수 없다. 지나면 자동 정리.
  */
 export const CHANGE_WATCH_KEEP_MS = 60 * 24 * 60 * 60 * 1000; // 60일
+/**
+ * 서버 체크포인트 최대 지연. 새 알림 없는 점검은 서버 쓰기를 생략하지만, 마지막 동기화가
+ * 이보다 뒤처지면 체크포인트만이라도 올린다 — 로컬 유실(확장 재설치) 시 서버에서 이어받을 때
+ * 놓치는 구간을 이 시간 이내로 묶는다. 쓰기량은 계정당 시간당 최대 1회.
+ */
+export const CHANGE_WATCH_SERVER_SYNC_MAX_LAG_MS = 60 * 60 * 1000; // 1시간
 
 export async function loadChangeWatchIdentity(): Promise<string[]> {
   const r = await chrome.storage.local.get(CHANGE_WATCH_IDENTITY_KEY);
@@ -500,14 +506,24 @@ export async function loadChangeWatchStateMany(
 /**
  * 서버(change_watch_state)가 원본, 로컬은 캐시. 다만 이건 사용자 입력이 아니라 수집 결과라
  * 서버 쓰기가 실패해도 로컬 저장까지 막지는 않는다 — 점검이 통째로 헛돌면 알림 자체가 끊긴다.
- * 서버에 못 올린 분은 다음 점검(30분)이나 [모두 읽음] 때 같은 행을 다시 upsert하며 따라잡는다.
+ * 서버에 못 올린 분은 다음 점검이나 [모두 읽음] 때 같은 행을 다시 upsert하며 따라잡는다.
+ *
+ * localOnly: 새 알림 없이 scanned_until만 전진한 점검은 서버에 쓸 게 없다 — 주기(10분)마다
+ * 계정 수만큼 upsert가 나가는 걸 막기 위해 로컬 캐시만 갱신한다. 서버 푸시가 성공한
+ * 경우에만 server_synced_until을 전진시켜, 실패를 동기화 완료로 착각하지 않는다.
  */
-export async function saveChangeWatchState(state: ChangeWatchState): Promise<void> {
+export async function saveChangeWatchState(
+  state: ChangeWatchState,
+  opts?: { localOnly?: boolean },
+): Promise<void> {
   const key = CHANGE_WATCH_PREFIX + String(state.adAccountNo);
-  try {
-    await pushChangeWatchState(state);
-  } catch (e) {
-    console.warn("[dv-ads/change-watch] 서버 저장 실패 - 로컬에만 반영", state.adAccountNo, e);
+  if (!opts?.localOnly) {
+    try {
+      await pushChangeWatchState(state);
+      state = { ...state, server_synced_until: state.scanned_until };
+    } catch (e) {
+      console.warn("[dv-ads/change-watch] 서버 저장 실패 - 로컬에만 반영", state.adAccountNo, e);
+    }
   }
   await chrome.storage.local.set({ [key]: state });
 }
@@ -669,7 +685,13 @@ async function mergeChangeWatchFromServer(): Promise<void> {
       read_external_up_to: Math.max(remote.read_external_up_to, mine?.read_external_up_to ?? 0),
       // 읽음은 합집합 — 어느 기기에서 읽었든 읽은 것으로 본다.
       read_ids: [...new Set([...(remote.read_ids ?? []), ...(mine?.read_ids ?? [])])],
-      fetched_at: remote.fetched_at,
+      // fetched_at은 더 나중 것 — 서버의 옛 값이 이기면 방금 점검한 계정이 stale 판정되어
+      // 다음 주기에 즉시 재조회된다.
+      fetched_at:
+        mine && mine.fetched_at > remote.fetched_at ? mine.fetched_at : remote.fetched_at,
+      // 서버 행이 존재한다 = 그 시점까지는 동기화돼 있었다. 로컬 기록이 더 최신이면 그쪽 우선.
+      // 없이 두면 0으로 떨어져 조용한 점검마다 서버 쓰기가 재개된다(스로틀 무력화).
+      server_synced_until: Math.max(remote.scanned_until, mine?.server_synced_until ?? 0),
     };
   }
   await chrome.storage.local.set(patch);

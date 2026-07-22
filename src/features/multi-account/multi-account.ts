@@ -58,6 +58,7 @@ import {
   naverIssueReadKey,
   CHANGE_WATCH_TTL_MS,
   CHANGE_WATCH_KEEP_MS,
+  CHANGE_WATCH_SERVER_SYNC_MAX_LAG_MS,
   type PlatformFilter,
 } from "@/features/multi-account/multi-account-storage";
 import {
@@ -926,7 +927,7 @@ async function renderListView(wrap: HTMLElement) {
   // refresh. force:false라 fresh 행은 자동 skip. 결과 도착하는 대로 paintRow가 행 업데이트.
   // popover 닫혀도 fetch는 끝까지 진행되어 다음 진입 시 fresh 캐시 보장.
   void backgroundRefreshStale(entries, snapshots);
-  // 변경이력도 같은 요령으로 — TTL(30분) 지난 계정만 조용히 재점검. 스냅샷과 주기가 달라
+  // 변경이력도 같은 요령으로 — TTL(10분) 지난 계정만 조용히 재점검. 스냅샷과 주기가 달라
   // 별도 호출이고, 자체 in-flight 가드가 있어 주기 타이머와 겹쳐도 안전.
   void scanChangeWatchAll(entries, false);
 }
@@ -3405,7 +3406,12 @@ async function refreshChangeWatchRow(
     // id 기준 병합 — 실패 후 같은 구간을 다시 훑어도 알림이 두 번 쌓이지 않는다.
     const byId = new Map<string, ChangeWatchState["events"][number]>();
     for (const e of prev?.events ?? []) if (keep(e)) byId.set(e.id, e);
-    for (const e of classifyHistory(rows, actors)) if (keep(e)) byId.set(e.id, e);
+    let hasNew = false;
+    for (const e of classifyHistory(rows, actors)) {
+      if (!keep(e)) continue;
+      if (!byId.has(e.id)) hasNew = true;
+      byId.set(e.id, e);
+    }
     // 보관 기간이 지나 목록에서 빠진 알림의 읽음 키는 같이 버린다(무한정 쌓이지 않게).
     // `naver:` 키는 이벤트가 아니라 알림 피드 항목이라 그대로 둔다.
     const readIds = (prev?.read_ids ?? []).filter(
@@ -3419,12 +3425,18 @@ async function refreshChangeWatchRow(
       read_external_up_to: readExternal,
       read_ids: readIds,
       fetched_at: new Date(now).toISOString(),
+      server_synced_until: prev?.server_synced_until,
     };
-    await saveChangeWatchState(next);
+    // 새 알림이 없으면 scanned_until만 전진한 것 — 서버 쓰기는 생략(로컬 캐시만).
+    // 단 서버 체크포인트가 1시간 이상 뒤처지면 올린다 — 로컬 유실 시 공백을 1시간 이내로.
+    const synced = prev?.server_synced_until ?? 0;
+    const localOnly = !hasNew && now - synced < CHANGE_WATCH_SERVER_SYNC_MAX_LAG_MS;
+    await saveChangeWatchState(next, { localOnly });
     paintChangeWatchRow(entry.adAccountNo, next);
   } catch (e) {
     console.warn("[dv-ads/change-watch] 점검 실패", entry.adAccountNo, e);
-    // fetched_at은 갱신해 실패한 endpoint를 30분간 다시 두드리지 않게 한다.
+    // fetched_at은 갱신해 실패한 endpoint를 다음 주기까지 다시 두드리지 않게 한다.
+    // 알림 변화가 없으므로 서버 쓰기는 생략.
     await saveChangeWatchState({
       adAccountNo: entry.adAccountNo,
       events: prev?.events ?? [],
@@ -3434,7 +3446,8 @@ async function refreshChangeWatchRow(
       read_ids: prev?.read_ids ?? [],
       fetched_at: new Date(now).toISOString(),
       error: friendlyMessage(e),
-    });
+      server_synced_until: prev?.server_synced_until,
+    }, { localOnly: true });
   }
 }
 
@@ -3442,7 +3455,7 @@ async function refreshChangeWatchRow(
  * 여러 계정 점검 — 새로고침과 같은 4-worker 풀.
  *
  * 주기/진입 점검(force:false)은 이미 도는 중이면 그냥 건너뛴다. 반면 강제 점검(force:true,
- * 알림을 켜거나 제외 변경자를 바꾼 직후)은 반드시 돌아야 한다 — 그냥 skip하면 방금 비운 상태가 다음 주기(30분)
+ * 알림을 켜거나 제외 변경자를 바꾼 직후)은 반드시 돌아야 한다 — 그냥 skip하면 방금 비운 상태가 다음 주기(10분)
  * 까지 빈 채로 남아 알림이 사라진 것처럼 보인다. 그래서 앞 점검이 끝나길 기다렸다가 다시 돈다.
  */
 async function scanChangeWatchAll(
