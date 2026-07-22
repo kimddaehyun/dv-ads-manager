@@ -27,6 +27,7 @@ import {
 import { showToast } from "@/shared/toast";
 import { trackUsage } from "@/shared/usage";
 import { fetchUrlAsFile } from "@/features/asset-bulk/image-file";
+import { isStale } from "@/shared/takeover";
 
 const MENU_ITEM_SELECTOR = "li.ad-cms-dropdown-menu-item";
 const MENU_ITEM_LABEL_SELECTOR = "span.ad-cms-dropdown-menu-title-content";
@@ -38,8 +39,11 @@ const BULK_LABEL = "일괄 등록";
  * F-AssetBulk 초기화. content/index.ts에서 한 번 호출. SPA 라우팅·드롭다운 재mount에도
  * 살아남도록 MutationObserver를 모듈 lifetime 동안 유지.
  */
+let menuObserver: MutationObserver | null = null;
+
 export function initAssetBulk(): void {
-  new MutationObserver(scheduleScan).observe(document.body, {
+  menuObserver = new MutationObserver(scheduleScan);
+  menuObserver.observe(document.body, {
     childList: true,
     subtree: true,
   });
@@ -56,6 +60,13 @@ function scheduleScan(): void {
 }
 
 function scan(): void {
+  // 은퇴 가드 — 확장 reload 재주입 후 옛 컨텍스트는 자기가 주입한 메뉴 항목을 지우고 감시 중단.
+  // 항목을 안 지우면 새 컨텍스트가 "이미 있음"으로 skip해 죽은 핸들러의 버튼만 남는다.
+  if (isStale()) {
+    menuObserver?.disconnect();
+    document.querySelectorAll(`li[${BULK_MARK}]`).forEach((el) => el.remove());
+    return;
+  }
   if (!PAGE_PATTERN.test(location.pathname)) return;
 
   // 떠있는 모든 메뉴를 훑되, "+ 새 확장 소재" 메뉴인지 라벨 기반으로 확인.

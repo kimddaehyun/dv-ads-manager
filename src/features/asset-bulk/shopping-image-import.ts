@@ -21,6 +21,7 @@
 
 import { authFetch } from "@/features/multi-account/multi-account-data";
 import { fetchUrlAsFile } from "@/features/asset-bulk/image-file";
+import { isStale } from "@/shared/takeover";
 import {
   resolveAndExtract,
   clearProductPageCache,
@@ -66,6 +67,8 @@ const customerIdCache = new Map<string, number | null>();
 // 재조회 없이 즉시 그리드를 복원하기 위함 (같은 모달 element 기준).
 const candidatesCache = new WeakMap<HTMLElement, string[]>();
 
+let stripObserver: MutationObserver | null = null;
+
 export function initShoppingImageImport(): void {
   let scheduled = false;
   const observer = new MutationObserver(() => {
@@ -77,10 +80,17 @@ export function initShoppingImageImport(): void {
     });
   });
   observer.observe(document.body, { childList: true, subtree: true });
+  stripObserver = observer;
   scan();
 }
 
 function scan(): void {
+  // 은퇴 가드 — 옛 컨텍스트의 strip을 지워야 새 컨텍스트가 "이미 있음" skip에 걸리지 않는다.
+  if (isStale()) {
+    stripObserver?.disconnect();
+    document.querySelectorAll(STRIP_SELECTOR).forEach((el) => el.remove());
+    return;
+  }
   if (!PAGE_PATTERN.test(location.pathname)) return;
   const modals = document.querySelectorAll<HTMLElement>(MODAL_SELECTOR);
   for (const modal of Array.from(modals)) {

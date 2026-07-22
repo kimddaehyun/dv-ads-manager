@@ -187,6 +187,7 @@ export function initMultiAccount() {
 const autoUpdateInFlight = new Set<number>();
 
 async function autoUpdateActiveAccount() {
+  if (isStale()) return; // 은퇴한 컨텍스트의 중복 수집 방지
   const activeNo = extractActiveAdAccountNo();
   if (activeNo === null) return;
   if (autoUpdateInFlight.has(activeNo)) return;
@@ -273,6 +274,12 @@ async function ensureDirectoryFresh() {
  * SPA가 헤더 다시 그리면 우리 버튼이 사라질 수 있어 매 tick(300ms) 살아있는지 확인 → re-mount.
  */
 function syncMount() {
+  // 은퇴 가드 — onTick 외에 popstate/resize 리스너도 이 함수를 부르므로, 인터벌이 멈춘 뒤
+  // 사용자 리사이즈/뒤로가기가 옛 컨텍스트의 버튼을 부활시키지 않게 여기서도 차단.
+  if (isStale()) {
+    unmountButton();
+    return;
+  }
   const isTopWindow = window === window.top;
   const shouldMount = isTopWindow && ADACCT_URL_PATTERN.test(location.pathname);
   if (!shouldMount) {
@@ -3474,6 +3481,12 @@ async function scanChangeWatchAll(
 
 /** 주기 점검 1회분. 광고계정 페이지에 있을 때만 — 다른 페이지에서 괜히 호출하지 않는다. */
 async function changeWatchTick(): Promise<void> {
+  // 은퇴 가드 — 옛 컨텍스트의 변경이력 타이머가 새 컨텍스트와 중복으로 fetch/알림하지 않게.
+  if (isStale()) {
+    if (changeWatchTimer) window.clearInterval(changeWatchTimer);
+    changeWatchTimer = 0;
+    return;
+  }
   if (!ADACCT_URL_PATTERN.test(location.pathname)) return;
   const [dir, added] = await Promise.all([loadDirectory(), loadAddedList()]);
   const entries = pickAddedEntries(dir?.entries ?? [], added);

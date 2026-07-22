@@ -25,6 +25,7 @@ import {
   shiftDateParams,
 } from "@/features/period-compare/period-compare-adapters";
 import { friendlyApiError } from "@/shared/friendly-error";
+import { isStale } from "@/shared/takeover";
 
 // ─── 캡처 store ───
 // 페이지가 같은 endpoint를 여러 번 호출하거나(필터/페이지네이션) 동시에 여러 endpoint를 호출
@@ -1226,20 +1227,30 @@ function scheduleMount(): void {
   if (mountRaf !== null) return;
   mountRaf = requestAnimationFrame(() => {
     mountRaf = null;
+    // 은퇴 가드 — 확장 reload 재주입으로 새 컨텍스트가 뜨면 이 컨텍스트는 버튼 정리 + 감시 중단.
+    if (isStale()) {
+      unmountButton();
+      domObserver?.disconnect();
+      urlObserver?.disconnect();
+      return;
+    }
     mountButton();
   });
 }
 
 let lastUrl = location.href;
+let domObserver: MutationObserver | null = null;
+let urlObserver: MutationObserver | null = null;
 
 export function initPeriodCompare(): void {
   // DOM 변경 — 날짜 picker가 SPA navigation에서 다시 그려질 수 있음
-  new MutationObserver(scheduleMount).observe(document.body, {
+  domObserver = new MutationObserver(scheduleMount);
+  domObserver.observe(document.body, {
     childList: true,
     subtree: true,
   });
   // URL 변경 (F001과 동일 패턴)
-  new MutationObserver(() => {
+  urlObserver = new MutationObserver(() => {
     if (location.href !== lastUrl) {
       lastUrl = location.href;
       unmountButton();
@@ -1247,7 +1258,8 @@ export function initPeriodCompare(): void {
       recentCaptures.length = 0;
       scheduleMount();
     }
-  }).observe(document, { childList: true, subtree: true });
+  });
+  urlObserver.observe(document, { childList: true, subtree: true });
 
   scheduleMount();
 }
