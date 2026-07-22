@@ -27,7 +27,7 @@ import {
 import { showToast } from "@/shared/toast";
 import { trackUsage } from "@/shared/usage";
 import { fetchUrlAsFile } from "@/features/asset-bulk/image-file";
-import { isStale } from "@/shared/takeover";
+import { isStale, currentGen } from "@/shared/takeover";
 
 const MENU_ITEM_SELECTOR = "li.ad-cms-dropdown-menu-item";
 const MENU_ITEM_LABEL_SELECTOR = "span.ad-cms-dropdown-menu-title-content";
@@ -96,8 +96,14 @@ function isExtensionMenu(container: HTMLElement): boolean {
 }
 
 function ensureBulkItem(container: HTMLElement): void {
+  // 옛 세대(확장 reload 전 컨텍스트)가 남긴 항목은 핸들러가 죽어 있으므로 교체.
+  // 드롭다운이 열린 채 reload되면 옛 컨텍스트의 자기 정리(scan)가 안 돌 수 있어
+  // 신규 쪽의 이 제거가 방어선 (2026-07-22 codex 리뷰).
+  for (const el of container.querySelectorAll(`li[${BULK_MARK}]`)) {
+    if (el.getAttribute(BULK_MARK) !== currentGen()) el.remove();
+  }
   // 이미 우리 항목이 들어 있으면 skip
-  if (container.querySelector(`li[${BULK_MARK}="1"]`)) return;
+  if (container.querySelector(`li[${BULK_MARK}="${currentGen()}"]`)) return;
 
   const sample = container.querySelector<HTMLElement>(MENU_ITEM_SELECTOR);
   if (!sample) return;
@@ -108,7 +114,7 @@ function ensureBulkItem(container: HTMLElement): void {
   li.className = "ad-cms-dropdown-menu-item dvads-asset-bulk-menu-item";
   li.setAttribute("role", "menuitem");
   li.setAttribute("tabindex", "-1");
-  li.setAttribute(BULK_MARK, "1");
+  li.setAttribute(BULK_MARK, currentGen());
 
   const label = document.createElement("span");
   label.className = "ad-cms-dropdown-menu-title-content";

@@ -17,3 +17,13 @@ export function claimTakeover(): void {
 export function isStale(): boolean {
   return document.documentElement.getAttribute(ATTR) !== GEN;
 }
+
+/**
+ * 이 컨텍스트의 세대값 — 주입 DOM에 찍어두면(예: data-dvads-bulk="{gen}"),
+ * 새 컨텍스트가 "이미 있음" 판정 전에 옛 세대의 요소를 식별해 제거/교체할 수 있다.
+ * 옛 컨텍스트의 observer가 안 돌고 있어도(드롭다운/모달이 이미 열린 채 reload) 동작하는
+ * 유일한 경로 — 옛 쪽 자기 정리는 best effort일 뿐 이 신규 쪽 교체가 방어선.
+ */
+export function currentGen(): string {
+  return GEN;
+}

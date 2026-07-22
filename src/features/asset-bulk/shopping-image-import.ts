@@ -21,7 +21,7 @@
 
 import { authFetch } from "@/features/multi-account/multi-account-data";
 import { fetchUrlAsFile } from "@/features/asset-bulk/image-file";
-import { isStale } from "@/shared/takeover";
+import { isStale, currentGen } from "@/shared/takeover";
 import {
   resolveAndExtract,
   clearProductPageCache,
@@ -94,6 +94,11 @@ function scan(): void {
   if (!PAGE_PATTERN.test(location.pathname)) return;
   const modals = document.querySelectorAll<HTMLElement>(MODAL_SELECTOR);
   for (const modal of Array.from(modals)) {
+    // 옛 세대 strip(확장 reload 전 컨텍스트, 핸들러 죽음)은 제거 후 재주입.
+    // 모달이 열린 채 reload되면 옛 컨텍스트의 자기 정리가 안 돌 수 있어 신규 쪽이 방어선.
+    for (const el of modal.querySelectorAll(STRIP_SELECTOR)) {
+      if (el.getAttribute("data-dvads-gen") !== currentGen()) el.remove();
+    }
     // strip이 이미 들어 있으면 skip. (strip을 동기로 먼저 append하므로 다음 scan의 중복 가드
     // 역할도 함. React 재렌더로 strip이 제거되면 여기서 다시 잡혀 재주입된다.)
     if (modal.querySelector(STRIP_SELECTOR)) continue;
@@ -146,6 +151,7 @@ function findImageAnchor(modal: HTMLElement): ImageAnchor | null {
 function inject(modal: HTMLElement, anchor: ImageAnchor): void {
   const strip = document.createElement("div");
   strip.className = "dvads dvads-shopping-img";
+  strip.setAttribute("data-dvads-gen", currentGen());
 
   const head = document.createElement("div");
   head.className = "dvads-shopping-img-head";
