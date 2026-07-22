@@ -5,6 +5,7 @@
 - **키워드/소재 수정엔 대상 이름이 없다**(nkw-/nad- id만, displayName이 그룹명 반복인 경우도) — `ncc/keywords?ids=`(keyword)·`ncc/ads?ids=`(referenceData.productTitle)로 조인. 캠페인 유형은 `ncc/campaigns`(campaignTp) 조인.
 - **무변경 이벤트가 대량으로 온다**(2026-07-22 라이브: API 입찰 도구가 같은 입찰가를 다시 쓴 `AD.MODIFY`의 adAttr before==after가 주간 126건) — diff가 0개인 이벤트는 관리 내역이 아니므로 보고 건수에서도 제외(`buildHistoryReport`의 `if (!detail) continue`).
 - 제외키워드 2경로: `TARGET.MODIFY`+`RESTRICT_KEYWORD_TARGET`(target JSON에 **매번 전체 목록** → 차집합으로 추가/삭제분만), `ADGROUP.{ADD,REMOVE}_KEYWORD_PLUS`(건별). `inspectStatus`는 검수 부수 변화라 무시, `ad` 필드는 "소재 내용 변경"으로 접기.
+- `restrictKeywordDiff`/`criterionDetail`의 non-empty 폴백("제외키워드 변경"/"타겟팅 변경")은 무변경 이벤트를 못 거르지만 **라이브 검증 결과 발생 0건**(2026-07-22, 20계정×14일 4,611행 중 해당 후보 74건 전수 재현) — 미지 형식의 진짜 변경을 지키는 안전망이므로 빈 문자열로 바꾸지 말 것. `targetTp: NON_SEARCH_KEYWORD_TARGET`(14일 7건)은 전용 처리 없이 "타겟 설정 변경" 일반 문구로 나감.
 
 `POST /apis/sa/api/histories/_search?serviceId=james-rhodes&since={ms}&until={ms}&maxRowsPerPage=5000` + body `{bool:{must:[]}}`(ES DSL) + **`x-ad-customer-id` 헤더 필수**(없으면 `ownerId format is invalid`). UI(다이얼로그·행 알림)는 `@/features/multi-account/multi-account.ts`에 있고, 이 폴더는 수집·판정 로직(`change-watch.ts`).
 

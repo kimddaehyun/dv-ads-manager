@@ -380,8 +380,11 @@ export async function collectHistoryReport(
 ): Promise<HistoryReport> {
   const rows = await fetchChangeHistory(customerId, sinceMs, untilMs);
   const report = buildHistoryReport(rows, actors);
-  await enrichTargetNames(customerId, report);
-  await applyCampaignTypes(customerId, report);
+  // 서로 다른 API로 다른 필드(where/campaignType)만 채운다 — 의존성 없어 병렬.
+  await Promise.all([
+    enrichTargetNames(customerId, report),
+    applyCampaignTypes(customerId, report),
+  ]);
   return report;
 }
 
@@ -547,13 +550,12 @@ function fmtDateTime(ms: number): string {
 
 /** 보고 구조 → 카톡 붙여넣기용 텍스트. 내역은 접지 않고 전부 나열한다. */
 export function formatHistoryReportText(
-  accountName: string,
   sinceMs: number,
   untilMs: number,
   report: HistoryReport,
 ): string {
   const lines: string[] = [];
-  lines.push(`[${accountName} 광고 관리 내역] ${fmtDate(sinceMs)} ~ ${fmtDate(untilMs)}`);
+  lines.push(`[광고 관리 내역] ${fmtDate(sinceMs)} ~ ${fmtDate(untilMs)}`);
   lines.push("");
 
   if (report.total === 0) {

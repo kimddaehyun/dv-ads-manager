@@ -262,7 +262,7 @@ describe("buildHistoryReport", () => {
       ["dvcompany:naver"],
     );
     expect(report.groups[0].key).toBe("etc");
-    const text = formatHistoryReportText("업체", 0, 0, report);
+    const text = formatHistoryReportText(0, 0, report);
     expect(text).not.toMatch(/SOMETHING_NEW/);
   });
 });
@@ -275,8 +275,8 @@ describe("formatHistoryReportText", () => {
     const rows = Array.from({ length: 5 }, (_, i) =>
       row({ name: `키워드${i}`, before: { bidAmt: "100" }, after: { bidAmt: "200" } }),
     );
-    const text = formatHistoryReportText("OO업체", since, until, buildHistoryReport(rows, ["dvcompany:naver"]));
-    expect(text).toContain("[OO업체 광고 관리 내역] 7/14 ~ 7/20");
+    const text = formatHistoryReportText(since, until, buildHistoryReport(rows, ["dvcompany:naver"]));
+    expect(text).toContain("[광고 관리 내역] 7/14 ~ 7/20");
     expect(text).toContain("■ 입찰가 조정 5건");
     // 접지 않고 전부 나열
     expect(text.match(/키워드\d/g)).toHaveLength(5);
@@ -308,7 +308,7 @@ describe("formatHistoryReportText", () => {
     const r1 = row({ name: "운동화", before: { bidAmt: "100" }, after: { bidAmt: "200" } });
     const r2 = row({ name: "운동화", before: { bidAmt: "200" }, after: { bidAmt: "300" } });
     r2["@timestamp"] = "2026-07-16T10:00:00.000Z";
-    const text = formatHistoryReportText("OO업체", since, until, buildHistoryReport([r1, r2], ["dvcompany:naver"]));
+    const text = formatHistoryReportText(since, until, buildHistoryReport([r1, r2], ["dvcompany:naver"]));
     const lines = text.split("\n");
     const head = lines.findIndex((l) => l === "  - 캠페인A > 그룹1 > 운동화");
     expect(head).toBeGreaterThan(-1);
@@ -323,7 +323,7 @@ describe("formatHistoryReportText", () => {
     const report = buildHistoryReport([r1, r2], ["dvcompany:naver"]);
     report.groups[0].items.find((i) => i.where.includes("운동화"))!.campaignType = "파워링크";
     report.groups[0].items.find((i) => i.where.includes("장미화분"))!.campaignType = "쇼핑검색";
-    const text = formatHistoryReportText("OO업체", since, until, report);
+    const text = formatHistoryReportText(since, until, report);
     const iPower = text.indexOf("◆ 파워링크");
     const iShop = text.indexOf("◆ 쇼핑검색");
     expect(iPower).toBeGreaterThan(-1);
@@ -334,7 +334,7 @@ describe("formatHistoryReportText", () => {
   });
 
   it("내역이 없으면 안내 문구만 나온다", () => {
-    const text = formatHistoryReportText("OO업체", since, until, buildHistoryReport([], []));
+    const text = formatHistoryReportText(since, until, buildHistoryReport([], []));
     expect(text).toContain("정리할 관리 내역이 없습니다");
   });
 
@@ -342,7 +342,7 @@ describe("formatHistoryReportText", () => {
     const rows = Array.from({ length: 5000 }, () =>
       row({ before: { bidAmt: "1" }, after: { bidAmt: "2" } }),
     );
-    const text = formatHistoryReportText("OO업체", since, until, buildHistoryReport(rows, ["dvcompany:naver"]));
-    expect(text).toContain("일부가 빠졌을 수 있습니다");
+    const text = formatHistoryReportText(since, until, buildHistoryReport(rows, ["dvcompany:naver"]));
+    expect(text).toContain("5,000건이 초과되어 일부 내역이 제외되었습니다");
   });
 });
