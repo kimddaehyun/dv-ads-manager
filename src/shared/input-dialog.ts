@@ -4,7 +4,8 @@
  * confirm-dialog/rename-dialog 패턴과 동일 — backdrop+card, ESC/배경 클릭 닫기, 카드 내부
  * click은 swallow해 부모 popover의 외부 클릭 닫힘 로직에 누설되지 않게 한다.
  *
- * 차이점: input 한 줄 + suffix 라벨("원"/"일") + 기존값 있을 때 "해제" 버튼.
+ * 차이점: input 한 줄 + suffix 라벨("원"/"일") + 입력창 우측 켜기/끄기 토글(변경이력 알림
+ * 다이얼로그와 동일 패턴). 끄고 확인 = 알림 해제.
  */
 
 import { wireBackdropDismiss } from "./dialog-dismiss";
@@ -22,10 +23,13 @@ export interface InputDialogOptions {
   suffix: string;
   /** input placeholder */
   placeholder?: string;
-  /** "확인" 클릭 시 호출 (양의 정수만 들어옴) */
-  onConfirm: (value: number) => void | Promise<void>;
-  /** 정의되면 "해제" 버튼 노출 — 클릭 시 호출. 임계값 제거 흐름에 사용. */
-  onClear?: () => void | Promise<void>;
+  /** 입력창 우측 켜기/끄기 토글 초기값. 확인 시 onConfirm의 두 번째 인자로 전달. */
+  toggleInitial: boolean;
+  /**
+   * "확인" 클릭 시 호출. on=true면 value는 양의 정수, on=false면 알림 해제 요청
+   * (이때 value는 입력이 유효하면 그 값, 아니면 null).
+   */
+  onConfirm: (value: number | null, on: boolean) => void | Promise<void>;
 }
 
 export function openInputDialog(opts: InputDialogOptions): void {
@@ -68,20 +72,25 @@ export function openInputDialog(opts: InputDialogOptions): void {
 
   inputWrap.appendChild(input);
   inputWrap.appendChild(suffixEl);
-  card.appendChild(inputWrap);
+
+  // 입력창 + 우측 토글 한 줄 — 변경이력 알림 다이얼로그와 동일 배치.
+  const inputRow = document.createElement("div");
+  inputRow.className = "dvads-input-row";
+  inputRow.appendChild(inputWrap);
+
+  const toggleLabel = document.createElement("label");
+  toggleLabel.className = "dvads-input-toggle";
+  const toggle = document.createElement("input");
+  toggle.type = "checkbox";
+  toggle.className = "dvads-asset-bulk-switch";
+  toggle.checked = opts.toggleInitial;
+  toggle.setAttribute("aria-label", "알림 켜기");
+  toggleLabel.appendChild(toggle);
+  inputRow.appendChild(toggleLabel);
+  card.appendChild(inputRow);
 
   const actions = document.createElement("div");
   actions.className = "dvads-input-actions";
-
-  // 기존 값이 있을 때만 "해제" 노출 — 다이얼로그 좌측. 우측은 취소/확인.
-  let clearBtn: HTMLButtonElement | null = null;
-  if (opts.onClear) {
-    clearBtn = document.createElement("button");
-    clearBtn.type = "button";
-    clearBtn.className = "dvads-btn dvads-btn-secondary dvads-input-clear";
-    clearBtn.textContent = "해제";
-    actions.appendChild(clearBtn);
-  }
 
   const spacer = document.createElement("div");
   spacer.className = "dvads-input-actions-spacer";
@@ -103,16 +112,21 @@ export function openInputDialog(opts: InputDialogOptions): void {
   document.body.appendChild(backdrop);
 
   // input value 변경에 따라 확인 버튼 활성/비활성 동기화. 빈 값/0/음수/비숫자는 비활성.
+  // 단, 토글이 꺼져 있으면(=해제 요청) 값 없이도 확인 가능.
   const syncConfirmEnabled = () => {
     const v = parseInt(input.value.replace(/[^\d]/g, ""), 10);
-    const ok = Number.isFinite(v) && v > 0;
+    const ok = !toggle.checked || (Number.isFinite(v) && v > 0);
     confirmBtn.disabled = !ok;
     confirmBtn.classList.toggle("is-disabled", !ok);
   };
+  toggle.addEventListener("change", syncConfirmEnabled);
   input.addEventListener("input", () => {
     // 숫자 외 입력 즉시 정리 — UX 단순화. 0 시작 0001 같은 케이스도 정수 parse 단계서 처리.
     const cleaned = input.value.replace(/[^\d]/g, "");
     if (cleaned !== input.value) input.value = cleaned;
+    // 꺼진 상태에서 값을 입력하면 자동으로 켠다 — 안 그러면 "값 입력 후 확인"이
+    // 토글을 안 건드렸다는 이유로 조용히 해제로 처리된다.
+    if (!toggle.checked && input.value !== "") toggle.checked = true;
     syncConfirmEnabled();
   });
   syncConfirmEnabled();
@@ -149,12 +163,6 @@ export function openInputDialog(opts: InputDialogOptions): void {
     void runConfirm();
   });
 
-  clearBtn?.addEventListener("click", (e) => {
-    e.stopPropagation();
-    if (busy) return;
-    void runClear();
-  });
-
   // 입력 즉시 가능하도록 자동 포커스 + 기존 값 전체 선택 (덮어쓰기 편의).
   // setTimeout으로 다음 tick에 호출 — 일부 브라우저가 mount 직후 focus를 무시할 수 있음.
   setTimeout(() => {
@@ -165,29 +173,16 @@ export function openInputDialog(opts: InputDialogOptions): void {
   openDialogCleanup = teardown;
 
   async function runConfirm() {
-    const v = parseInt(input.value.replace(/[^\d]/g, ""), 10);
-    if (!Number.isFinite(v) || v <= 0) return;
+    const parsed = parseInt(input.value.replace(/[^\d]/g, ""), 10);
+    const valid = Number.isFinite(parsed) && parsed > 0;
+    if (toggle.checked && !valid) return;
     busy = true;
     confirmBtn.classList.add("dvads-btn-loading");
     confirmBtn.disabled = true;
     cancelBtn.disabled = true;
-    if (clearBtn) clearBtn.disabled = true;
+    toggle.disabled = true;
     try {
-      await opts.onConfirm(v);
-    } finally {
-      teardown();
-    }
-  }
-
-  async function runClear() {
-    if (!opts.onClear) return;
-    busy = true;
-    if (clearBtn) clearBtn.classList.add("dvads-btn-loading");
-    confirmBtn.disabled = true;
-    cancelBtn.disabled = true;
-    if (clearBtn) clearBtn.disabled = true;
-    try {
-      await opts.onClear();
+      await opts.onConfirm(valid ? parsed : null, toggle.checked);
     } finally {
       teardown();
     }

@@ -3555,11 +3555,8 @@ async function openBizMoneyDialogFor(nos: number[]) {
   if (nos.length === 0) return;
   const metaMap = await loadAllUserMeta();
   const initial = nos.length === 1 ? (metaMap[nos[0]]?.bizMoneyThreshold ?? null) : null;
-  // 해제 버튼 노출 조건:
-  //  - 단일 선택: 기존 임계값이 있을 때만 (이미 해제 상태인 계정엔 의미 없음)
-  //  - 다중 선택: 선택 계정 중 일부만 설정돼 있을 수 있어 항상 일괄 해제 가능
+  // 토글 초기값 = 현재 상태 (다중 선택은 하나라도 설정돼 있으면 켜짐으로 표시).
   const anyConfigured = nos.some((no) => metaMap[no]?.bizMoneyThreshold != null);
-  const showClear = nos.length === 1 ? initial != null : anyConfigured;
   openInputDialog({
     title: "비즈머니 알림 설정",
     description: nos.length === 1
@@ -3568,20 +3565,15 @@ async function openBizMoneyDialogFor(nos: number[]) {
     initialValue: initial,
     suffix: "원",
     placeholder: "100,000",
-    onConfirm: async (value) => {
-      const result = await withServerSave(() => updateUserMetaMany(nos, { bizMoneyThreshold: value }));
-      if (result === undefined) return;
-      if (popoverEl) await renderListView(popoverEl);
-      void refreshBadge();
-    },
-    onClear: showClear ? async () => {
+    toggleInitial: nos.length === 1 ? initial != null : anyConfigured,
+    onConfirm: async (value, on) => {
       const result = await withServerSave(() =>
-        updateUserMetaMany(nos, { bizMoneyThreshold: undefined }),
+        updateUserMetaMany(nos, { bizMoneyThreshold: on && value != null ? value : undefined }),
       );
       if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
-    } : undefined,
+    },
   });
 }
 
@@ -4012,7 +4004,6 @@ async function openBrandSearchDialogFor(nos: number[]) {
   const metaMap = await loadAllUserMeta();
   const initial = nos.length === 1 ? (metaMap[nos[0]]?.brandSearchDaysThreshold ?? null) : null;
   const anyConfigured = nos.some((no) => metaMap[no]?.brandSearchDaysThreshold != null);
-  const showClear = nos.length === 1 ? initial != null : anyConfigured;
   openInputDialog({
     title: "브랜드검색 알림 설정",
     description: nos.length === 1
@@ -4021,22 +4012,15 @@ async function openBrandSearchDialogFor(nos: number[]) {
     initialValue: initial,
     suffix: "일",
     placeholder: "7",
-    onConfirm: async (value) => {
+    toggleInitial: nos.length === 1 ? initial != null : anyConfigured,
+    onConfirm: async (value, on) => {
       const result = await withServerSave(() =>
-        updateUserMetaMany(nos, { brandSearchDaysThreshold: value }),
+        updateUserMetaMany(nos, { brandSearchDaysThreshold: on && value != null ? value : undefined }),
       );
       if (result === undefined) return;
       if (popoverEl) await renderListView(popoverEl);
       void refreshBadge();
     },
-    onClear: showClear ? async () => {
-      const result = await withServerSave(() =>
-        updateUserMetaMany(nos, { brandSearchDaysThreshold: undefined }),
-      );
-      if (result === undefined) return;
-      if (popoverEl) await renderListView(popoverEl);
-      void refreshBadge();
-    } : undefined,
   });
 }
 

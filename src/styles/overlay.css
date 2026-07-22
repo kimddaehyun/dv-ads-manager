@@ -2648,30 +2648,36 @@ td.dvads-period-delta-down {
   background: #D96C31;
 }
 /* 입력창 + 지우기(×) — × 는 값이 있을 때만 노출(JS가 display 토글). */
+/* 입력창은 비즈머니/브랜드검색 알림(.dvads-input-input-wrap)과 동일 톤 — 회색 채움 40px. */
 .dvads-actor-input-wrap {
   position: relative;
   display: flex;
+  align-items: center;
   margin-top: 10px;
+  background: #F3F4F6;
+  border-radius: 10px;
+  height: 40px;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-actor-input-wrap:focus-within {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.30);
 }
 .dvads-actor-input {
   flex: 1;
-  height: 34px;
-  padding: 0 30px 0 10px;
-  border: 1px solid #E1E4E8;
-  border-radius: 8px;
+  height: 100%;
+  padding: 0 34px 0 14px;
+  background: transparent;
+  border: 0;
   font-family: inherit;
   font-size: 13px;
   color: #171717;
   outline: none;
   min-width: 0;
 }
-.dvads-actor-input:focus {
-  border-color: #E6783B;
-  box-shadow: 0 0 0 3px rgba(230, 120, 59, 0.18);
-}
 .dvads-actor-input-clear {
   position: absolute;
-  right: 6px;
+  right: 10px;
   top: 50%;
   transform: translateY(-50%);
   width: 20px;
@@ -2714,6 +2720,24 @@ td.dvads-period-delta-down {
   gap: 8px;
   cursor: pointer;
   flex-shrink: 0;
+}
+/* 40px 입력창 옆이라 토글도 한 단계 크게 — 원본(.dvads-asset-bulk-switch 36x20)은 유지. */
+.dvads-cw-toggle .dvads-asset-bulk-switch,
+.dvads-input-toggle .dvads-asset-bulk-switch {
+  width: 46px;
+  height: 26px;
+}
+.dvads-cw-toggle .dvads-asset-bulk-switch::before,
+.dvads-input-toggle .dvads-asset-bulk-switch::before {
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+}
+.dvads-cw-toggle .dvads-asset-bulk-switch:checked::before,
+.dvads-input-toggle .dvads-asset-bulk-switch:checked::before {
+  /* 46 - 20 - 좌우 3px = 20 */
+  transform: translateX(20px);
 }
 /* 다이얼로그 본문 텍스트 최소 14px (보조 문구 제외). */
 .dvads-actor-card .dvads-actor-chip,
@@ -4245,15 +4269,28 @@ td.dvads-period-delta-down {
   margin-bottom: 14px;
   line-height: 1.5;
 }
+/* 입력창 + 우측 켜기/끄기 토글 한 줄 — 변경이력 알림 다이얼로그와 동일 배치. */
+.dvads-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.dvads-input-toggle {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
 .dvads-input-input-wrap {
   position: relative;
   display: flex;
   align-items: center;
+  flex: 1;
   background: #F3F4F6;
   border-radius: 10px;
   padding: 0 14px;
   height: 40px;
-  margin-bottom: 16px;
   transition: background 120ms ease, box-shadow 120ms ease;
 }
 .dvads-input-input-wrap:focus-within {
@@ -4286,9 +4323,6 @@ td.dvads-period-delta-down {
 }
 .dvads-input-actions-spacer {
   flex: 1;
-}
-.dvads-input-clear {
-  /* 해제 버튼은 위험성보다는 "되돌리기" 톤이라 secondary 그대로 — 다만 좌측에 단독 배치. */
 }
 
 /* ─── 브랜드검색 알림 호버 툴팁 (multi-account.ts) ─────────────────────
