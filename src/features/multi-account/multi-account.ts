@@ -4249,7 +4249,7 @@ function paintRowEl(row: HTMLTableRowElement, snap: MultiAccountSnapshot, meta?:
  * '상태' 컬럼 배지 — 이슈 종류별 4단계:
  *   - "광고 중단"(빨강) = 계정 자체 중단(비즈머니 소진, 잔액 ≤ 0)
  *   - "예산 도달"(주황) = 캠페인/그룹/공유예산 잠금(변경이력 budget)
- *   - "수정 이력"(파랑) = 외부 수정 unread(변경이력 external)
+ *   - "수정 이력"(호박) = 외부 수정 unread(변경이력 external)
  *   - "확인 필요"(호박) = 광고주센터 알림 이슈
  *   - 이슈 종류가 2개 이상 겹치면 "확인 필요"를 빨강으로
  *   - 아무것도 없으면 "정상"(초록)

@@ -2345,10 +2345,10 @@ td.dvads-period-delta-down {
   background: #FFF7ED;
   color: #EA580C;
 }
-/* 수정 이력(외부 수정 unread) — 경고보단 정보성이라 파랑. */
+/* 수정 이력(외부 수정 unread) — '확인 필요'와 같은 주의 호박색. */
 .dvads-multi-status-badge.is-external {
-  background: #EFF6FF;
-  color: #2563EB;
+  background: #FFFBEB;
+  color: #B45309;
 }
 /* 광고 중단(계정 중단) — 운영이 멈춘 상태라 경고색 대신 회색. */
 .dvads-multi-status-badge.is-stopped {
