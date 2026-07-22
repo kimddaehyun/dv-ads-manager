@@ -303,8 +303,8 @@ export interface ChangeWatchEvent {
  * chrome.storage.local 키: `change_watch_state:<adAccountNo>`
  *
  * 조회 창(window)은 고정 기간이 아니라 "직전 점검 이후"다. `scanned_until`이 다음 조회의
- * since가 되어 놓치는 이력도, 중복 알림도 없다. 첫 점검만 CHANGE_WATCH_BOOTSTRAP_MS 만큼
- * 거슬러 올라간다.
+ * since가 되어 놓치는 이력도, 중복 알림도 없다. 첫 점검은 소급하지 않는다 —
+ * 계정을 추가한 뒤 생긴 이력부터 누적.
  */
 export interface ChangeWatchState {
   adAccountNo: number;

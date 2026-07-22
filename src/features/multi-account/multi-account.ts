@@ -57,7 +57,6 @@ import {
   withReadIds,
   naverIssueReadKey,
   CHANGE_WATCH_TTL_MS,
-  CHANGE_WATCH_BOOTSTRAP_MS,
   CHANGE_WATCH_KEEP_MS,
   type PlatformFilter,
 } from "@/features/multi-account/multi-account-storage";
@@ -3390,7 +3389,8 @@ async function refreshChangeWatchRow(
   const prev = await loadChangeWatchState(entry.adAccountNo);
   if (!force && isChangeWatchFresh(prev)) return;
   const now = Date.now();
-  const since = prev?.scanned_until ?? now - CHANGE_WATCH_BOOTSTRAP_MS;
+  // 첫 점검은 소급하지 않는다 — 계정을 추가한 뒤 생긴 이력부터 누적 (2026-07-22, 이전엔 3일 소급).
+  const since = prev?.scanned_until ?? now;
   try {
     const rows = await fetchChangeHistory(entry.masterCustomerId, since, now);
     const readBudget = readUpToFor(prev, "budget");
@@ -4440,7 +4440,7 @@ function blankChangeWatchState(adAccountNo: number): ChangeWatchState {
   return {
     adAccountNo,
     events: [],
-    scanned_until: Date.now() - CHANGE_WATCH_BOOTSTRAP_MS,
+    scanned_until: Date.now(),
     read_budget_up_to: 0,
     read_external_up_to: 0,
     read_ids: [],
@@ -4469,9 +4469,12 @@ async function openChangeWatchPanel(
   const events = [...(state?.events ?? [])].sort((a, b) => b.ts - a.ts);
   // 광고주센터 알림 이슈(소재 보류 등) — 네이버가 내리는 동안 유지. 읽음은 제목이 키.
   const naverIssues = snap?.issues ?? [];
+  // 비즈머니 소진(잔액 ≤ 0) — 배지("광고 중단")와 같은 판정. 알림 피드에 항목이 안 와서
+  // 패널만 비어 보이지 않게 여기서 한 줄 만들어 넣는다.
+  const bizDepleted = snap?.bizMoney != null && snap.bizMoney <= 0;
   if (!popoverEl || !anchor.isConnected) return;
   // 이슈가 하나도 없어도 패널은 연다 — 케밥에서 눌렀을 때 아무 반응 없으면 고장으로 보인다.
-  const isEmpty = events.length === 0 && naverIssues.length === 0;
+  const isEmpty = events.length === 0 && naverIssues.length === 0 && !bizDepleted;
 
   // 알림 피드 항목과 변경이력을 한 형태로 맞춰 목록/읽음 처리를 한 갈래로 다룬다.
   const accountDest = `/manage/ad-accounts/${entry.adAccountNo}/dashboard`;
@@ -4488,6 +4491,19 @@ async function openChangeWatchPanel(
     hasDest: boolean;
   }
   const items: PanelItem[] = [
+    ...(bizDepleted
+      ? [{
+          readKey: naverIssueReadKey("비즈머니 잔액 부족으로 광고 중단"),
+          kind: "naver" as const,
+          ts: 0,
+          who: "알림",
+          when: "",
+          target: "",
+          summary: "비즈머니 잔액 부족으로 광고 중단",
+          dest: async () => accountDest,
+          hasDest: true,
+        }]
+      : []),
     ...naverIssues.map((iss) => ({
       readKey: naverIssueReadKey(iss.title),
       kind: "naver" as const,

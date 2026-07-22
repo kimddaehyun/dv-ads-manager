@@ -455,8 +455,6 @@ const CHANGE_WATCH_PREFIX = "change_watch_state:";
 
 /** 점검 주기. 이보다 최근에 본 계정은 재조회 skip — 페이지 상주 중 반복 호출 방지. */
 export const CHANGE_WATCH_TTL_MS = 30 * 60 * 1000; // 30분
-/** 최초 점검 시 거슬러 올라갈 기간. 이전 이력이 한꺼번에 쏟아지지 않게 제한. */
-export const CHANGE_WATCH_BOOTSTRAP_MS = 3 * 24 * 60 * 60 * 1000; // 3일
 /**
  * 알림 보관 기간. 확인(모두 읽음) 여부와 무관하게 계정별로 이 기간만큼 이력을 남긴다 —
  * 확인했다고 지워버리면 "그때 무슨 일이 있었는지" 되짚을 수 없다. 지나면 자동 정리.
