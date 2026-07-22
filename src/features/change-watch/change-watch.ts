@@ -259,7 +259,8 @@ export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): Cha
         kind: "external",
         actor,
         target,
-        summary: diff ? `${what} - ${diff}` : `${what} 변경`,
+        // 알림 패널 표기: "[소재] 설정 2개 변경" 꼴. 화살표는 ">"로 짧게.
+        summary: diff ? `[${what}] ${diff.replaceAll(" -> ", " > ")}` : `[${what}] 변경`,
         ...entityIds(obj),
       });
     });

@@ -4352,6 +4352,9 @@ function displaySummary(summary: string): string {
   if (m) return `${m[1]} 일 예산 ${m[2]}원 도달`;
   const m2 = /^(.+?) 예산을 다 써서 광고가 멈췄어요$/.exec(summary);
   if (m2) return `${m2[1]} 일 예산 도달`;
+  // 옛 수정 알림 표기("소재 - 설정 2개 변경", "설정 변경") → 현행 "[소재] ..." 표기.
+  const m3 = /^(캠페인|광고그룹|소재|키워드|입찰 가중치|타겟|설정)(?: - (.+)| 변경)$/.exec(summary);
+  if (m3) return `[${m3[1]}] ${(m3[2] ?? "변경").replaceAll(" -> ", " > ")}`;
   return summary;
 }
 
