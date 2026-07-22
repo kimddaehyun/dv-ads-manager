@@ -3113,6 +3113,10 @@ function renderTableRow(
           label: "그룹 지정",
           onClick: () => void openGroupAssignDialog([entry.adAccountNo]),
         },
+        {
+          label: "대행권 점검",
+          onClick: () => void runAgencyCheck([entry.adAccountNo]),
+        },
         { separator: true },
         {
           label: "리포트 생성",
@@ -3171,8 +3175,13 @@ function renderTableRow(
         // "세팅안 생성"은 완성 전이라 잠시 메뉴에서 제거(2026-07-20) — openSetupFlow는 유지,
         // 완성되면 여기 메뉴만 되살리면 된다.
         {
-          label: "대행권 점검",
-          onClick: () => void runAgencyCheck([entry.adAccountNo]),
+          label: "관리 이력 보고",
+          onClick: () =>
+            void openHistoryReportDialogFor({
+              adAccountNo: entry.adAccountNo,
+              masterCustomerId: entry.masterCustomerId,
+              name: meta?.displayName?.trim() || entry.name,
+            }),
         },
         { separator: true },
         {
@@ -3184,17 +3193,8 @@ function renderTableRow(
           onClick: () => openBrandSearchDialogFor([entry.adAccountNo]),
         },
         {
-          label: "변경이력 알림",
+          label: "변경 이력 알림",
           onClick: () => void openChangeWatchDialogFor([entry.adAccountNo]),
-        },
-        {
-          label: "관리이력 보고",
-          onClick: () =>
-            void openHistoryReportDialogFor({
-              adAccountNo: entry.adAccountNo,
-              masterCustomerId: entry.masterCustomerId,
-              name: meta?.displayName?.trim() || entry.name,
-            }),
         },
         { separator: true },
         {
