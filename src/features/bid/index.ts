@@ -33,6 +33,7 @@ import { estimateRank, type EstimatedRank } from "@/shared/rank";
 import { applyBidToRow, describeFailure } from "@/features/bid/dom-bid";
 import { openConfirmDialog } from "@/shared/confirm-dialog";
 import { showToast } from "@/shared/toast";
+import { trackUsage } from "@/shared/usage";
 import { invalidateBids } from "@/features/bid/volume-cache";
 import { invalidatePerformance } from "@/features/bid/performance-cache";
 import { initPeriodCompare } from "@/features/period-compare/period-compare";
@@ -802,6 +803,7 @@ async function performBidApply(
     }
 
     // 변경 성공 — mount의 입찰가/셀 reference 갱신 + 팝오버 강조 행 이동
+    trackUsage("bid_change");
     mount.currentBid = targetBid;
     mount.bidCell = liveCell;
     renderBadge(mount);

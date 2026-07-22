@@ -12,6 +12,7 @@
  */
 
 import { showToast } from "@/shared/toast";
+import { trackUsage } from "@/shared/usage";
 import { friendlyApiError } from "@/shared/friendly-error";
 import { type ReportTarget } from "@/features/report/report-build";
 import { type DateRange } from "@/features/report/report-period";
@@ -364,6 +365,7 @@ async function composeAndShow(
         tone: state.tone,
       });
       aiBlocks = composed.blocks;
+      trackUsage("brief_generate");
       // 이슈를 보냈는데 문단이 하나도 안 왔다 — 조용히 표만 내보내면 원인을 알 수 없다.
       if (selected.length > 0 && aiBlocks.length === 0) {
         showToast({ message: "분석 문구가 만들어지지 않았어요. 다시 고르기에서 한 번 더 시도해 주세요", variant: "error" });

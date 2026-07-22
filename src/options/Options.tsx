@@ -2,6 +2,7 @@ import iconUrl from "@/assets/icon-128.png";
 import DataDisclosure from "./data-disclosure";
 import { AccountCard } from "./account-ui";
 import { AdminCard } from "./admin-ui";
+import { UsageCard } from "./usage-ui";
 import { CredentialsUi, type CredentialsState, type CredentialsValue } from "./credentials-ui";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
@@ -160,7 +161,12 @@ export default function Options() {
         }}
       />
 
-      {approved && profile?.is_admin && <AdminCard currentUserId={profile.id} />}
+      {approved && profile?.is_admin && (
+        <>
+          <AdminCard currentUserId={profile.id} />
+          <UsageCard />
+        </>
+      )}
 
       {approved && (
         <>

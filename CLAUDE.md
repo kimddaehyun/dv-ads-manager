@@ -58,6 +58,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - **Supabase 프로젝트 사용 시작** (`gvyvrjncpwmcwycebrhf`, dvcompany): 4개 테이블(profiles/credentials/account_meta/account_groups) 전부 **서버가 원본, 로컬(`chrome.storage.local`)은 캐시** — 쓰기는 서버 먼저, 성공 시에만 로컬 갱신. RLS는 본인 행 + `approved` 상태 필수.
 - **Secret Key(검색광고 API)는 평문 DB 저장 금지** — 반드시 Edge Function `credentials-vault` 경유로 AES-GCM 암호화 후 저장(`src/shared/vault.ts`). 서비스 워커에는 `window`가 없어 vault 관련 모듈은 그 컨텍스트에서 동적 import조차 하지 않는다.
 - **anon 키는 공개해도 안전** — RLS가 실제 방어선이라 확장 코드(`src/shared/supabase.ts`)에 하드코딩해도 문제 없다.
+- **service_role은 RLS만 우회하고 함수 execute 권한은 우회 못 한다** — `revoke execute ... from public` 하면 Edge Function도 막히므로 `grant execute ... to service_role` 명시 필수. 또 PostgREST 테이블 select는 1,000행에서 조용히 잘린다 — 집계는 서버 RPC로(`admin_usage_summary` 참조). RPC에서 `sum(bigint)`는 numeric을 반환해 선언된 bigint와 안 맞아 호출 시 에러 — `sum(...)::bigint` 캐스팅 필수.
 - **`@supabase/supabase-js`를 background(service worker) 번들에 정적 import 금지** — 번들 크기 오염 + 서비스 워커에 `window` 없어 일부 API 동작 안 함. 필요하면 동적 import로.
 
 ## CLAUDE.md 관리

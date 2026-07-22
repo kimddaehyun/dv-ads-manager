@@ -86,6 +86,7 @@ import { attachActionMenu, closeAllOpenDropdowns, type ActionMenuItem } from "@/
 import { openInputDialog } from "@/shared/input-dialog";
 import { wireBackdropDismiss } from "@/shared/dialog-dismiss";
 import { showToast } from "@/shared/toast";
+import { trackUsage } from "@/shared/usage";
 // "@/features/setup/setup"·"@/features/report/report"은 write-excel-file/fflate(무거운 의존성)을 끌어와 콘텐츠 초기 번들을
 // 부풀린다. 호출 직전 동적 import로 분리해 별도 청크로 빠지게 한다(첫 클릭 시 1회 로드).
 
@@ -2320,6 +2321,7 @@ function openAgencyModal(
     loaderEl = null;
     card.style.display = "";
     if (cancelled) return;
+    trackUsage("agency_check");
     renderResults(results);
   }
 
@@ -3984,6 +3986,7 @@ async function openHistoryReportDialogFor(target: {
           report.total = report.groups.reduce((n, g) => n + g.items.length, 0);
         }
         textEl.value = formatHistoryReportText(target.name, period.since, period.until, report);
+        trackUsage("history_report");
         copyBtn.hidden = false;
         persistSelections();
       } catch (err) {

@@ -25,6 +25,7 @@ import {
   type AssetResult,
 } from "@/features/asset-bulk/dom-asset";
 import { showToast } from "@/shared/toast";
+import { trackUsage } from "@/shared/usage";
 import { fetchUrlAsFile } from "@/features/asset-bulk/image-file";
 
 const MENU_ITEM_SELECTOR = "li.ad-cms-dropdown-menu-item";
@@ -288,6 +289,7 @@ async function runBulkRegistration(
   // 결과 토스트 — 성공/실패 카운트와 실패 사유. variant는 실패 1건이라도 있으면 error.
   const successCount = results.filter((r) => r.ok).length;
   const failCount = results.length - successCount;
+  if (successCount > 0) trackUsage("asset_bulk");
   if (failCount === 0) {
     showToast({
       message: `일괄 등록 완료(${successCount}건)`,

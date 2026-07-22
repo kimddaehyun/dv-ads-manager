@@ -10,6 +10,7 @@
 
 import { zipSync, strToU8 } from "fflate";
 import { showToast } from "@/shared/toast";
+import { trackUsage } from "@/shared/usage";
 import { friendlyApiError } from "@/shared/friendly-error";
 import {
   buildReportBytes, buildReportBytesFromData, collectReportData, type ReportTarget,
@@ -119,6 +120,7 @@ async function runSingle(target: ReportTarget, range: DateRange, author: string,
     if (stale()) return; // 결과 폐기 — 오버레이·running은 취소/새 실행이 이미 처리
     const filename = `${safeFile(target.name)}_리포트_${range.since}~${range.until}.xlsx`;
     downloadBytes(bytes, filename);
+    trackUsage("report_excel");
     if (data) {
       showProgress("안내 문구를 만드는 중...", cancelRun);
       try {
@@ -220,6 +222,7 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
     showProgress("압축하는 중...");
     const zip = zipSync(files, { level: 6, mtime: Date.UTC(1980, 0, 1) });
     downloadBytes(zip, `리포트_${range.since}~${range.until}_${made}개.zip`);
+    trackUsage("report_excel");
     hideProgress();
     showToast({ message: `리포트 ${made}개를 압축해 내려받았어요`, variant: "success" });
     if (withMessage) {

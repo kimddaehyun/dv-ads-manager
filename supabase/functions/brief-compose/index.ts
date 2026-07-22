@@ -95,6 +95,21 @@ Deno.serve(async (req) => {
     });
   }
 
+  // 사용량 기록 — Gemini usageMetadata의 토큰 수를 usage_daily에 누적(관리자 조회용).
+  // 실패해도 본 응답에 영향 없어야 하므로 예외는 삼킨다. 광고주 데이터는 남기지 않는다(숫자만).
+  const recordAiUsage = async (event: string, usage: unknown) => {
+    try {
+      const u = (usage ?? {}) as Record<string, unknown>;
+      await admin.rpc("bump_usage", {
+        p_user_id: userId,
+        p_event: event,
+        p_count: 1,
+        p_tokens_in: typeof u.promptTokenCount === "number" ? u.promptTokenCount : 0,
+        p_tokens_out: typeof u.candidatesTokenCount === "number" ? u.candidatesTokenCount : 0,
+      });
+    } catch (_) { /* 기록 실패 무시 */ }
+  };
+
   const body = await req.json();
 
   // ── 모드: 말투 프롬프트 생성 (T5.5) — AE 본인의 채팅 이력을 말투 규칙으로 요약 ──
@@ -134,6 +149,7 @@ Deno.serve(async (req) => {
       });
     }
     const data = await res.json();
+    await recordAiUsage("ai_tone", data.usageMetadata);
     const tonePrompt = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     return new Response(JSON.stringify({ tonePrompt }), {
       headers: { "content-type": "application/json", ...CORS_HEADERS },
@@ -239,6 +255,7 @@ Deno.serve(async (req) => {
         return null;
       }
       const data = await res.json();
+      await recordAiUsage("ai_report_msg", data.usageMetadata); // 고쳐쓰기 포함 Gemini 호출당 1회
       return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
     };
     let message = await callGemini(summaryPrompt);
@@ -382,6 +399,7 @@ Deno.serve(async (req) => {
   }
 
   const data = await res.json();
+  await recordAiUsage("ai_brief", data.usageMetadata);
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
   // responseMimeType로 JSON을 받지만, 방어적으로 첫 { ~ 마지막 } 만 취한다.
   const match = text.match(/\{[\s\S]*\}/)?.[0];

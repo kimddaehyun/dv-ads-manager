@@ -15,6 +15,7 @@
 import writeXlsxFile from "write-excel-file/browser";
 import type { Cell, Image, SheetData } from "write-excel-file/browser";
 import { typeHasKeywords } from "./setup-adapters";
+import { trackUsage } from "@/shared/usage";
 import type { SetupAdgroup, SetupCampaign } from "@/types/setup";
 
 /** url → 이미지 binary (background에서 fetch). 쇼핑 소재 이미지 삽입용. */
@@ -343,5 +344,6 @@ export async function generateSetupWorkbook(
 
   const filename = `세팅안_${sanitizeFileName(accountName)}_${todayStamp()}.xlsx`;
   downloadBlob(blob, filename);
+  trackUsage("setup_excel");
   return filename;
 }
