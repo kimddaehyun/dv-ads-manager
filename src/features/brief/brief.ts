@@ -17,6 +17,7 @@ import { friendlyApiError } from "@/shared/friendly-error";
 import { type ReportTarget } from "@/features/report/report-build";
 import { type DateRange } from "@/features/report/report-period";
 import { openReportDatePicker } from "@/features/report/report-datepicker";
+import { pool } from "@/features/report/report-data";
 import { showProgress, hideProgress } from "@/features/report/report";
 import { closePopover } from "@/features/multi-account/multi-account";
 import { loadAllUserMeta, updateUserMeta } from "@/features/multi-account/multi-account-storage";
@@ -52,8 +53,7 @@ function cancelRun(): void {
  * userBid는 ncc 등록 키워드의 실효 입찰가(fetchPowerlinkBidMap) — 리포트 행은 검색어라
  * 입찰가가 없다. 맵에 없는 키워드(확장 매칭 검색어 등)는 순위를 매기지 않는다.
  */
-async function fillRanks(customerId: number, rows: BriefKeywordRow[]): Promise<void> {
-  const bidMap = await fetchPowerlinkBidMap(customerId);
+async function fillRanks(bidMap: Map<string, number>, rows: BriefKeywordRow[]): Promise<void> {
   if (bidMap.size === 0) return;
 
   // 입찰가를 아는 키워드만 조회 — 맵에 없으면 순위를 계산할 수 없어 호출도 낭비다.
@@ -63,8 +63,13 @@ async function fillRanks(customerId: number, rows: BriefKeywordRow[]): Promise<v
   const uniqueKeywords = Array.from(new Set(targets.map((r) => r.keyword)));
   const rankByKeyword = new Map<string, Partial<Record<RankPosition, number>>>();
   const CHUNK = 100;
-  for (let i = 0; i < uniqueKeywords.length; i += CHUNK) {
-    const chunk = uniqueKeywords.slice(i, i + CHUNK);
+  const chunks: string[][] = [];
+  for (let i = 0; i < uniqueKeywords.length; i += CHUNK) chunks.push(uniqueKeywords.slice(i, i + CHUNK));
+  // 동시 3 — 순차에서 병렬로(2026-07-22 속도 개선). 검색광고 공식 API 경유라 부하 감지 리스크는
+  // 낮지만 보수적으로 시작. 자격증명 없음 응답이 오면 남은 chunk는 건너뛴다(설계 §5 제약).
+  let noCredential = false;
+  await pool(chunks, 3, async (chunk) => {
+    if (noCredential) return;
     const req: GetBidEstimateRequest = {
       type: "GET_BID_ESTIMATE",
       keywords: chunk.map((k) => ({ keyword: k, currentBid: null })),
@@ -77,12 +82,15 @@ async function fillRanks(customerId: number, rows: BriefKeywordRow[]): Promise<v
     } catch {
       resp = undefined;
     }
-    if (!resp) continue;
-    if (resp.has_credential === false) return; // 자격증명 없음 — 조용히 스킵(설계 §5 제약)
+    if (!resp) return;
+    if (resp.has_credential === false) {
+      noCredential = true;
+      return;
+    }
     if (resp.ok && Array.isArray(resp.data)) {
       for (const vc of resp.data) rankByKeyword.set(normalizeKeyword(vc.keyword), vc.rank_to_bid);
     }
-  }
+  });
 
   for (const r of targets) {
     const key = normalizeKeyword(r.keyword);
@@ -111,7 +119,8 @@ export function openBriefFlow(anchor: HTMLElement, target: ReportTarget): void {
       showAuthor: false, // 문구에 담당자명이 안 들어간다
       showRoas: true, // 대신 목표 ROAS를 여기서 받는다(광고주별 저장)
       roasInitial: metaMap[target.adAccountNo]?.targetRoas ?? null,
-      onConfirm: (range, _author, roas) => void run(target, range, roas),
+      // metaMap을 넘겨 run에서의 재조회를 없앤다 — 기간 선택 사이에 meta가 바뀔 일은 없다.
+      onConfirm: (range, _author, roas) => void run(target, range, roas, metaMap),
     });
   });
 }
@@ -205,7 +214,12 @@ function rebuildCandidates(ctx: BriefContext): void {
   ctx.candidates = next;
 }
 
-async function run(target: ReportTarget, range: DateRange, pickedRoas: number | null): Promise<void> {
+async function run(
+  target: ReportTarget,
+  range: DateRange,
+  pickedRoas: number | null,
+  metaMap: Awaited<ReturnType<typeof loadAllUserMeta>>,
+): Promise<void> {
   if (running) return;
   running = true;
   const token = ++runToken;
@@ -213,7 +227,6 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
   closePopover();
   showProgress("측정 재료를 모으는 중...", cancelRun);
   try {
-    const metaMap = await loadAllUserMeta();
     const meta = metaMap[target.adAccountNo];
     // 목표 ROAS는 기간 선택창 입력이 원본 — 바뀌었으면 광고주별로 조용히 저장(실패해도 진행).
     const targetRoas = pickedRoas ?? undefined;
@@ -221,6 +234,16 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
       void updateUserMeta(target.adAccountNo, { targetRoas })
         .catch((e) => console.warn("[dv-ads/brief] 목표 수익률 저장 실패", e));
     }
+
+    // 입찰가 맵은 수집 데이터와 무관(계정 ID만 쓴다) — 본 수집과 동시에 출발시켜 왕복을 겹친다.
+    // 순위 조회 자체는 후보를 좁힌 뒤에만(전체면 수백 회) — 맵 준비만 앞당기는 것.
+    const bidMapP: Promise<Map<string, number>> =
+      target.masterCustomerId == null
+        ? Promise.resolve(new Map())
+        : fetchPowerlinkBidMap(target.masterCustomerId).catch((e) => {
+            console.warn("[dv-ads/brief] 입찰가 맵 조회 실패 — 순위 후보만 생략", e);
+            return new Map<string, number>();
+          });
 
     // 성과 수집 ∥ 지난 보고 — 서로 독립이라 나란히.
     // collectReportData 내부 병렬 구조는 그대로(성능 감사) — 바깥에서만 병렬을 더한다.
@@ -249,9 +272,9 @@ async function run(target: ReportTarget, range: DateRange, pickedRoas: number | 
 
     const plRows = flattenKeywords(data.plKeywords);
     const rankTargets = pickRankTargets(plRows, targetRoas, thresholds, floors);
-    if (rankTargets.length > 0 && target.masterCustomerId != null) {
+    if (rankTargets.length > 0) {
       try {
-        await fillRanks(target.masterCustomerId, rankTargets);
+        await fillRanks(await bidMapP, rankTargets);
       } catch (e) {
         console.warn("[dv-ads/brief] 순위 보강 실패 — 순위 후보만 생략", e);
       }

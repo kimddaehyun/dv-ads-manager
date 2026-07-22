@@ -8,7 +8,7 @@
 import { collectReportData, buildProductAdRows, type ReportData, type ReportTarget } from "@/features/report/report-build";
 import { rangeText, previousRange, ymdToIso, type DateRange } from "@/features/report/report-period";
 import {
-  fetchAdvancedReport, colIndex, rowMetrics, parseEntity, CAMPAIGN_TP_CODE, ZERO_METRICS,
+  fetchAdvancedReport, colIndex, rowMetrics, parseEntity, pool, CAMPAIGN_TP_CODE, ZERO_METRICS,
   type ReportMetrics, type AdvReportResult,
 } from "@/features/report/report-data";
 import { type NamedMetrics } from "@/features/report/report-fill";
@@ -313,20 +313,6 @@ function numOr0(v: unknown): number {
   return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
-/** setup-data.ts의 pool과 동일 발상 — 동시성 4 worker. */
-async function pool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
-  return out;
-}
-
 /**
  * 파워링크(WEB_SITE) 등록 키워드의 실효 입찰가 맵. key = normalizeKeyword(키워드).
  * useGroupBidAmt면 그룹 bidAmt 상속(F-Setup과 동일 규칙). 쇼핑검색은 키워드 입찰이 없어 제외.
@@ -344,7 +330,9 @@ export async function fetchPowerlinkBidMap(customerId: number): Promise<Map<stri
   const campIds = (Array.isArray(campaigns) ? campaigns : [])
     .map((c) => c.nccCampaignId).filter((x): x is string => !!x);
 
-  const groupLists = await pool(campIds, 4, (cid) =>
+  // 동시성 6 — 4에서 상향(2026-07-22 속도 개선). 사용자 세션 쿠키로 나가는 호출이라 더 올리려면
+  // 네이버 부하 감지(anti-bot) 여부를 라이브에서 지켜보고 조금씩.
+  const groupLists = await pool(campIds, 6, (cid) =>
     authFetch<RawAdgroup[]>(
       `/apis/sa/api/ncc/adgroups?nccCampaignId=${encodeURIComponent(cid)}&recordSize=1001`,
       undefined,
@@ -354,7 +342,7 @@ export async function fetchPowerlinkBidMap(customerId: number): Promise<Map<stri
   const groups = groupLists.flat().filter((g) => g?.nccAdgroupId);
 
   const bidMap = new Map<string, number>();
-  await pool(groups, 4, async (g) => {
+  await pool(groups, 6, async (g) => {
     const keywords = await authFetch<RawKeyword[]>(
       `/apis/sa/api/ncc/keywords?nccAdgroupId=${encodeURIComponent(g.nccAdgroupId!)}&recordSize=1001`,
       undefined,

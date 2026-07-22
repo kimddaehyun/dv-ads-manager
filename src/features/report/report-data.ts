@@ -40,7 +40,22 @@ export interface AdvReportQuery {
   filters?: AdvReportFilter[]; // 서버 필터 (and 결합). 총행수를 줄여 왕복 횟수를 줄이는 게 핵심.
 }
 
-// 한 차원 조합으로 advanced-report 호출. totalResults가 pageSize를 넘으면 startIndex로 페이지네이션.
+/** setup-data.ts와 동일 발상의 동시성 제한 병렬 실행 — 결과는 입력 순서 유지. */
+export async function pool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  return out;
+}
+
+// 한 차원 조합으로 advanced-report 호출. totalResults가 pageSize를 넘으면 startIndex로 페이지네이션 —
+// 첫 페이지에서 총개수를 확정한 뒤 남은 페이지는 병렬(동시 4)로 받아 순서대로 잇는다.
 export async function fetchAdvancedReport(q: AdvReportQuery): Promise<AdvReportResult> {
   const fields = q.fields ?? REPORT_METRICS;
   const pageSize = q.pageSize ?? 1000;
@@ -52,34 +67,36 @@ export async function fetchAdvancedReport(q: AdvReportQuery): Promise<AdvReportR
     ? `&filters=${encodeURIComponent(JSON.stringify({ type: "and", filters: q.filters }))}`
     : "";
 
-  let head: string[] = [];
-  const rows: string[][] = [];
-  let total = 0;
-  let start = 0;
-  do {
-    // requestTotalResults는 첫 페이지에만. 매 페이지마다 켜면 서버가 그때마다 총개수를 다시 세서,
-    // 페이지가 많을수록 순전한 낭비가 된다(총개수는 안 변한다).
-    const url =
+  // requestTotalResults는 첫 페이지에만. 매 페이지마다 켜면 서버가 그때마다 총개수를 다시 세서,
+  // 페이지가 많을수록 순전한 낭비가 된다(총개수는 안 변한다).
+  const fetchPage = (start: number) =>
+    authFetch<{ head?: string[]; body?: string[][]; totalResults?: number }>(
       `/apis/sa/api/advanced-report/values?attributes=${attrParam}` +
-      `&values=${valuesParam}` +
-      `&since=${q.range.since}&until=${q.range.until}` +
-      `&startIndex=${start}&numberOfResults=${pageSize}` +
-      (start === 0 ? "&requestTotalResults=1" : "") +
-      filterParam;
-    const json = await authFetch<{
-      head?: string[];
-      body?: string[][];
-      totalResults?: number;
-    }>(url, undefined, q.customerId);
-    head = json.head ?? head;
-    const body = json.body ?? [];
-    rows.push(...body);
-    // 총개수는 첫 페이지에서만 확정한다. 매 페이지 덮어쓰면 2페이지부터 totalResults가 없어
-    // total이 rows.length가 되고 루프가 그 자리에서 멈춘다(= 조용한 데이터 누락).
-    if (start === 0) total = json.totalResults ?? body.length;
-    start += pageSize;
-    if (body.length === 0) break;
-  } while (rows.length < total && rows.length < maxRows);
+        `&values=${valuesParam}` +
+        `&since=${q.range.since}&until=${q.range.until}` +
+        `&startIndex=${start}&numberOfResults=${pageSize}` +
+        (start === 0 ? "&requestTotalResults=1" : "") +
+        filterParam,
+      undefined,
+      q.customerId,
+    );
+
+  const first = await fetchPage(0);
+  let head = first.head ?? [];
+  const rows: string[][] = [...(first.body ?? [])];
+  // 총개수는 첫 페이지에서만 확정한다 — 2페이지부터는 totalResults가 안 온다.
+  const total = first.totalResults ?? rows.length;
+  const limit = Math.min(total, maxRows);
+
+  if (rows.length > 0 && rows.length < limit) {
+    const starts: number[] = [];
+    for (let s = pageSize; s < limit; s += pageSize) starts.push(s);
+    const pages = await pool(starts, 4, fetchPage);
+    for (const p of pages) {
+      head = p.head ?? head;
+      rows.push(...(p.body ?? []));
+    }
+  }
 
   // maxRows에 걸려 끊기면 뒤쪽 행이 통째로 빠진다. 응답이 유형별로 뭉쳐 오면 특정 광고 유형이
   // 0건이 되어 시트가 사라지기까지 한다(쇼핑검색 키워드 실종 사고). 조용히 지나가면 원인 추적이
