@@ -6,7 +6,7 @@
 
 - `multi-account.ts` — popover UI 전체(행 메뉴, 리스트 뷰, 분리형 고정 헤더, 알림선). `report`/`setup`은 dynamic import로 지연 로딩.
 - `multi-account-data.ts` — 데이터 수집. **모든 계정 데이터를 사용자 페이지 컨텍스트에서 직접 fetch** — bizmoney는 bmgate URL(`/apis/bmgate/v1.0/adAccounts/{accountNo}/bizmoney/account`)로 URL-aware, 나머지(campaigns/stats/contracts/adgroups)는 `/apis/sa/api/*` + `x-ad-customer-id: {masterCustomerId}` 헤더로 cross-account. hidden tab 안 씀. "↻ 전체"는 4 worker 병렬. `authFetch`는 다른 기능들(report/setup/change-watch)도 import.
-- `multi-account-storage.ts` — 별칭/즐겨찾기/숨김/알림 opt-in 등 `MultiAccountUserMeta` + 사용자 설정 4종(제외 변경자·대행권 기준 번호·광고 유형 필터·리포트 담당자명, 서버 `user_settings`가 원본) + 계정 이슈 이력 캐시. **설정 save는 서버 성공 후 로컬 갱신이라 throw 가능** — 호출부는 `withServerSave`로 감쌀 것.
+- `multi-account-storage.ts` — 별칭/즐겨찾기/숨김/알림 opt-in 등 `MultiAccountUserMeta` + 사용자 설정 4종(제외 변경자·대행권 기준 번호·광고 유형 필터·리포트 담당자명, 서버 `user_settings`가 원본) + 계정 이슈 이력 캐시. **설정 save는 서버 성공 후 로컬 갱신이라 throw 가능** — 호출부는 `withServerSave`로 감쌀 것. 단 `Promise<void>` 함수는 성공해도 `undefined`라 실패 판정(`=== undefined`)과 구분 불가 — `.then(() => true)`로 성공값을 만들어 넘긴다(타입 제약이 컴파일로 강제, 2026-07-22 대행권 점검 먹통 실사고).
 - `agency-check-excel.ts` — 대행권 확인 엑셀 (dynamic import).
 
 PRD §8 단일 자격증명 모델과 충돌 없음 — 광고관리자 로그인 쿠키 기반.

@@ -113,7 +113,10 @@ let serverRefreshInFlight = false;
 // 기존엔 chrome.storage.local만 썼기 때문에 거의 실패하지 않아 대부분의 호출부가 에러를 다루지
 // 않았다(그대로 두면 unhandled rejection으로 조용히 사라진다). 서버 저장류 호출을 이 헬퍼로
 // 감싸 실패 시 토스트로 알리고, 이어지는 로컬 상태 갱신/렌더는 건너뛴다(undefined 반환으로 신호).
-async function withServerSave<T>(fn: () => Promise<T>): Promise<T | undefined> {
+// T를 {}|null로 제약해 Promise<void> 함수를 넘기면 컴파일 에러 — void는 성공해도 undefined라
+// "실패 판정(=== undefined)"과 구분이 안 돼 항상 중단되는 버그가 된다(2026-07-22 대행권 점검 실사고).
+// void 저장 함수는 `.then(() => true)`로 성공값을 만들어 넘길 것.
+async function withServerSave<T extends {} | null>(fn: () => Promise<T>): Promise<T | undefined> {
   try {
     return await fn();
   } catch (e) {
@@ -2230,7 +2233,7 @@ function openAgencyModal(
     const save = async () => {
       const ids = [...new Set((input.value.match(/\d+/g) ?? []).map(Number).filter((n) => n > 0))];
       ourIds = ids;
-      if ((await withServerSave(() => saveAgencyIdentity(ids))) === undefined) return;
+      if ((await withServerSave(() => saveAgencyIdentity(ids).then(() => true))) === undefined) return;
       void startCheck();
     };
     wrap.querySelector<HTMLButtonElement>(".dvads-agency-id-save")?.addEventListener("click", () => void save());
@@ -2714,6 +2717,7 @@ async function togglePlatform(
   entries: MultiAccountDirectoryEntry[],
 ): Promise<void> {
   if (platformToggleInFlight) return;
+  const prev = platformFilter;
   const next: PlatformFilter = { ...platformFilter, [key]: !platformFilter[key] };
   if (!next.sa && !next.da) return; // 마지막 하나는 끄기 무시 (체크 유지)
   // platformFilter는 첫 await 이전에 동기 갱신 — populate()가 즉시 새 선택 상태를 그린다.
@@ -2723,9 +2727,13 @@ async function togglePlatform(
   // 재수집이 끝날 때까지 옛 숫자를 그대로 두면 "안 바뀌었네?" 오해를 준다.
   paintAllRowsSkeleton();
   try {
-    await savePlatformFilter(next).catch((e) =>
-      console.warn("[content/multi-account] platform filter 저장 실패", e),
-    );
+    // 저장 실패 시 토글을 되돌린다 — 화면만 바뀌고 저장이 안 되면 다음 페이지 로드에서
+    // 조용히 원복되는 게 더 혼란스럽다. 스냅샷은 아직 안 지웠으니 캐시로 즉시 되그려진다.
+    if (!(await withServerSave(() => savePlatformFilter(next).then(() => true)))) {
+      platformFilter = prev;
+      await refreshAllStale(entries);
+      return;
+    }
     await clearAllSnapshots().catch(() => {});
     // 새 필터로 재수집 — 캐시가 비었으니 force 없이도 전부 다시 받음.
     await refreshAllStale(entries);
@@ -3673,7 +3681,7 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
   /** 제외 목록을 저장하고 선택 계정의 알림 on/off를 적용. */
   const apply = async (turnOn: boolean) => {
     // 제외 목록도 서버 저장(user_settings) — 실패 시 토스트 후 중단(로컬만 바뀌면 PC마다 달라진다).
-    const saved = await withServerSave(() => saveChangeWatchIdentity([...chosen]));
+    const saved = await withServerSave(() => saveChangeWatchIdentity([...chosen]).then(() => true));
     if (saved === undefined) return;
     const result = await withServerSave(() => updateUserMetaMany(nos, { changeWatch: turnOn }));
     if (result === undefined) return;
