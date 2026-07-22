@@ -20,5 +20,7 @@ F-MultiAccount popover에서 진입. 기간을 고르면 계정의 매체별 성
 
 ## Gotchas
 
+- **`collectReportData`는 5분 TTL 1건 캐시**(2026-07-22) — 캐시 키는 계정+기간, meta(담당자/작성일)는 키에서 빼고 반환 시 model만 갈아끼운다. 반환은 최상위 배열·Map을 얕은 복사한 사본 — 소비자가 정렬/추가해도 캐시본 오염 없음(행 객체는 공유라 **행 내용 제자리 수정 금지**). 실제 수집은 `collectReportDataFresh`(병렬 구조 동결 대상은 이쪽).
+- **GFA 상세 4개 차원은 병렬화 금지**(2026-07-22 라이브 실사고, 계정 499563) — 4건을 동시에 걸면 서버가 어느 것도 COMPLETED로 만들지 않아 전 차원 폴링 시간 초과 → 상세 시트 통째 실종 + 계정당 22초 낭비. GFA 서버는 계정당 보고서 생성 1건씩만 처리하는 듯. 차원 루프는 반드시 직렬. 폴링은 "먼저 확인 후 대기", 상한은 기간 일수 비례(`pollMaxFor`) — 고정 15회로 되돌리면 월간에서 시트 누락 재발.
 - SA stats는 `x-ad-customer-id` 없으면 200+빈 data(silent-empty) — 루트 CLAUDE.md "stats" 절 참조. `ids`는 쉼표 분리 문자열이라 chunk(80개 등)로 나눠 호출 후 합산.
 - `POST /apis/dashboard/v1/adAccounts/{no}/reports/search` body `{startDate,endDate}`는 계정 전체 ground truth(일별 metrics 합산, `conversions`=전체전환 / `purchasedConversionsValueMicros`=구매완료매출, **구매완료 전환수 count 필드는 없음**).

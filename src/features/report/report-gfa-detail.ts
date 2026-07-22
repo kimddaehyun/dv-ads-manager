@@ -95,9 +95,12 @@ async function requestReport(adAccountNo: number, customerId: number, reportQuer
 }
 
 // 내 reportQuery에 매칭되는 COMPLETED job의 no (가장 최근 생성). 시간 초과 시 throw.
-async function pollJobNo(adAccountNo: number, customerId: number, q: DimQuery, range: DateRange): Promise<number> {
-  for (let t = 0; t < POLL_MAX; t++) {
-    await sleep(POLL_INTERVAL_MS);
+// "먼저 확인 → 없으면 대기" 순서 — 이미 준비된 보고서에 1초를 공으로 쓰지 않는다(2026-07-22 속도 개선).
+async function pollJobNo(
+  adAccountNo: number, customerId: number, q: DimQuery, range: DateRange, maxTries: number,
+): Promise<number> {
+  for (let t = 0; t < maxTries; t++) {
+    if (t > 0) await sleep(POLL_INTERVAL_MS);
     const arr = await authFetch<DownloadJob[]>(
       `/apis/gfa/v1/adAccounts/${adAccountNo}/report/downloads?reportType=PERFORMANCE`,
       undefined,
@@ -165,9 +168,7 @@ async function pruneOldDownloads(adAccountNo: number, customerId: number): Promi
     customerId,
   ).catch(() => [] as DownloadJob[]);
   const ours = (Array.isArray(list) ? list : []).filter((j) => j.status === "COMPLETED" && isOurDownload(j));
-  for (const job of ours) {
-    await deleteDownload(adAccountNo, customerId, job.no).catch(() => {});
-  }
+  await Promise.all(ours.map((job) => deleteDownload(adAccountNo, customerId, job.no).catch(() => {})));
 }
 
 const num = (s: string | undefined): number => {
@@ -200,7 +201,14 @@ function parseRows(csv: string): NamedMetrics[] {
   return out;
 }
 
-// 디스플레이 분해 4종을 순차 수집. 어느 한 종이 실패하면 전체 throw — 호출 측에서 graceful 처리.
+// 폴링 상한 — 기간이 길수록 서버 생성이 오래 걸린다(감사 N18: 월간에서 15초 초과 시 시트 누락).
+// 기본 15회에 기간 일수만큼 더해 준다(31일 월간이면 46회). 짧은 기간은 기존과 동일.
+function pollMaxFor(range: DateRange): number {
+  const days = Math.round((new Date(range.until).getTime() - new Date(range.since).getTime()) / 86_400_000) + 1;
+  return POLL_MAX + Math.max(0, Math.min(60, days));
+}
+
+// 디스플레이 분해 4종 수집. 어느 한 종이 실패하면 전체 throw — 호출 측에서 graceful 처리.
 export async function fetchGfaDetail(adAccountNo: number, customerId: number, range: DateRange): Promise<GfaDetailRaw> {
   const base = {
     adAccountNo,
@@ -213,11 +221,13 @@ export async function fetchGfaDetail(adAccountNo: number, customerId: number, ra
   const result: GfaDetailRaw = { byDay: [], byPlacement: [], byGender: [], byAge: [] };
   // 시작 시 과거 잔여 다운로드 정리(50 한도 회복). 새 4건을 만들기 전에 우리 백로그를 비운다.
   await pruneOldDownloads(adAccountNo, customerId).catch(() => {});
-  // POST는 전역 게이트(gatedPost)로 간격(기본 1초)을 지키고, 폴링·다운로드는 게이트 밖에서
-  // 진행돼 다른 계정과 겹쳐 돈다. 403이 나타나면 안전 간격(7초)으로 전환 + 8초 뒤 1회 재시도 —
-  // 재시도도 실패하면 throw(호출 측 graceful: 디스플레이_상세 시트 제거).
-  for (let i = 0; i < DIMS.length; i++) {
-    const { key, q } = DIMS[i];
+  const maxTries = pollMaxFor(range);
+  // ⚠️ 4개 차원은 반드시 **직렬**(2026-07-22 라이브 확인, 계정 499563): 4건을 1초 간격으로 동시에
+  // 걸면 서버가 어느 것도 COMPLETED로 만들지 않아 전 차원이 폴링 시간 초과로 죽는다 — GFA 서버는
+  // 계정당 보고서 생성을 1건씩만 처리하는 것으로 보인다. 병렬화 재시도 금지.
+  // POST는 전역 게이트(gatedPost)로 간격(기본 1초) 유지. 403이 나타나면 안전 간격(7초)으로 전환 +
+  // 8초 뒤 1회 재시도 — 재시도도 실패하면 throw(호출 측 graceful: 디스플레이_상세 시트 제거).
+  for (const { key, q } of DIMS) {
     try {
       await gatedPost(() => requestReport(adAccountNo, customerId, { ...base, ...q }));
     } catch (e) {
@@ -227,7 +237,7 @@ export async function fetchGfaDetail(adAccountNo: number, customerId: number, ra
       await sleep(RETRY_BACKOFF_MS);
       await gatedPost(() => requestReport(adAccountNo, customerId, { ...base, ...q }));
     }
-    const no = await pollJobNo(adAccountNo, customerId, q, range);
+    const no = await pollJobNo(adAccountNo, customerId, q, range, maxTries);
     result[key] = parseRows(await downloadCsv(adAccountNo, no));
     // 받아서 파싱한 직후 그 다운로드는 더 필요 없으니 삭제(best-effort) — 한도에 안 쌓이게.
     void deleteDownload(adAccountNo, customerId, no).catch(() => {});

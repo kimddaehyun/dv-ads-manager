@@ -664,12 +664,51 @@ export interface ReportData {
   shProductInfo: Map<string, ProductInfo>;
 }
 
+// 같은 계정·기간 재수집을 막는 단기 캐시 1건(2026-07-22 속도 개선) — "리포트 뽑고 바로 보고 문구"
+// 흐름에서 수집을 통째로 생략한다. 5분이 지나면 버린다(진행 중 기간은 stats가 계속 갱신되므로 짧게).
+// meta(담당자/작성일)는 표지 텍스트 전용이라 키에서 빼고 반환할 때 갈아끼운다.
+// promise를 캐시해 동시 호출도 한 번만 수집. 실패한 수집은 캐시에 남기지 않는다.
+const COLLECT_CACHE_TTL_MS = 5 * 60_000;
+let collectCache: { key: string; at: number; dataP: Promise<ReportData> } | null = null;
+
 /**
  * 실데이터 수집만 담당 - 엑셀 생성(양식 fetch/openXlsx/fill/render)과 분리.
- * 병렬 구조(brandP/displayDataP를 await로 막지 않고 promise로 먼저 출발)는 성능 감사 2026-07-02
- * 확정 - 순서·동시성을 바꾸지 말 것. F-Report·F-Brief가 이 함수를 공유한다.
+ * F-Report·F-Brief가 이 함수를 공유한다. 실제 수집은 collectReportDataFresh — 여기는 캐시 껍데기.
  */
 export async function collectReportData(
+  target: ReportTarget, range: DateRange, meta: ReportMeta,
+): Promise<ReportData> {
+  const key = `${target.adAccountNo}|${target.masterCustomerId}|${range.since}|${range.until}`;
+  if (!collectCache || collectCache.key !== key || Date.now() - collectCache.at > COLLECT_CACHE_TTL_MS) {
+    const dataP = collectReportDataFresh(target, range, meta);
+    collectCache = { key, at: Date.now(), dataP };
+    dataP.catch(() => {
+      if (collectCache?.dataP === dataP) collectCache = null;
+    });
+  }
+  const data = await collectCache.dataP;
+  // 표지 텍스트는 호출마다 다를 수 있다(리포트는 담당자명, 문구는 빈 값) — model만 갈아끼운다.
+  // 최상위 배열·Map도 얕은 복사 — 소비자(엑셀 렌더·규칙 엔진)가 정렬/추가로 제자리 수정해도
+  // 캐시본과 다음 소비자가 오염되지 않게. 행 객체까지는 복사하지 않는다(전부 읽기 전용 소비).
+  return {
+    ...data,
+    model: { ...data.model, authorName: meta.authorName, createdDate: meta.createdDate },
+    searchTypes: [...data.searchTypes],
+    displayData: { ...data.displayData, byType: [...data.displayData.byType], byCampaign: [...data.displayData.byCampaign] },
+    campGroups: [...data.campGroups],
+    plKeywords: [...data.plKeywords],
+    shKeywords: [...data.shKeywords],
+    shProducts: [...data.shProducts],
+    shProductAdRows: [...data.shProductAdRows],
+    shProductInfo: new Map(data.shProductInfo),
+  };
+}
+
+/**
+ * 병렬 구조(brandP/displayDataP를 await로 막지 않고 promise로 먼저 출발)는 성능 감사 2026-07-02
+ * 확정 - 순서·동시성을 바꾸지 말 것.
+ */
+async function collectReportDataFresh(
   target: ReportTarget, range: DateRange, meta: ReportMeta,
 ): Promise<ReportData> {
   const cid = target.masterCustomerId;
