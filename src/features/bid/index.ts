@@ -976,11 +976,15 @@ function scheduleModalCheck(): void {
 }
 
 function watchPageConfirmModal(): void {
-  // 단일 옵저버를 모듈 lifetime 동안 유지 — disconnect 안 함.
-  new MutationObserver(scheduleModalCheck).observe(document.body, {
-    childList: true,
-    subtree: true,
+  // 단일 옵저버를 모듈 lifetime 동안 유지 — 세대 교체(isStale) 시에만 스스로 물러난다.
+  const observer = new MutationObserver(() => {
+    if (isStale()) {
+      observer.disconnect();
+      return;
+    }
+    scheduleModalCheck();
   });
+  observer.observe(document.body, { childList: true, subtree: true });
 }
 // watchPageConfirmModal()은 main()에서 승인 확인 후 호출한다.
 

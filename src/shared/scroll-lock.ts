@@ -9,6 +9,8 @@
  * 화면에서 숨겨진 것이므로 잠금 대상에서 제외.
  */
 
+import { isStale } from "./takeover";
+
 // backdrop은 전부 document.body 직속으로 mount된다 (:scope > 로 페이지 내부 오탐 방지).
 const BACKDROP_SELECTOR = ':scope > .dvads[class*="backdrop"]:not(.dvads-recede)';
 
@@ -22,8 +24,9 @@ function evaluate(): void {
   locked = shouldLock;
   const html = document.documentElement;
   if (shouldLock) {
-    savedHtmlOverflow = html.style.overflow;
-    savedBodyOverflow = document.body.style.overflow;
+    // "hidden"은 이전 세대 잠금의 잔재일 수 있다 — 원상복구 값으로 저장하면 영영 안 풀린다.
+    savedHtmlOverflow = html.style.overflow === "hidden" ? "" : html.style.overflow;
+    savedBodyOverflow = document.body.style.overflow === "hidden" ? "" : document.body.style.overflow;
     html.style.overflow = "hidden";
     document.body.style.overflow = "hidden";
   } else {
@@ -44,7 +47,22 @@ export function initScrollLock(): void {
     });
   };
   // childList: backdrop mount/remove 감지. attributes(class): `.dvads-recede` 토글 감지.
-  new MutationObserver(schedule).observe(document.body, {
+  // 세대 교체(isStale) 시 옛 컨텍스트의 관찰자는 스스로 물러난다 — 새 세대가 다시 잠근다.
+  const observer = new MutationObserver(() => {
+    if (isStale()) {
+      observer.disconnect();
+      // 잠근 채로 물러나면 새 세대는 저장해 둔 원래 overflow 값을 모른다 —
+      // 은퇴 전에 이 세대가 건 잠금은 직접 풀어 페이지가 잠긴 채 남지 않게 한다.
+      if (locked) {
+        locked = false;
+        document.documentElement.style.overflow = savedHtmlOverflow;
+        document.body.style.overflow = savedBodyOverflow;
+      }
+      return;
+    }
+    schedule();
+  });
+  observer.observe(document.body, {
     childList: true,
     subtree: true,
     attributes: true,

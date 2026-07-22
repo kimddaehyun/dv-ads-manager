@@ -7,7 +7,7 @@
 - `ui-dropdown.ts` — **오버레이 dropdown은 `createDropdown` 의무** (네이티브 `<select>` 금지 — OS별 외관 차이). popup 등 컨테이너 dismiss 시 `closeAllOpenDropdowns()` 호출해 portal 패널 정리.
 - `dialog-dismiss.ts` — **backdrop dim + 중앙 카드 다이얼로그의 "배경 클릭으로 닫기"는 반드시 `wireBackdropDismiss` 사용.** 카드 입력창에서 텍스트 드래그 → backdrop에서 mouseup하면 `click` target이 backdrop이 돼 단순 `e.target === backdrop` 판정으론 잘못 닫힘. 헬퍼는 mousedown이 backdrop에서 시작한 경우에만 닫고 stopPropagation까지 처리. 새 다이얼로그는 직접 구현 금지.
 - `confirm-dialog.ts` / `input-dialog.ts` / `toast.ts`(+5초 Undo) / `tooltip.ts` — React 미사용, native DOM.
-- `scroll-lock.ts` — **backdrop 다이얼로그의 배경 스크롤 잠금은 개별 다이얼로그가 아니라 이 단일 감시자가 처리** (`initScrollLock`, 진입점 1회 호출). body 직속 `.dvads[class*="backdrop"]` 존재 여부로 판단하므로 새 다이얼로그는 backdrop 클래스명에 "backdrop"만 포함하면 자동 커버. `.dvads-recede`는 잠금 제외.
+- `scroll-lock.ts` — **backdrop 다이얼로그의 배경 스크롤 잠금은 개별 다이얼로그가 아니라 이 단일 감시자가 처리** (`initScrollLock`, 진입점 1회 호출). body 직속 `.dvads[class*="backdrop"]` 존재 여부로 판단하므로 새 다이얼로그는 backdrop 클래스명에 "backdrop"만 포함하면 자동 커버. `.dvads-recede`는 잠금 제외. **isStale 은퇴 루프가 페이지 전역 상태(overflow 등)를 쥐고 있으면 풀고 물러나야 한다** — 새 세대는 옛 세대의 저장값을 모른다. 물려받은 "hidden"을 원상복구 값으로 저장하는 것도 금지(2026-07-22 codex 지적).
 - `searchad.ts` — 검색광고 API HMAC 서명 + batch fetch + 429 backoff. `friendly-error.ts` — 사용자 친화적 에러 변환. `rank.ts` — 예상순위 계산. `storage-keys.ts` — 캐시 키 스킴. `cache-prune.ts` — TTL prune.
 
 ## searchad API
