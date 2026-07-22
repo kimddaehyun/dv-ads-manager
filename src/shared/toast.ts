@@ -36,11 +36,14 @@ export interface ShowToastOptions {
 
 function ensureRoot(): HTMLElement {
   let root = document.getElementById(ROOT_ID);
-  if (root) return root;
-  root = document.createElement("div");
-  root.id = ROOT_ID;
-  root.className = "dvads dvads-toast-root";
-  document.body.appendChild(root);
+  if (!root) {
+    root = document.createElement("div");
+    root.id = ROOT_ID;
+    root.className = "dvads dvads-toast-root";
+  }
+  // 다이얼로그 backdrop과 z-index가 같아(둘 다 max) DOM 순서가 승부를 가른다 —
+  // 뒤에 열린 다이얼로그가 토스트를 가리므로 띄울 때마다 body 끝으로 옮겨 항상 위로.
+  if (root !== document.body.lastElementChild) document.body.appendChild(root);
   return root;
 }
 

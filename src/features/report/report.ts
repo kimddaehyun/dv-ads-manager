@@ -17,7 +17,7 @@ import {
 } from "@/features/report/report-build";
 import { type DateRange } from "@/features/report/report-period";
 import {
-  buildSummaryPayload, composeReportMessage, showReportMessageDialog,
+  buildSummaryPayload, collectPrevKeywordMetrics, composeReportMessage, showReportMessageDialog,
   showReportMessagesDialog, type ReportMessageItem,
 } from "./report-message";
 import { openReportDatePicker } from "./report-datepicker";
@@ -115,6 +115,10 @@ async function runSingle(target: ReportTarget, range: DateRange, author: string,
   try {
     const meta = { authorName: author, createdDate: fmtDate(new Date()) };
     // 문구 포함이면 수집 결과를 엑셀 렌더와 문구 조립이 공유한다(수집 2회 방지).
+    // 이전 기간 키워드(지난 조치 효과 비교)는 문구 생성 시에만 — 본 수집과 병렬 출발, 실패 시 null.
+    const prevKwP = withMessage && target.masterCustomerId != null
+      ? collectPrevKeywordMetrics(target.masterCustomerId, range)
+      : null;
     const data = withMessage ? await collectReportData(target, range, meta) : null;
     const bytes = data ? await buildReportBytesFromData(data) : await buildReportBytes(target, range, meta);
     if (stale()) return; // 결과 폐기 — 오버레이·running은 취소/새 실행이 이미 처리
@@ -122,9 +126,9 @@ async function runSingle(target: ReportTarget, range: DateRange, author: string,
     downloadBytes(bytes, filename);
     trackUsage("report_excel");
     if (data) {
-      showProgress("안내 문구를 만드는 중...", cancelRun);
+      showProgress("리포트 문구를 만드는 중...", cancelRun);
       try {
-        const message = await composeReportMessage(buildSummaryPayload(target.name, data, range));
+        const message = await composeReportMessage(buildSummaryPayload(target.name, data, range, await prevKwP));
         if (stale()) return;
         hideProgress();
         showToast({ message: "리포트를 내려받았어요", variant: "success", keyword: filename });
@@ -134,7 +138,7 @@ async function runSingle(target: ReportTarget, range: DateRange, author: string,
         console.warn("[dv-ads/report] 안내 문구 생성 실패", e);
         if (stale()) return;
         hideProgress();
-        showToast({ message: e instanceof Error ? e.message : "안내 문구를 만들지 못했어요", variant: "error" });
+        showToast({ message: e instanceof Error ? e.message : "리포트 문구를 만들지 못했어요", variant: "error" });
       }
       return;
     }
@@ -192,11 +196,14 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
         try {
           if (withMessage) {
             // 수집 결과를 엑셀과 문구가 공유. 문구 실패는 엑셀을 막지 않는다(txt만 빠짐).
+            const prevKwP = t.masterCustomerId != null
+              ? collectPrevKeywordMetrics(t.masterCustomerId, range)
+              : null;
             const data = await collectReportData(t, range, meta);
             files[`${safeFile(t.name)}_${range.since}~${range.until}.xlsx`] = await buildReportBytesFromData(data);
             try {
-              const message = await composeReportMessage(buildSummaryPayload(t.name, data, range));
-              files[`${safeFile(t.name)}_안내문구.txt`] = strToU8(message);
+              const message = await composeReportMessage(buildSummaryPayload(t.name, data, range, await prevKwP));
+              files[`${safeFile(t.name)}_리포트문구.txt`] = strToU8(message);
               messages.push({ name: t.name, text: message });
             } catch (e) {
               console.warn(`[dv-ads/report] ${t.name} 안내 문구 실패`, e);
@@ -231,7 +238,7 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
       if (messages.length > 0) showReportMessagesDialog(messages);
       if (msgFailed > 0) {
         showToast({
-          message: `광고주 ${msgFailed}곳의 안내 문구는 만들지 못했어요. 잠시 후 다시 시도해 주세요`,
+          message: `광고주 ${msgFailed}곳의 리포트 문구는 만들지 못했어요. 잠시 후 다시 시도해 주세요`,
           variant: "error",
         });
       }
