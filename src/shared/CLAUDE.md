@@ -16,7 +16,7 @@
 
 ## F-Accounts 인증 모듈
 
-- `supabase.ts` — `getSupabase()` 싱글턴 클라이언트(`chromeStorageAdapter`로 세션을 `chrome.storage.local`에 저장). anon 키는 공개 안전(RLS 방어).
+- `supabase.ts` — `getSupabase()` 싱글턴 클라이언트(`chromeStorageAdapter`로 세션을 `chrome.storage.local`에 저장). anon 키는 공개 안전(RLS 방어). **고아 컨텍스트 은퇴 가드 내장** — 확장 reload 후 옛 컨텍스트의 auth 자동 갱신·visibility 콜백이 `chrome.storage` 접근에서 "Extension context invalidated"를 콘솔에 도배하므로, 어댑터가 `chrome.runtime?.id` 사전 확인 + try/catch(확인 직후 끊기는 경합)로 감지해 `stopAutoRefresh()` 후 no-op으로 물러난다. 제거 금지 (2026-07-22).
 - `auth-state.ts` — `fetchAuthContext()`가 세션+`profiles` 조회해 `AuthState`(signedOut/pending/blocked/approved) 산출. **네트워크 실패 등 예외 시에도 절대 throw하지 않고 `pending`으로 fallback** — 잠금이 안전 기본값(장애가 승인으로 새면 안 됨).
 - `auth-gate.ts` — `requireApproved()`가 콘텐츠 스크립트의 단일 관문. **페이지당 1회만 조회하도록 모듈 스코프에 Promise 캐시**(여러 기능이 각자 init에서 부르면 중복 네트워크 호출) — per-page memo라 페이지 재로드 전까지 상태 안 바뀜.
 - `server-store.ts` — `account_meta`/`account_groups`/`change_watch_state`(계정 이슈 이력)/`user_settings`(사용자 설정 4종: 알림 제외 변경자·대행권 기준 번호·광고 유형 필터·리포트 담당자명) CRUD. 뒤 둘은 2026-07-20 추가. **`user_settings`는 부분 갱신**(`pushUserSettings(patch)`) — 전체 upsert하면 안 넘긴 설정이 기본값으로 밀린다. 서버에 행이 없으면(도입 전 사용자) 첫 새로고침이 **로컬값을 올려** 리셋처럼 보이는 걸 막는다. **저장은 항상 서버 먼저** — 성공 후 로컬 캐시 갱신은 호출부 책임. `pushGroups`는 전체 교체(replace-all, `not in (ids)` 삭제 + upsert) 전략.
