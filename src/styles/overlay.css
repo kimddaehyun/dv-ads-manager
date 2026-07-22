@@ -2838,7 +2838,7 @@ td.dvads-period-delta-down {
 /* 문구 우하단에 떠 있는 복사 아이콘 — 생성 전에는 hidden 속성으로 숨김. */
 .dvads-hr-copy {
   position: absolute;
-  right: 24px;
+  right: 14px;
   bottom: 14px;
   width: 32px;
   height: 32px;
