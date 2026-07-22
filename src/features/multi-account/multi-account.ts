@@ -2288,6 +2288,10 @@ function openAgencyModal(
       return;
     }
     if (targets.length === 0) {
+      // 입력 화면에서 넘어온 경우 입력창 잔재 정리 + 숨겼던 헤더 ×를 복원 — 이 화면의 닫기 수단.
+      identityEl.style.display = "none";
+      titleEl.textContent = "대행권 점검";
+      closeBtnEl.style.display = "";
       bodyEl.style.display = "";
       bodyEl.innerHTML =
         `<div class="dvads-agency-msg">점검할 계정이 없어요. 광고계정 화면을 먼저 열어 계정 명단을 불러와 주세요.</div>`;
@@ -3635,7 +3639,8 @@ const ACTOR_SCAN_DAYS = 14;
  * 변경이력 알림 — 켜기/끄기 + 알림에서 제외할 변경자 선택을 한 화면에서.
  *
  * 좌측에 켜기/끄기 토글, 우측에 [취소][확인]. 확인 = 제외 목록 저장 + 토글 상태 적용.
- * 제외할 사람이 1명뿐인 팀도 있으므로 목록이 비어도 확인을 허용한다.
+ * 제외할 사람이 1명뿐인 팀도 있으므로 목록 1명부터 허용하되, 켜기 상태에서 0명이면
+ * 확인을 막는다(우리 작업까지 전부 남의 것으로 보여 오탐 폭주). 끄기는 빈 목록도 허용.
  *
  * 변경자 표기가 제각각(`dvcompany:naver` / `김아라` / `GW10500` / `SYSTEM`)이라 맨입력은
  * 거의 실패한다. 그래서 열면 **선택한 계정의** 최근 이력에서 실제 등장한 변경자를 긁어와
@@ -3683,11 +3688,16 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
   const input = card.querySelector<HTMLInputElement>(".dvads-actor-input")!;
   const clearBtn = card.querySelector<HTMLButtonElement>(".dvads-actor-input-clear")!;
   const confirmBtn = card.querySelector<HTMLButtonElement>(".dvads-cw-confirm")!;
+  const onToggle = card.querySelector<HTMLInputElement>(".dvads-cw-on")!;
   input.value = current.join(", ");
 
   const syncOnEnabled = () => {
     clearBtn.style.display = input.value === "" ? "none" : "";
+    // 켜기로 확인하려면 제외 변경자가 최소 1명 필요 — 0명이면 우리 작업까지 전부
+    // 남의 것으로 보여 알림이 무의미하다(오탐 폭주). 끄기는 빈 목록도 허용.
+    confirmBtn.disabled = onToggle.checked && chosen.size === 0;
   };
+  onToggle.addEventListener("change", syncOnEnabled);
   // 입력창이 값의 원천 — 칩은 그 값을 편하게 넣는 수단일 뿐이다. 손으로 글자를 지웠을 때
   // 칩 선택이 남아있으면 "비운 것 같은데 안 비워진" 상태가 되므로 입력에서 되읽어 맞춘다.
   const syncFromInput = () => {
@@ -3737,7 +3747,6 @@ async function openChangeWatchDialogFor(nos: number[]): Promise<void> {
   };
 
   // 확인 = 제외 목록 저장 + 토글 상태(켜기/끄기) 적용. 취소는 아무것도 저장하지 않고 닫기만.
-  const onToggle = card.querySelector<HTMLInputElement>(".dvads-cw-on")!;
   card.querySelector<HTMLButtonElement>(".dvads-cw-cancel")?.addEventListener("click", cleanup);
   confirmBtn.addEventListener("click", () => {
     cleanup();
@@ -4023,7 +4032,7 @@ async function openHistoryReportDialogFor(target: {
           report.groups = report.groups.filter((g) => pickedGroups.has(g.key));
           report.total = report.groups.reduce((n, g) => n + g.items.length, 0);
         }
-        textEl.value = formatHistoryReportText(target.name, period.since, period.until, report);
+        textEl.value = formatHistoryReportText(period.since, period.until, report);
         trackUsage("history_report");
         copyBtn.hidden = false;
         persistSelections();
@@ -4285,7 +4294,20 @@ function syncIssueChip(row: HTMLTableRowElement) {
   badge.style.display = "";
   // 배지 호버 툴팁은 안 쓴다 — 이슈 내용은 배지를 눌러 '계정 상태' 패널에서 본다.
   // 상태 필터가 켜져 있으면 판정이 바뀔 때마다 표시/숨김도 다시 계산.
-  if (statusFilter && popoverEl) applyListSearchFilter(popoverEl, listSearchQuery);
+  if (statusFilter && popoverEl) scheduleStatusRefilter();
+}
+
+// 상태 필터 재적용 rAF 디바운스 — applyListSearchFilter는 테이블 전 행을 훑는 O(전체 행)
+// 작업이라, 계정별 paint(paintChangeWatchRow·paintRow)가 계정 수만큼 연쇄 호출될 때
+// 매번 돌리면 O(N²)이 된다. 프레임당 1회로 묶는다 (scheduleHeadColSync와 같은 패턴).
+let statusRefilterQueued = false;
+function scheduleStatusRefilter(): void {
+  if (statusRefilterQueued) return;
+  statusRefilterQueued = true;
+  requestAnimationFrame(() => {
+    statusRefilterQueued = false;
+    if (statusFilter && popoverEl) applyListSearchFilter(popoverEl, listSearchQuery);
+  });
 }
 
 // ─── 변경이력 알림 상세 패널 ─────────────────────────────────────────────
