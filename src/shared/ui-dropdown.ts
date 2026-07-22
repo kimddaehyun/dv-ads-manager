@@ -261,6 +261,8 @@ export interface ActionMenuItem {
   keepOpen?: boolean;
   /** 항목 호버 시 다크 툴팁(공용 dvads-tooltip, 우측 배치)으로 보여줄 설명. */
   title?: string;
+  /** 라벨 뒤 파란 보조 표기 (예: "(완료)"). 상태 표시용 — 클릭 동작엔 영향 없음. */
+  suffix?: string;
 }
 
 export interface AttachActionMenuOptions {
@@ -333,6 +335,9 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
   // 패널 항목 채우기 — 체크박스 토글(keepOpen) 시 재호출해 체크 표시를 갱신한다.
   const populate = (): void => {
     if (!panel) return;
+    // keepOpen 항목 클릭 후 재렌더 시 호버 중이던 버튼이 detach돼 mouseleave가 안 온다 —
+    // 이전 항목의 툴팁이 고아로 남아 다음 hover 때까지 옛 문구가 떠 있는 문제 방지.
+    hideTooltip();
     panel.replaceChildren();
     const resolvedItems = typeof opts.items === "function" ? opts.items() : opts.items;
     for (const item of resolvedItems) {
@@ -360,6 +365,12 @@ export function attachActionMenu(opts: AttachActionMenuOptions): { close: () => 
         btn.textContent = item.label ?? "";
       } else {
         btn.textContent = item.label ?? "";
+      }
+      if (item.suffix) {
+        const s = document.createElement("span");
+        s.className = "dvads-dropdown-suffix";
+        s.textContent = ` ${item.suffix}`;
+        btn.appendChild(s);
       }
       btn.addEventListener("click", (e) => {
         e.stopPropagation();

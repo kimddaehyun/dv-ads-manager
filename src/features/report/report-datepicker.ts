@@ -13,7 +13,9 @@ import { rangeForPreset, PRESET_LABELS, type ReportPreset, type DateRange } from
 import { registerMenuSibling, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
 import { attachTooltip } from "@/shared/tooltip";
 // 담당자명은 사용자 설정 묶음(user_settings)의 일부 — 저장/조회는 multi-account-storage가 담당.
-import { loadReportAuthor, saveReportAuthor } from "@/features/multi-account/multi-account-storage";
+import {
+  loadReportAuthor, saveReportAuthor, loadReportWithMessage, saveReportWithMessage,
+} from "@/features/multi-account/multi-account-storage";
 
 const PRESETS = Object.keys(PRESET_LABELS) as ReportPreset[];
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
@@ -129,9 +131,22 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   const roasWrap = el.querySelector<HTMLElement>(".dvads-rdp-roas-wrap")!;
   const roasInput = el.querySelector<HTMLInputElement>(".dvads-rdp-roas")!;
 
+  // 토글 저장 경합 방지 상태 — 복원 완료 전 확인을 누르면 저장을 건너뛰어
+  // 기본값(꺼짐)이 서버의 켜짐 설정을 덮지 않게 한다.
+  let msgToggleTouched = false;
+  let msgToggleRestored = false;
+
   if (opts.showMessageToggle) {
     const info = el.querySelector<HTMLElement>(".dvads-rdp-msg-info")!;
     attachTooltip(info, "엑셀과 함께 보고 문구도 만들어요", { placement: "top" });
+    // 마지막에 선택한 상태 복원 — 복원 전에 사용자가 이미 만졌으면 그대로 둔다.
+    msgToggleTouched = false;
+    msgToggleRestored = false;
+    msgToggle.addEventListener("change", () => { msgToggleTouched = true; });
+    void loadReportWithMessage().then((on) => {
+      msgToggleRestored = true;
+      if (!msgToggleTouched) msgToggle.checked = on;
+    });
   } else {
     // 토글 묶음만 제거 — msgrow는 담당자/목표 ROAS 입력이 함께 살아 유지된다.
     // (msgToggle 참조는 위에서 이미 잡아둬 detached여도 checked=false로 안전)
@@ -398,6 +413,14 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     if (author) {
       void saveReportAuthor(author).catch((e) =>
         console.warn("[dv-ads/report] 담당자명 저장 실패", e),
+      );
+    }
+    // 토글 마지막 상태 저장 — 실패해도 리포트 생성은 진행.
+    // 복원 전(restored=false)이고 사용자가 안 만졌으면(touched=false) 저장 생략 —
+    // 아직 기본값인 꺼짐이 저장된 켜짐을 덮는 경합 방지 (codex P2, 2026-07-22).
+    if (opts.showMessageToggle && (msgToggleTouched || msgToggleRestored)) {
+      void saveReportWithMessage(msgToggle.checked).catch((e) =>
+        console.warn("[dv-ads/report] 문구 생성 토글 저장 실패", e),
       );
     }
     finish();

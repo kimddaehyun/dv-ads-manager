@@ -601,12 +601,14 @@ async function pullUserSettingsToLocal(): Promise<void> {
       loadPlatformFilter(),
     ]);
     const author = await loadReportAuthor();
+    const withMessage = await loadReportWithMessage();
     await pushUserSettings({
       changeWatchActors: actors,
       agencyManagerNos: managerNos,
       platformSa: filter.sa,
       platformDa: filter.da,
       reportAuthor: author,
+      reportWithMessage: withMessage,
     });
     return;
   }
@@ -615,6 +617,7 @@ async function pullUserSettingsToLocal(): Promise<void> {
     [AGENCY_IDENTITY_KEY]: { directManagerNos: server.agencyManagerNos },
     [PLATFORM_FILTER_KEY]: { sa: server.platformSa, da: server.platformDa },
     [REPORT_AUTHOR_KEY]: server.reportAuthor,
+    [REPORT_WITH_MESSAGE_KEY]: server.reportWithMessage,
   });
 }
 
@@ -630,6 +633,19 @@ export async function loadReportAuthor(): Promise<string> {
 export async function saveReportAuthor(author: string): Promise<void> {
   await pushUserSettings({ reportAuthor: author });
   await chrome.storage.local.set({ [REPORT_AUTHOR_KEY]: author });
+}
+
+// 리포트 "문구 생성" 토글 마지막 상태 — 담당자명과 동일 패턴(서버 원본 + 로컬 캐시).
+export const REPORT_WITH_MESSAGE_KEY = "report_with_message";
+
+export async function loadReportWithMessage(): Promise<boolean> {
+  const r = await chrome.storage.local.get(REPORT_WITH_MESSAGE_KEY);
+  return r[REPORT_WITH_MESSAGE_KEY] === true;
+}
+
+export async function saveReportWithMessage(on: boolean): Promise<void> {
+  await pushUserSettings({ reportWithMessage: on });
+  await chrome.storage.local.set({ [REPORT_WITH_MESSAGE_KEY]: on });
 }
 
 /**

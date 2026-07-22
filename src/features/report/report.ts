@@ -17,6 +17,7 @@ import {
 import { type DateRange } from "@/features/report/report-period";
 import {
   buildSummaryPayload, composeReportMessage, showReportMessageDialog,
+  showReportMessagesDialog, type ReportMessageItem,
 } from "./report-message";
 import { openReportDatePicker } from "./report-datepicker";
 import { closePopover } from "@/features/multi-account/multi-account";
@@ -171,6 +172,9 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
   const stale = () => token !== runToken;
   const meta = { authorName: author, createdDate: fmtDate(new Date()) };
   const files: Record<string, Uint8Array> = {};
+  // 문구는 zip의 txt에 더해 다이얼로그로도 보여준다(단일 생성과 동일 UX). 실패 광고주는 따로 센다.
+  const messages: ReportMessageItem[] = [];
+  let msgFailed = 0;
   let done = 0;
   closePopover(); // 진행 오버레이가 뜨면 다계정 대시보드 팝오버는 닫는다
   try {
@@ -178,7 +182,7 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
     // report-gfa-detail의 전역 게이트(기본 1초, 403 시 7초 복귀)가 간격을 관리한다.
     const REPORT_CONCURRENCY = 2;
     let next = 0;
-    showProgress(`리포트를 만드는 중... (완료 0/${targets.length})`, cancelRun);
+    showProgress(`리포트를 만드는 중... (0/${targets.length})`, cancelRun);
     const worker = async () => {
       // 취소되면 남은 광고주는 시작도 안 한다(진행 중인 것만 흘려보냄).
       while (next < targets.length && !stale()) {
@@ -191,8 +195,10 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
             try {
               const message = await composeReportMessage(buildSummaryPayload(t.name, data, range));
               files[`${safeFile(t.name)}_안내문구.txt`] = strToU8(message);
+              messages.push({ name: t.name, text: message });
             } catch (e) {
               console.warn(`[dv-ads/report] ${t.name} 안내 문구 실패`, e);
+              msgFailed++;
             }
           } else {
             files[`${safeFile(t.name)}_${range.since}~${range.until}.xlsx`] = await buildReportBytes(t, range, meta);
@@ -201,7 +207,7 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
           console.warn(`[dv-ads/report] ${t.name} 리포트 실패`, e);
         }
         done++;
-        if (!stale()) showProgress(`리포트를 만드는 중... (완료 ${done}/${targets.length})`, cancelRun);
+        if (!stale()) showProgress(`리포트를 만드는 중... (${done}/${targets.length})`, cancelRun);
       }
     };
     await Promise.all(
@@ -216,6 +222,17 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
     downloadBytes(zip, `리포트_${range.since}~${range.until}_${made}개.zip`);
     hideProgress();
     showToast({ message: `리포트 ${made}개를 압축해 내려받았어요`, variant: "success" });
+    if (withMessage) {
+      // 계정 이름순으로 정렬 — 병렬 수집이라 완료 순서가 매번 다르다.
+      messages.sort((a, b) => a.name.localeCompare(b.name, "ko"));
+      if (messages.length > 0) showReportMessagesDialog(messages);
+      if (msgFailed > 0) {
+        showToast({
+          message: `광고주 ${msgFailed}곳의 안내 문구는 만들지 못했어요. 잠시 후 다시 시도해 주세요`,
+          variant: "error",
+        });
+      }
+    }
   } catch (e) {
     console.warn("[dv-ads/report] 일괄 리포트 실패", e);
     if (stale()) return;

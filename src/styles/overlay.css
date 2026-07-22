@@ -5263,6 +5263,21 @@ td.dvads-period-delta-down {
   font: 400 13px/1.6 Pretendard, -apple-system, sans-serif; color: #171717;
 }
 .dvads-report-msg-textarea:focus { outline: none; border-color: #E6783B; }
+/* 일괄 생성 — 제목의 계정명 자리 드롭다운 박스. 폭 고정으로 chevron이 항상 우측 같은 자리. */
+.dvads-report-msg-acct {
+  display: inline-flex; align-items: center; justify-content: space-between; gap: 6px;
+  width: 220px; padding: 3px 10px; margin-left: 4px; box-sizing: border-box;
+  border: 1px solid #e2e5ea; border-radius: 8px; background: #fff;
+  font-size: 14px; vertical-align: middle;
+  cursor: pointer; user-select: none;
+}
+.dvads-report-msg-acct:hover { border-color: #c8cdd6; }
+.dvads-report-msg-acct-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dvads-report-msg-chev { flex: none; color: #8a919c; }
+/* 전환 메뉴 패널 — 트리거 박스와 같은 폭 */
+.dvads-report-msg-acct-menu { min-width: 220px; box-sizing: border-box; }
+/* 액션 메뉴 항목 뒤 파란 보조 표기 (예: 복사 "(완료)") */
+.dvads-dropdown-suffix { color: #2563eb; }
 
 /* 다이얼로그 제목 강조 — 제목 속 대상 이름(계정명 등)만 DV 주황으로. 전 다이얼로그 공용 패턴
    (DESIGN.md "다이얼로그 제목 강조" 절). 굵기는 제목을 따라간다. */

@@ -249,6 +249,8 @@ export interface UserSettings {
   platformDa: boolean;
   /** 리포트 담당자명 (마지막 입력값) */
   reportAuthor: string;
+  /** 리포트 "문구 생성" 토글 마지막 상태 */
+  reportWithMessage: boolean;
 }
 
 export const DEFAULT_USER_SETTINGS: UserSettings = {
@@ -257,6 +259,7 @@ export const DEFAULT_USER_SETTINGS: UserSettings = {
   platformSa: true,
   platformDa: true,
   reportAuthor: "",
+  reportWithMessage: false,
 };
 
 /** 사용자 설정 조회. 행이 없으면(첫 사용) null — 호출부가 기본값/로컬값을 유지한다. */
@@ -271,6 +274,7 @@ export async function pullUserSettings(): Promise<UserSettings | null> {
     platform_sa?: boolean;
     platform_da?: boolean;
     report_author?: string;
+    report_with_message?: boolean;
   };
   return {
     changeWatchActors: row.change_watch_actors ?? [],
@@ -278,6 +282,7 @@ export async function pullUserSettings(): Promise<UserSettings | null> {
     platformSa: row.platform_sa !== false,
     platformDa: row.platform_da !== false,
     reportAuthor: row.report_author ?? "",
+    reportWithMessage: row.report_with_message === true,
   };
 }
 
@@ -291,6 +296,7 @@ export async function pushUserSettings(patch: Partial<UserSettings>): Promise<vo
   if (patch.platformSa !== undefined) row.platform_sa = patch.platformSa;
   if (patch.platformDa !== undefined) row.platform_da = patch.platformDa;
   if (patch.reportAuthor !== undefined) row.report_author = patch.reportAuthor;
+  if (patch.reportWithMessage !== undefined) row.report_with_message = patch.reportWithMessage;
   const { error } = await supabase.from("user_settings").upsert(row, { onConflict: "user_id" });
   if (error) throw error;
 }
