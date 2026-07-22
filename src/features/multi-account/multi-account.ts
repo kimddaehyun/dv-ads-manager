@@ -4521,7 +4521,7 @@ async function openChangeWatchPanel(
           const readBtn = document.createElement("button");
           readBtn.type = "button";
           readBtn.className = "dvads-change-item-read";
-          readBtn.textContent = "읽음 표시";
+          readBtn.textContent = "읽음";
           readBtn.addEventListener("click", (e) => {
             // 항목 클릭(화면 이동)까지 같이 발화하지 않게.
             e.stopPropagation();
