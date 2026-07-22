@@ -20,11 +20,13 @@
 - `auth-state.ts` — `fetchAuthContext()`가 세션+`profiles` 조회해 `AuthState`(signedOut/pending/blocked/approved) 산출. **네트워크 실패 등 예외 시에도 절대 throw하지 않고 `pending`으로 fallback** — 잠금이 안전 기본값(장애가 승인으로 새면 안 됨).
 - `auth-gate.ts` — `requireApproved()`가 콘텐츠 스크립트의 단일 관문. **페이지당 1회만 조회하도록 모듈 스코프에 Promise 캐시**(여러 기능이 각자 init에서 부르면 중복 네트워크 호출) — per-page memo라 페이지 재로드 전까지 상태 안 바뀜.
 - `server-store.ts` — `account_meta`/`account_groups`/`change_watch_state`(계정 이슈 이력)/`user_settings`(사용자 설정 4종: 알림 제외 변경자·대행권 기준 번호·광고 유형 필터·리포트 담당자명) CRUD. 뒤 둘은 2026-07-20 추가. **`user_settings`는 부분 갱신**(`pushUserSettings(patch)`) — 전체 upsert하면 안 넘긴 설정이 기본값으로 밀린다. 서버에 행이 없으면(도입 전 사용자) 첫 새로고침이 **로컬값을 올려** 리셋처럼 보이는 걸 막는다. **저장은 항상 서버 먼저** — 성공 후 로컬 캐시 갱신은 호출부 책임. `pushGroups`는 전체 교체(replace-all, `not in (ids)` 삭제 + upsert) 전략.
+- `usage.ts` — 기능 사용 횟수 기록(`trackUsage`, fire-and-forget, RPC `track_usage` 화이트리스트와 이벤트명 일치 필수). AI 토큰은 Edge Function이 서버에서 직접 기록. 조회는 관리자 전용(`usage-ui.tsx`).
 - `vault.ts` — Secret Key는 여기(Edge Function `credentials-vault`) 경유로만 암호화 저장/조회. **서비스 워커 컨텍스트에서는 호출 금지**(`window` 없음) — 호출부(`searchad.ts`)가 그 컨텍스트에서는 동적 import조차 안 한다.
 - `migrate-local.ts` — 첫 로그인 1회성 로컬↔서버 이관. **방향은 서버측 완료 마커(`profiles.migrated_at`) 기준**: 마커가 있으면 download(서버→로컬, 다른 PC 재로그인 시 낡은 로컬로 서버를 덮지 않기 위함), 없으면 upload — 부분 업로드 후 재시도에도 upload가 재개돼 로컬이 안 지워진다. 업로드 전부 성공 후에만 RPC `mark_migrated`. 로컬 플래그는 사용자별 `migrated_v1:<userId>`(`migration-flag.ts`, 실패 시 플래그 안 남겨 재시도). **이관 전 로컬 원본은 `premigration_backup_v1`에 1회 백업(덮지도 지우지도 않음)** — 복구용. **로그아웃 로컬 정리는 이사 완료자만**(account-ui) — 이사 전 로컬은 유일한 사본이라 지우면 영영 소실(2026-07-17 실사고). **`added_order`(계정 추가 순서)는 항목 upsert가 아니라 목록 전체를 매번 재동기화** — 순서가 인덱스 기반이라 부분 갱신하면 다른 계정과 순서가 어긋난다.
 
 ## 오버레이 UI 패턴 (전 기능 공통)
 
+- **토글 버튼으로 여는 flyout/패널은 open 함수에서 "같은 anchor면 닫고 return" 처리 필수** — 트리거 클릭은 바깥클릭 닫힘 판정에서 예외(제외 대상)라, 이 처리가 없으면 재클릭 시 "닫힘 → 곧바로 재오픈"이 돼 아무리 눌러도 안 꺼진다. `createDropdown`/`attachActionMenu`는 내장돼 있고, `openReportDatePicker`는 `openAnchor` 비교로 처리(2026-07-22 관리이력 보고 날짜 버튼 실사고 — 같은 유형 버그 반복됨). 새 flyout을 만들면 이 토글부터 넣을 것.
 - **Popover click-outside 닫힘은 mousedown 시작 위치 추적 필수** — 안에서 텍스트 드래그 → 밖에서 mouseup하면 click이 외부로 발화해 잘못 닫힘. `mousedown` capture로 시작 위치 기록 → 내부였으면 다음 click 1번 면제 (`multi-account.ts`·`period-compare.ts` 동일 패턴).
 - **DOM 빌드 → attach → paint 3단계 분리** — `popoverEl.querySelector`로 자식 행을 찾아 그리는 helper는 element가 attach된 *후* 호출. detached fragment 안에선 querySelector가 silent no-op. 패턴: 모든 row mount → table attach → paint loop.
 - **async render 깜빡임 방지** — await 데이터 로드를 *먼저* 끝낸 뒤 `DocumentFragment`에 빌드 → `wrap.replaceChildren(fragment)` atomic swap. rapid 재트리거 가능한 곳은 token guard 추가 — `const token = ++renderToken; await ...; if (token !== renderToken) return;` (`multi-account.ts:renderListView`).

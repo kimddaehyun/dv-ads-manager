@@ -1,8 +1,9 @@
 # F-ChangeWatch — 변경이력 모니터링 알림 + 관리이력 보고
 
 `history-report.ts`(관리이력 보고, 2026-07-21): 기간 내 변경이력에서 **우리(대행사) 변경자의 작업만** 골라 카톡 붙여넣기용 한글 텍스트로 요약(캠페인 유형별 섹션 → 종류별 그룹 → 같은 대상 묶음 + 시각). UI는 multi-account.ts `openHistoryReportDialogFor`(⋮ > "관리이력 보고"), 변경자·종류 필터 선택은 계정별 `MultiAccountUserMeta.historyReportActors/Groups`에 저장(닫을 때도 저장). 정찰 확정 사실(2026-07-21 라이브, 상세는 메모리 `project_f_history_report`):
-- 동사 `ADD/REMOVE/COPY`는 diff 무의미(신규는 전 필드가 "없음 -> 값") — 동작으로만 표기. **키워드는 `KEYWORD.*`, `CRITERION.*`은 키워드가 아니라 요일/시간·지역 타겟팅**(criterionJson, codeName 한글).
+- 동사 `ADD/REMOVE/COPY`는 diff 무의미(신규는 전 필드가 "없음 -> 값") — 동작으로만 표기. **키워드는 `KEYWORD.*`, `CRITERION.*`은 키워드가 아니라 요일/시간(SD)·지역(RL)·연령(AG) 타겟팅**(criterionJson, codeName 한글). 연령은 켜는 순간 전 구간 11개가 통째로 기록됨(2026-07-22 라이브) — `CRITERION_FULL_SET_KIND`로 "사용/해제" 한 줄로 접고, 기존 구간의 negative/bidWeight 변화는 바뀐 구간만 표기.
 - **키워드/소재 수정엔 대상 이름이 없다**(nkw-/nad- id만, displayName이 그룹명 반복인 경우도) — `ncc/keywords?ids=`(keyword)·`ncc/ads?ids=`(referenceData.productTitle)로 조인. 캠페인 유형은 `ncc/campaigns`(campaignTp) 조인.
+- **무변경 이벤트가 대량으로 온다**(2026-07-22 라이브: API 입찰 도구가 같은 입찰가를 다시 쓴 `AD.MODIFY`의 adAttr before==after가 주간 126건) — diff가 0개인 이벤트는 관리 내역이 아니므로 보고 건수에서도 제외(`buildHistoryReport`의 `if (!detail) continue`).
 - 제외키워드 2경로: `TARGET.MODIFY`+`RESTRICT_KEYWORD_TARGET`(target JSON에 **매번 전체 목록** → 차집합으로 추가/삭제분만), `ADGROUP.{ADD,REMOVE}_KEYWORD_PLUS`(건별). `inspectStatus`는 검수 부수 변화라 무시, `ad` 필드는 "소재 내용 변경"으로 접기.
 
 `POST /apis/sa/api/histories/_search?serviceId=james-rhodes&since={ms}&until={ms}&maxRowsPerPage=5000` + body `{bool:{must:[]}}`(ES DSL) + **`x-ad-customer-id` 헤더 필수**(없으면 `ownerId format is invalid`). UI(다이얼로그·행 알림)는 `@/features/multi-account/multi-account.ts`에 있고, 이 폴더는 수집·판정 로직(`change-watch.ts`).

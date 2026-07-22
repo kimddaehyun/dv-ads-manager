@@ -64,7 +64,12 @@ describe("buildHistoryReport", () => {
         row({ eventType: "ncc.heroes.CAMPAIGN.MODIFY", name: "캠페인A", before: { dailyBudget: "30000" }, after: { dailyBudget: "50000" } }),
         row({ eventType: "ncc.heroes.ADGROUP.MODIFY_USER_LOCK", name: "그룹1", before: { userLock: "false" }, after: { userLock: "true" } }),
         row({ eventType: "ncc.heroes.AD.MODIFY", name: "소재1", before: { adAttr: '{"style":1}' }, after: { adAttr: '{"style":2}' } }),
-        row({ eventType: "ncc.heroes.TARGET.MODIFY", name: "타겟" }),
+        row({
+          eventType: "ncc.heroes.TARGET.MODIFY",
+          name: "타겟",
+          before: { targetTp: "MEDIA_TARGET", target: '{"black":{"media":[1]}}' },
+          after: { targetTp: "MEDIA_TARGET", target: '{"black":{"media":[1,2]}}' },
+        }),
       ],
       ["dvcompany:naver"],
     );
@@ -132,6 +137,39 @@ describe("buildHistoryReport", () => {
     expect(details).toContain("지역 제외 설정: 대한민국외");
   });
 
+  it("연령 타겟팅 켜기/끄기는 전 구간 나열 대신 사용/해제 한 줄로 접는다", () => {
+    const ag = (code: string, name: string, neg = false, w = 100) =>
+      `{"dictionaryCode":"${code}","codeName":"${name}","enable":true,"bidWeight":${w},"negative":${neg}}`;
+    const full = `{"AG":[${[ag("AG0013", "14세 미만", true), ag("AG1418", "14세 ~ 18세"), ag("AG1924", "19세 ~ 24세")].join(",")}]}`;
+    const report = buildHistoryReport(
+      [
+        row({ eventType: "ncc.heroes.CRITERION.MODIFY", name: "그룹1", before: { criterionJson: '{"AG":[]}' }, after: { criterionJson: full } }),
+        row({ eventType: "ncc.heroes.CRITERION.MODIFY", name: "그룹1", before: { criterionJson: full }, after: { criterionJson: '{"AG":[]}' } }),
+      ],
+      ["dvcompany:naver"],
+    );
+    const details = report.groups[0].items.map((i) => i.detail);
+    expect(details).toContain("연령 타겟팅 사용 (14세 미만 제외)");
+    expect(details).toContain("연령 타겟팅 해제");
+  });
+
+  it("켜져 있는 연령 타겟에서 일부만 바꾸면 바뀐 구간만 말한다", () => {
+    const ag = (code: string, name: string, neg: boolean, w = 100) =>
+      `{"dictionaryCode":"${code}","codeName":"${name}","enable":true,"bidWeight":${w},"negative":${neg}}`;
+    const report = buildHistoryReport(
+      [
+        row({
+          eventType: "ncc.heroes.CRITERION.MODIFY",
+          name: "그룹1",
+          before: { criterionJson: `{"AG":[${ag("AG1418", "14세 ~ 18세", false)},${ag("AG4044", "40세 ~ 44세", false)}]}` },
+          after: { criterionJson: `{"AG":[${ag("AG1418", "14세 ~ 18세", true)},${ag("AG4044", "40세 ~ 44세", false, 150)}]}` },
+        }),
+      ],
+      ["dvcompany:naver"],
+    );
+    expect(report.groups[0].items[0].detail).toBe("연령 제외: 14세 ~ 18세 / 연령 가중치 조정: 40세 ~ 44세 100% -> 150%");
+  });
+
   it("노출 매체 타겟은 제외 매체 개수 변화로 요약한다", () => {
     const report = buildHistoryReport(
       [
@@ -183,6 +221,28 @@ describe("buildHistoryReport", () => {
     expect(report.groups[0].items[0].detail).toBe("소재 내용 변경");
   });
 
+  it("바뀐 내용이 없는 이벤트(같은 값 재기록·검수만 변경)는 건수에서도 뺀다", () => {
+    const report = buildHistoryReport(
+      [
+        // API가 같은 입찰가를 다시 쓴 무변경 소재 수정 — 2026-07-22 라이브에서 "소재 관리"로 새던 케이스
+        row({
+          eventType: "ncc.heroes.AD.MODIFY",
+          name: "소재1",
+          before: { adAttr: '{"bidAmt":7070,"useGroupBidAmt":false}' },
+          after: { adAttr: '{"bidAmt":7070,"useGroupBidAmt":false}' },
+        }),
+        row({
+          eventType: "ncc.heroes.AD.MODIFY",
+          name: "소재2",
+          before: { inspectStatus: "10" },
+          after: { inspectStatus: "20" },
+        }),
+      ],
+      ["dvcompany:naver"],
+    );
+    expect(report.total).toBe(0);
+  });
+
   it("그룹 입찰가 전환·AI 최적화 토글은 풀어 쓴다", () => {
     const report = buildHistoryReport(
       [
@@ -198,7 +258,7 @@ describe("buildHistoryReport", () => {
 
   it("모르는 eventType은 기타 설정으로 접는다 (영문 코드 미노출)", () => {
     const report = buildHistoryReport(
-      [row({ eventType: "ncc.heroes.SOMETHING_NEW.CREATE", name: "무언가" })],
+      [row({ eventType: "ncc.heroes.SOMETHING_NEW.CREATE", name: "무언가", before: { fooBar: "1" }, after: { fooBar: "2" } })],
       ["dvcompany:naver"],
     );
     expect(report.groups[0].key).toBe("etc");

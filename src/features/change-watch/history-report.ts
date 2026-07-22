@@ -120,11 +120,16 @@ function parseJsonField(v: unknown): Record<string, unknown> | null {
   }
 }
 
-// criterionJson의 타겟팅 종류 코드 → 한글 (2026-07-21 정찰: SD=요일/시간, RL=지역).
+// criterionJson의 타겟팅 종류 코드 → 한글 (2026-07-21 정찰: SD=요일/시간, RL=지역, 2026-07-22: AG=연령).
 const CRITERION_KIND: Record<string, string> = {
   SD: "요일/시간",
   RL: "지역",
+  AG: "연령",
 };
+
+// 켜는 순간 전 구간이 통째로 기록되는 종류(연령) — 나열 대신 "사용/해제"로 접는다.
+// (2026-07-22 라이브: 연령 타겟팅 켜기 = 연령 11구간 일괄 추가 + "14세 미만"만 제외)
+const CRITERION_FULL_SET_KIND = new Set(["AG"]);
 
 /**
  * 제외키워드 목록(target JSON, `[{keyword,type,date},...]`)의 전후 차이.
@@ -156,6 +161,7 @@ interface CriterionEntry {
   dictionaryCode?: string;
   codeName?: string;
   negative?: boolean;
+  bidWeight?: number;
 }
 
 /**
@@ -194,6 +200,38 @@ function criterionDetail(before: unknown, after: unknown): string {
     const aMap = new Map((a[kind] ?? []).map((e) => [e.dictionaryCode ?? e.codeName ?? "", e]));
     const added = [...aMap].filter(([k]) => !bMap.has(k)).map(([, e]) => e);
     const removed = [...bMap].filter(([k]) => !aMap.has(k)).map(([, e]) => e);
+
+    // 연령처럼 켜는 순간 전 구간이 통째로 기록되는 종류는 나열이 소음이다 —
+    // 없던 상태에서 일괄 등장 = "사용"(제외 구간만 덧붙임), 통째로 사라짐 = "해제".
+    if (CRITERION_FULL_SET_KIND.has(kind)) {
+      if (bMap.size === 0 && aMap.size > 0) {
+        const neg = describeEntries(added.filter((e) => e.negative));
+        parts.push(`${kindLabel} 타겟팅 사용${neg ? ` (${neg} 제외)` : ""}`);
+        continue;
+      }
+      if (aMap.size === 0 && bMap.size > 0) {
+        parts.push(`${kindLabel} 타겟팅 해제`);
+        continue;
+      }
+    }
+
+    // 양쪽에 다 있는데 내용이 바뀐 항목 — 제외 전환과 가중치 조정만 의미가 있다.
+    for (const [key, aEntry] of aMap) {
+      const bEntry = bMap.get(key);
+      if (!bEntry) continue;
+      const name = (aEntry.codeName ?? "").trim();
+      if (!name) continue;
+      if (!bEntry.negative !== !aEntry.negative) {
+        parts.push(aEntry.negative ? `${kindLabel} 제외: ${name}` : `${kindLabel} 제외 해제: ${name}`);
+      } else if (
+        bEntry.bidWeight !== undefined &&
+        aEntry.bidWeight !== undefined &&
+        bEntry.bidWeight !== aEntry.bidWeight
+      ) {
+        parts.push(`${kindLabel} 가중치 조정: ${name} ${bEntry.bidWeight}% -> ${aEntry.bidWeight}%`);
+      }
+    }
+
     // negative=true는 "그 대상을 제외"하는 설정이라 문구를 구분한다.
     for (const [list, word] of [
       [added.filter((e) => !e.negative), "설정"],
@@ -457,6 +495,10 @@ export function buildHistoryReport(rows: RawHistoryRow[], actors: string[]): His
     for (const obj of row.objects ?? []) {
       const heroes = obj.data?.heroes;
       const { group, detail } = classifyEvent(eventType, heroes?.before, heroes?.after);
+      // 바뀐 내용이 하나도 없는 이벤트(API가 같은 값을 다시 쓴 무변경, 검수 상태만 바뀐
+      // 부수 변화 등)는 관리 내역이 아니다 — 건수에서도 뺀다 (2026-07-22 라이브 확인:
+      // AD.MODIFY인데 adAttr before==after인 행이 주간 126건, "소재 관리"로 새던 문제).
+      if (!detail) continue;
       const { text, named } = whereOf(obj);
       const id = obj.id ?? "";
       // displayName이 캠페인/그룹 이름을 그대로 되풀이하는 행이 있다 — 그건 대상(키워드/소재)

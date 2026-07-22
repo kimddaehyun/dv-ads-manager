@@ -25,6 +25,7 @@ const MONTHS_BACK = 18;
 const MONTHS_FWD = 2;
 
 let openEl: HTMLElement | null = null;
+let openAnchor: HTMLElement | null = null;
 let dispose: (() => void) | null = null;
 
 function dayStart(d: Date): Date {
@@ -58,6 +59,10 @@ export interface OpenDatePickerOpts {
   showRoas?: boolean;
   /** "문구 포함 생성" 토글 표시(F-Report). 켜면 onConfirm의 withMessage가 true. */
   showMessageToggle?: boolean;
+  /** 열릴 때 선택돼 있을 프리셋. 기본 "lastWeek"(지난주). */
+  initialPreset?: ReportPreset;
+  /** 열릴 때 선택돼 있을 임의 기간 — 주어지면 initialPreset보다 우선(프리셋 비활성으로 시작). */
+  initialRange?: DateRange;
   onConfirm: (range: DateRange, author: string, targetRoas: number | null, withMessage: boolean) => void;
 }
 
@@ -66,14 +71,22 @@ export function closeReportDatePicker(): void {
 }
 
 export function openReportDatePicker(opts: OpenDatePickerOpts): void {
+  // 같은 앵커(트리거 버튼)로 다시 열면 토글로 닫는다 — 트리거 클릭은 flyout의
+  // 바깥클릭 판정에서 예외라, 이 처리가 없으면 "닫힘 -> 곧바로 재오픈"이 돼
+  // 버튼을 아무리 눌러도 안 꺼지는 버그가 된다 (createDropdown 트리거 토글과 동일 규칙).
+  if (openEl && openAnchor === opts.anchor) {
+    closeReportDatePicker();
+    return;
+  }
   // 이미 열려 있으면 닫고 새로 (중복 flyout 방지).
   closeReportDatePicker();
 
   const today = dayStart(new Date());
-  const init = rangeForPreset("lastWeek", today);
+  const initPreset = opts.initialPreset ?? "lastWeek";
+  const init = opts.initialRange ?? rangeForPreset(initPreset, today);
   let start = parseIso(init.since);
   let end = parseIso(init.until);
-  let activePreset: ReportPreset | null = "lastWeek";
+  let activePreset: ReportPreset | null = opts.initialRange ? null : initPreset;
   let activeField: "start" | "end" = "start";
 
   // ── 패널 골격 ──
@@ -135,6 +148,7 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   // 기본값(꺼짐)이 서버의 켜짐 설정을 덮지 않게 한다.
   let msgToggleTouched = false;
   let msgToggleRestored = false;
+  let msgRestorePromise: Promise<void> = Promise.resolve();
 
   if (opts.showMessageToggle) {
     const info = el.querySelector<HTMLElement>(".dvads-rdp-msg-info")!;
@@ -143,10 +157,10 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     msgToggleTouched = false;
     msgToggleRestored = false;
     msgToggle.addEventListener("change", () => { msgToggleTouched = true; });
-    void loadReportWithMessage().then((on) => {
+    msgRestorePromise = loadReportWithMessage().then((on) => {
       msgToggleRestored = true;
       if (!msgToggleTouched) msgToggle.checked = on;
-    });
+    }).catch(() => { msgToggleRestored = true; });
   } else {
     // 토글 묶음만 제거 — msgrow는 담당자/목표 ROAS 입력이 함께 살아 유지된다.
     // (msgToggle 참조는 위에서 이미 잡아둬 detached여도 checked=false로 안전)
@@ -403,7 +417,12 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     closeAllOpenDropdowns();
     dispose?.();
   }
-  function confirmReport(): void {
+  async function confirmReport(): Promise<void> {
+    // 저장된 토글 상태가 아직 복원 전이면 잠깐 기다린다 — 복원 전에 확인을 누르면
+    // 저장은 켜짐인데 기본값(꺼짐)으로 생성되는 경합 방지 (codex P2, 2026-07-22).
+    if (opts.showMessageToggle && !msgToggleRestored && !msgToggleTouched) {
+      await msgRestorePromise;
+    }
     const author = authorInput.value.trim();
     // 목표 ROAS — 숫자만 취하고 0 이하/무효는 미설정(null) 취급.
     const roasNum = Number(roasInput.value.replace(/[^\d.]/g, ""));
@@ -427,7 +446,7 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     opts.onConfirm(range, author, targetRoas, msgToggle.checked);
   }
   el.querySelector(".dvads-rdp-cancel")?.addEventListener("click", finish);
-  el.querySelector(".dvads-rdp-confirm")?.addEventListener("click", confirmReport);
+  el.querySelector(".dvads-rdp-confirm")?.addEventListener("click", () => void confirmReport());
   // 담당자명 칸에서 Enter -> 확인과 동일. 핸들러가 없으면 Enter가 호스트 페이지로
   // 전파돼 엉뚱한 동작을 부른다(`e.stopPropagation`). 한글 조합 중 Enter는 무시.
   for (const input of [authorInput, roasInput]) {
@@ -435,7 +454,7 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
       if (e.key === "Enter" && !e.isComposing) {
         e.preventDefault();
         e.stopPropagation();
-        confirmReport();
+        void confirmReport();
       }
     });
   }
@@ -447,6 +466,7 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   let anchorRect = opts.anchorRect ?? opts.anchor.getBoundingClientRect();
   document.body.appendChild(el);
   openEl = el;
+  openAnchor = opts.anchor;
   const unregister = registerMenuSibling(el);
 
   function position(): void {
@@ -510,7 +530,10 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     window.removeEventListener("resize", onResize);
     unregister();
     el.remove();
-    if (openEl === el) openEl = null;
+    if (openEl === el) {
+      openEl = null;
+      openAnchor = null;
+    }
     dispose = null;
   };
 }

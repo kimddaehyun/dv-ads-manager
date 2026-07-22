@@ -3769,10 +3769,11 @@ async function openHistoryReportDialogFor(target: {
   }
   const customerId = target.masterCustomerId;
   closeRenameDialog();
-  const [identity, metaMap, groupMod] = await Promise.all([
+  const [identity, metaMap, groupMod, rdpMod] = await Promise.all([
     loadChangeWatchIdentity(),
     loadAllUserMeta(),
     import("@/features/change-watch/history-report"),
+    import("@/features/report/report-datepicker"),
   ]);
   const { GROUP_ORDER, GROUP_LABEL } = groupMod;
   // 변경자 초기값 — 이 계정에서 마지막으로 고른 목록이 있으면 그걸, 없으면 우리 쪽 사람 목록.
@@ -3789,6 +3790,8 @@ async function openHistoryReportDialogFor(target: {
   };
   const today = new Date();
   const weekAgo = new Date(today.getTime() - 6 * 24 * 60 * 60 * 1000);
+  // 선택된 기간(YYYY-MM-DD, until 포함) — 공용 날짜 선택기(F-Report flyout)로 고른다.
+  let pickedRange = { since: toDateInput(weekAgo), until: toDateInput(today) };
 
   const backdrop = document.createElement("div");
   backdrop.className = "dvads dvads-actor-backdrop";
@@ -3800,12 +3803,15 @@ async function openHistoryReportDialogFor(target: {
       <button class="dvads-actor-close" type="button" aria-label="닫기">×</button>
     </div>
     <div class="dvads-hr-body">
-      <div class="dvads-hr-filter" role="listbox" aria-label="이력 종류 필터"></div>
       <div class="dvads-hr-main">
-        <div class="dvads-hr-dates">
-          <input class="dvads-hr-since" type="date" aria-label="시작일" />
-          <span class="dvads-hr-arrow">→</span>
-          <input class="dvads-hr-until" type="date" aria-label="종료일" />
+        <div class="dvads-hr-dates-row">
+          <button class="dvads-hr-dates" type="button" aria-label="기간 선택">
+            <span class="dvads-hr-dates-label"></span>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          </button>
+          <button class="dvads-hr-filter-btn" type="button" aria-label="이력 종류 필터" title="이력 종류 필터">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M7 12h10M10 18h4"/></svg>
+          </button>
         </div>
         <div class="dvads-actor-chips is-loading"><span class="dvads-actor-spinner"></span>변경자를 불러오는 중...</div>
         <div class="dvads-hr-text-wrap">
@@ -3825,46 +3831,66 @@ async function openHistoryReportDialogFor(target: {
   backdrop.appendChild(card);
   document.body.appendChild(backdrop);
 
-  // ─── 좌측 이력 종류 필터 — 맨 위 [전체보기] + 종류별 토글(선택 = 포함) ───
-  const filterEl = card.querySelector<HTMLDivElement>(".dvads-hr-filter")!;
-  const renderFilter = () => {
-    filterEl.innerHTML = "";
-    const allBtn = document.createElement("button");
-    allBtn.type = "button";
-    allBtn.className = "dvads-hr-filter-item";
-    allBtn.textContent = "전체보기";
-    allBtn.classList.toggle("is-on", pickedGroups.size === 0);
-    allBtn.addEventListener("click", () => {
-      pickedGroups.clear();
-      renderFilter();
-    });
-    filterEl.appendChild(allBtn);
-    for (const key of GROUP_ORDER) {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "dvads-hr-filter-item";
-      btn.textContent = GROUP_LABEL[key];
-      btn.classList.toggle("is-on", pickedGroups.has(key));
-      btn.addEventListener("click", () => {
-        if (pickedGroups.has(key)) pickedGroups.delete(key);
-        else pickedGroups.add(key);
-        // 전부 고르면 전체보기와 같으니 전체보기 상태로 되돌린다.
-        if (pickedGroups.size === GROUP_ORDER.length) pickedGroups.clear();
-        renderFilter();
-      });
-      filterEl.appendChild(btn);
-    }
+  // ─── 이력 종류 필터 — 날짜칸 우측 필터 아이콘 → 체크 토글 메뉴(중복 선택) ───
+  const filterBtn = card.querySelector<HTMLButtonElement>(".dvads-hr-filter-btn")!;
+  const syncFilterBtn = () => {
+    filterBtn.classList.toggle("is-active", pickedGroups.size > 0);
   };
-  renderFilter();
+  attachActionMenu({
+    trigger: filterBtn,
+    ariaLabel: "이력 종류 필터",
+    items: () => [
+      {
+        label: "전체보기",
+        checked: pickedGroups.size === 0,
+        keepOpen: true,
+        onClick: () => {
+          pickedGroups.clear();
+          syncFilterBtn();
+        },
+      },
+      { separator: true },
+      ...GROUP_ORDER.map((key) => ({
+        label: GROUP_LABEL[key],
+        checked: pickedGroups.has(key),
+        keepOpen: true,
+        onClick: () => {
+          if (pickedGroups.has(key)) pickedGroups.delete(key);
+          else pickedGroups.add(key);
+          // 전부 고르면 전체보기와 같으니 전체보기 상태로 되돌린다.
+          if (pickedGroups.size === GROUP_ORDER.length) pickedGroups.clear();
+          syncFilterBtn();
+        },
+      })),
+    ],
+  });
+  syncFilterBtn();
 
-  const sinceInput = card.querySelector<HTMLInputElement>(".dvads-hr-since")!;
-  const untilInput = card.querySelector<HTMLInputElement>(".dvads-hr-until")!;
   const chipsEl = card.querySelector<HTMLDivElement>(".dvads-actor-chips")!;
   const textEl = card.querySelector<HTMLTextAreaElement>(".dvads-hr-text")!;
   const copyBtn = card.querySelector<HTMLButtonElement>(".dvads-hr-copy")!;
   const makeBtn = card.querySelector<HTMLButtonElement>(".dvads-hr-make")!;
-  sinceInput.value = toDateInput(weekAgo);
-  untilInput.value = toDateInput(today);
+
+  // ─── 기간 선택 — 공용 날짜 선택기(F-Report flyout, 프리셋+달력) 재사용 ───
+  const datesBtn = card.querySelector<HTMLButtonElement>(".dvads-hr-dates")!;
+  const datesLabel = card.querySelector<HTMLSpanElement>(".dvads-hr-dates-label")!;
+  const fmtDot = (isoStr: string) => `${isoStr.replaceAll("-", ".")}.`;
+  const renderRangeLabel = () => {
+    datesLabel.textContent = `${fmtDot(pickedRange.since)} → ${fmtDot(pickedRange.until)}`;
+  };
+  renderRangeLabel();
+  datesBtn.addEventListener("click", () => {
+    rdpMod.openReportDatePicker({
+      anchor: datesBtn,
+      subText: target.name,
+      showAuthor: false,
+      initialPreset: "last7Incl",
+      onConfirm: (range) => {
+        pickedRange = { since: range.since, until: range.until };
+        renderRangeLabel();
+      },
+    });
+  });
 
   // 변경자·종류 필터 선택을 계정별로 저장 — [생성]뿐 아니라 창을 닫을 때도 저장해야
   // 칩만 바꾸고 닫은 선택이 다음에 유지된다. 실패는 warn만 (보고 흐름과 무관).
@@ -3877,11 +3903,16 @@ async function openHistoryReportDialogFor(target: {
 
   const cleanup = () => {
     persistSelections();
+    closeAllOpenDropdowns();
+    rdpMod.closeReportDatePicker();
     backdrop.remove();
     document.removeEventListener("keydown", onKey, true);
   };
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cleanup(); }
+    // 날짜 선택기가 떠 있으면 ESC는 선택기 몫 — 다이얼로그까지 닫지 않는다.
+    if (e.key === "Escape" && !document.querySelector(".dvads-rdp")) {
+      e.preventDefault(); e.stopPropagation(); cleanup();
+    }
   };
   wireBackdropDismiss(backdrop, cleanup);
   card.addEventListener("click", (e) => e.stopPropagation());
@@ -3889,10 +3920,10 @@ async function openHistoryReportDialogFor(target: {
   card.querySelector<HTMLButtonElement>(".dvads-actor-close")?.addEventListener("click", cleanup);
   card.querySelector<HTMLButtonElement>(".dvads-hr-cancel")?.addEventListener("click", cleanup);
 
-  /** 날짜 입력값 → [자정, 다음날 자정) ms 구간. 잘못된 입력이면 null. */
+  /** 선택된 기간 → [자정, 다음날 자정) ms 구간. 잘못된 값이면 null. */
   const periodMs = (): { since: number; until: number } | null => {
-    const s = new Date(`${sinceInput.value}T00:00:00`);
-    const u = new Date(`${untilInput.value}T00:00:00`);
+    const s = new Date(`${pickedRange.since}T00:00:00`);
+    const u = new Date(`${pickedRange.until}T00:00:00`);
     if (Number.isNaN(s.getTime()) || Number.isNaN(u.getTime()) || s > u) return null;
     return { since: s.getTime(), until: u.getTime() + 24 * 60 * 60 * 1000 - 1 };
   };
