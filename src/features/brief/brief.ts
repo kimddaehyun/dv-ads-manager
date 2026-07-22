@@ -29,8 +29,8 @@ import { collectBriefData, buildSummaryText, buildSummarySpec, fetchPowerlinkBid
 import { rangeText } from "@/features/report/report-period";
 import { extractCandidates, flattenKeywords, pickRankTargets, roasPct, type BriefKeywordRow, type BriefCandidate, type BriefRuleInput, type BriefThresholds } from "./brief-rules";
 import { resolveThresholds, type BriefSensitivity } from "./brief-thresholds";
-import { composeBlocks, type ComposedBlock } from "./brief-compose";
-import { renderBriefPanel, renderBriefPickPanel, closeBriefPanel, type BriefBlock, type BriefPickState } from "./brief-panel";
+import { composeBlocks, warmCompose, type ComposedBlock } from "./brief-compose";
+import { renderBriefPanel, renderBriefPickPanel, closeBriefPanel, type BriefBlock, type BriefPickState, type BriefPickHandle } from "./brief-panel";
 import { saveBriefHistory, fetchBriefHistory, candidatesToActions, type BriefHistoryRecord, type BriefSentStatus } from "./brief-history";
 import { openBriefHistoryPanel } from "./brief-history-panel";
 
@@ -144,6 +144,8 @@ interface BriefContext {
   campaignInfo: BriefCampaignInfo;
   /** 캠페인명 → 비용 문턱(원) — 캠페인 머리글 "최소 금액" 표기. 이슈 기준 변경 시 재계산. */
   campaignFloors: Map<string, number>;
+  /** 지금 떠 있는 선택 화면 핸들 — showSelection이 매번 갱신. 늦은 순위 합류가 최신 화면을 잡는다. */
+  liveHandle?: BriefPickHandle;
 }
 
 /** 캠페인명 → 유형/기간 광고비, "캠페인||그룹" → 그룹 광고비. campGroups에서 추가 호출 없이. */
@@ -272,14 +274,6 @@ async function run(
 
     const plRows = flattenKeywords(data.plKeywords);
     const rankTargets = pickRankTargets(plRows, targetRoas, thresholds, floors);
-    if (rankTargets.length > 0) {
-      try {
-        await fillRanks(await bidMapP, rankTargets);
-      } catch (e) {
-        console.warn("[dv-ads/brief] 순위 보강 실패 — 순위 후보만 생략", e);
-      }
-    }
-    if (stale()) return;
 
     const ruleInput: Omit<BriefRuleInput, "thresholds"> = {
       keywords: [...data.plKeywords, ...data.shKeywords],
@@ -304,11 +298,29 @@ async function run(
       ruleInput, followCand, sensitivity, customThresholds, campaignInfo,
       campaignFloors: floors,
     };
+    // AI 조립 준비를 사용자가 이슈를 고르는 시간에 겹친다 — 세션 토큰·서버 인스턴스 워밍업.
+    warmCompose();
     // 선택 화면이 먼저다 — AE가 고른 것만 문구가 된다(구조 개편).
     showSelection(ctx, {
       reportType: meta?.briefReportType,
       tone: meta?.briefTone,
     });
+
+    // 순위 보강은 선택 화면을 막지 않는다(2026-07-22 속도 개선) — 화면을 먼저 띄우고,
+    // 순위가 도착하면 순위 후보만 늦게 합류시킨다. fillRanks가 plRows(=ruleInput.rankedRows)를
+    // 제자리 수정하므로, 이후의 이슈 기준 변경(rebuildCandidates)에도 순위가 자연히 반영된다.
+    if (rankTargets.length > 0) {
+      void (async () => {
+        try {
+          await fillRanks(await bidMapP, rankTargets);
+        } catch (e) {
+          console.warn("[dv-ads/brief] 순위 보강 실패 — 순위 후보만 생략", e);
+          return;
+        }
+        if (stale()) return;
+        mergeLateRankCandidates(ctx);
+      })();
+    }
   } catch (e) {
     console.warn("[dv-ads/brief] 보고 재료 수집 실패", e);
     if (stale()) return;
@@ -319,9 +331,52 @@ async function run(
   }
 }
 
-/** 이슈 선택 화면 — 진입점이자 "다시 고르기" 복귀점. */
+/** 후보의 동일성 키 — 순위 후보가 늦게 합류해 목록이 늘어나도 기존 체크를 따라가게 한다. */
+function candKey(c: BriefCandidate): string {
+  return JSON.stringify([c.kind, c.scope?.campaign ?? "", c.scope?.group ?? "", c.facts]);
+}
+
+/**
+ * 순위 조회가 늦게 끝난 뒤 — 열려 있는 선택 화면에 순위 후보를 합류시킨다.
+ * 새 후보가 없거나 선택 화면이 떠 있지 않으면(생성/취소) 아무것도 하지 않는다 —
+ * ctx.candidates를 화면 몰래 바꾸면 "다시 고르기"의 선택 인덱스가 어긋난다.
+ * 핸들은 ctx.liveHandle — 이슈 기준 변경 등으로 화면이 다시 그려져도 최신 화면을 따라간다.
+ */
+function mergeLateRankCandidates(ctx: BriefContext): void {
+  const handle = ctx.liveHandle;
+  if (!handle?.isLive()) return;
+  const old = ctx.candidates;
+  const snap = handle.snapshot();
+  rebuildCandidates(ctx);
+  if (ctx.candidates.length <= old.length) {
+    ctx.candidates = old; // 내용 동일 — 화면과 인덱스 정합을 위해 원본 유지
+    return;
+  }
+  // 기존 후보는 같은 재료의 재계산이라 키가 그대로다 — 옛 인덱스의 체크·액션을 새 인덱스로 옮긴다.
+  const newKeys = ctx.candidates.map(candKey);
+  const used = new Set<number>();
+  const idxMap = old.map((c) => {
+    const k = candKey(c);
+    for (let j = 0; j < newKeys.length; j++) {
+      if (!used.has(j) && newKeys[j] === k) {
+        used.add(j);
+        return j;
+      }
+    }
+    return -1;
+  });
+  const selectedIdx = snap.selectedIdx.map((i) => idxMap[i] ?? -1).filter((i) => i >= 0);
+  const actions: BriefPickState["actions"] = {};
+  for (const [iStr, a] of Object.entries(snap.actions)) {
+    const j = idxMap[Number(iStr)] ?? -1;
+    if (j >= 0 && a != null) actions[j] = a;
+  }
+  showSelection(ctx, { ...snap, selectedIdx, actions });
+}
+
+/** 이슈 선택 화면 — 진입점이자 "다시 고르기" 복귀점. 그릴 때마다 ctx.liveHandle을 갱신한다. */
 function showSelection(ctx: BriefContext, initial?: Partial<BriefPickState>): void {
-  renderBriefPickPanel({
+  ctx.liveHandle = renderBriefPickPanel({
     advertiserName: ctx.target.name,
     adAccountNo: ctx.target.adAccountNo,
     candidates: ctx.candidates,

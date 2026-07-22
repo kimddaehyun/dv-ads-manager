@@ -45,6 +45,29 @@ export interface ComposeResult {
   blocks: ComposedBlock[];
 }
 
+/**
+ * 선택 화면이 떠 있는 동안 세션 토큰과 서버 함수 인스턴스를 미리 데운다(2026-07-22 속도 개선).
+ * 서버는 mode:"warmup"을 AI 호출 없이 즉시 200으로 돌려준다 — 콜드스타트를 사용자 대기 시간에 흡수.
+ * 실패해도 아무 일도 안 일어난다(본 조립이 어차피 다시 시도).
+ * 서버가 인증 검증(JWT+승인 조회)은 매번 수행하므로 짧은 간격 재호출은 건너뛴다(코덱스 리뷰 P2).
+ */
+const WARM_GAP_MS = 60_000;
+let lastWarmAt = 0;
+
+export function warmCompose(): void {
+  if (Date.now() - lastWarmAt < WARM_GAP_MS) return;
+  lastWarmAt = Date.now();
+  void loadToken()
+    .then((token) =>
+      fetch(FN_URL, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ mode: "warmup" }),
+      }),
+    )
+    .catch(() => {});
+}
+
 export async function composeBlocks(req: ComposeRequest): Promise<ComposeResult> {
   const token = await loadToken();
   const res = await fetch(FN_URL, {

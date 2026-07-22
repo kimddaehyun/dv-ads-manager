@@ -504,7 +504,15 @@ function buildPickDetail(pick: BriefCandidate): HTMLElement {
   return wrap;
 }
 
-export function renderBriefPickPanel(opts: BriefPickOpts): void {
+/** 열려 있는 선택 화면의 손잡이 — 순위 조회가 늦게 끝났을 때 상태를 들고 다시 그리는 용도. */
+export interface BriefPickHandle {
+  /** 이 렌더의 화면이 아직 떠 있는지 — 닫혔거나 다른 화면으로 바뀌면 false. */
+  isLive: () => boolean;
+  /** 지금 화면 상태(체크·액션 포함) 스냅샷 — 재렌더 시 initial로 넘겨 복원한다. */
+  snapshot: () => BriefPickState;
+}
+
+export function renderBriefPickPanel(opts: BriefPickOpts): BriefPickHandle {
   closeBriefPanel();
 
   const backdrop = document.createElement("div");
@@ -1294,5 +1302,14 @@ export function renderBriefPickPanel(opts: BriefPickOpts): void {
 
   disposePanel = () => {
     backdrop.remove();
+  };
+
+  return {
+    isLive: () => backdrop.isConnected,
+    snapshot: () => ({
+      ...state,
+      selectedIdx: picks.map((p, i) => (p.selected ? i : -1)).filter((i) => i >= 0),
+      actions: Object.fromEntries(picks.map((p, i) => [i, p.action])),
+    }),
   };
 }

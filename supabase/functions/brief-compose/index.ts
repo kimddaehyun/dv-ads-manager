@@ -112,6 +112,13 @@ Deno.serve(async (req) => {
 
   const body = await req.json();
 
+  // ── 모드: 워밍업 — 선택 화면 대기 동안 함수 인스턴스·세션만 데운다. AI 호출·기록 없음. ──
+  if (body.mode === "warmup") {
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200, headers: { "content-type": "application/json", ...CORS_HEADERS },
+    });
+  }
+
   // ── 모드: 말투 프롬프트 생성 (T5.5) — AE 본인의 채팅 이력을 말투 규칙으로 요약 ──
   if (body.mode === "distillTone") {
     const samples = typeof body.samples === "string" ? body.samples.trim() : "";
