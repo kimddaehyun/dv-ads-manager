@@ -2169,6 +2169,7 @@ function openAgencyModal(
   backdrop.appendChild(card);
   document.body.appendChild(backdrop);
 
+  const closeBtnEl = card.querySelector<HTMLButtonElement>(".dvads-agency-close")!;
   const identityEl = card.querySelector<HTMLDivElement>(".dvads-agency-identity")!;
   const bodyEl = card.querySelector<HTMLDivElement>(".dvads-agency-body")!;
   const titleEl = card.querySelector<HTMLDivElement>(".dvads-agency-title")!;
@@ -2207,6 +2208,7 @@ function openAgencyModal(
     card.style.display = ""; // 로딩 때 숨겼다면 복원
     bodyEl.innerHTML = ""; // 결과/로딩 잔재 제거 — 입력창만 남긴다
     bodyEl.style.display = "none"; // 입력 화면은 본문 비움 → 아래 빈 공간 제거
+    closeBtnEl.style.display = "none"; // 입력 화면은 취소 버튼이 닫기 역할 — 헤더 ×는 숨김
     identityEl.style.display = "";
     identityEl.innerHTML = "";
     // 직전 결과가 있으면(=다시 점검으로 들어온 경우) 헤더 제목을 "< 뒤로가기"로 교체 → 점검 없이 이전 결과 복귀.
@@ -2221,9 +2223,15 @@ function openAgencyModal(
     const wrap = document.createElement("div");
     wrap.className = "dvads-agency-id-editor";
     wrap.innerHTML = `
-      <input class="dvads-agency-id-input" type="text" inputmode="numeric"
-        placeholder="예: 28504, 28505" />
-      <button class="dvads-agency-id-save dvads-btn dvads-btn-primary" type="button">점검 시작</button>
+      <div class="dvads-agency-id-input-wrap">
+        <input class="dvads-agency-id-input" type="text" inputmode="numeric"
+          placeholder="예: 28504, 28505" />
+        <button class="dvads-agency-id-clear" type="button" aria-label="지우기">×</button>
+      </div>
+      <div class="dvads-agency-id-actions">
+        <button class="dvads-agency-id-cancel dvads-btn dvads-btn-secondary" type="button">취소</button>
+        <button class="dvads-agency-id-save dvads-btn dvads-btn-primary" type="button">시작</button>
+      </div>
     `;
     identityEl.appendChild(wrap);
 
@@ -2231,6 +2239,16 @@ function openAgencyModal(
     input.value = ourIds.join(", "); // 기존 값 미리 채움 (지울 수 있음)
     input.focus();
     input.select();
+    // 값이 있을 때만 보이는 입력 지우기 × — 누르면 비우고 다시 포커스.
+    const clearBtn = wrap.querySelector<HTMLButtonElement>(".dvads-agency-id-clear")!;
+    const syncClear = () => clearBtn.classList.toggle("is-visible", input.value !== "");
+    input.addEventListener("input", syncClear);
+    clearBtn.addEventListener("click", () => {
+      input.value = "";
+      syncClear();
+      input.focus();
+    });
+    syncClear();
     const save = async () => {
       const ids = [...new Set((input.value.match(/\d+/g) ?? []).map(Number).filter((n) => n > 0))];
       ourIds = ids;
@@ -2238,6 +2256,11 @@ function openAgencyModal(
       void startCheck();
     };
     wrap.querySelector<HTMLButtonElement>(".dvads-agency-id-save")?.addEventListener("click", () => void save());
+    // 취소 = 뒤로가기와 동일 — 직전 결과가 있으면 결과로 복귀, 없으면 모달 닫기.
+    wrap.querySelector<HTMLButtonElement>(".dvads-agency-id-cancel")?.addEventListener("click", () => {
+      if (lastResults) renderResults(lastResults);
+      else cleanup();
+    });
     input.addEventListener("keydown", (e) => {
       if (e.key === "Enter") { e.preventDefault(); void save(); }
     });
@@ -2332,6 +2355,7 @@ function openAgencyModal(
   function renderResults(rows: AgencyCheckRow[]) {
     lastResults = rows; // "다시 점검" 화면에서 뒤로가기로 복귀할 수 있게 보관
     titleEl.textContent = "대행권 점검"; // 입력 화면에서 뒤로가기로 바뀐 제목 복원
+    closeBtnEl.style.display = ""; // 결과 화면은 헤더 × 복원 (취소 버튼이 없음)
     // 정렬 순서: 타대행사 → 없음 → 확인 필요 → 이관 완료(정상은 맨 아래), 동급은 이름순.
     const order: AgencyCheckStatus[] = ["other_agency", "none", "error", "ok"];
     // 상태 헤더 드롭다운으로 고른 상태(null = 전체). 첫 점검 시 전체 계정 표시.

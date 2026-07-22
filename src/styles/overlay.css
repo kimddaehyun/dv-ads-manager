@@ -3845,22 +3845,65 @@ td.dvads-period-delta-down {
   padding: 0 20px 18px;
   font-size: 13px;
 }
+/* 비즈머니 알림 다이얼로그(.dvads-input-*)와 동일 배치 — 입력창 풀폭 한 줄 + 아래 취소/시작 버튼 줄. */
 .dvads-agency-id-editor {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 16px;
   width: 100%;
+}
+.dvads-agency-id-input-wrap {
+  position: relative;
+  display: flex;
 }
 .dvads-agency-id-input {
   flex: 1;
-  height: 32px;
-  padding: 0 12px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 36px 0 14px;
   background: #F3F4F6;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
   color: #171717;
   outline: none;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+/* 입력 지우기 × — 값이 있을 때만 표시(is-visible). 리스트 검색창 ×(.dvads-multi-search-clear)와 동일 톤. */
+.dvads-agency-id-clear {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 4px;
+  color: #9CA3AF;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.dvads-agency-id-clear.is-visible {
+  display: inline-flex;
+}
+.dvads-agency-id-clear:hover {
+  background: #E5E7EB;
+  color: #171717;
+}
+.dvads-agency-id-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 .dvads-agency-id-input:focus {
   background: #ffffff;
@@ -5347,6 +5390,7 @@ td.dvads-period-delta-down {
 .dvads-input-actions .dvads-btn,
 .dvads-actor-actions .dvads-btn,
 .dvads-agency-actions .dvads-btn,
+.dvads-agency-id-actions .dvads-btn,
 .dvads-setup-foot .dvads-btn,
 .dvads-rename-cancel,
 .dvads-rename-save {
