@@ -3827,10 +3827,13 @@ async function openHistoryReportDialogFor(target: {
   const { GROUP_ORDER, GROUP_LABEL } = groupMod;
   // 변경자 초기값 — 이 계정에서 마지막으로 고른 목록이 있으면 그걸, 없으면 우리 쪽 사람 목록.
   const chosen = new Set(metaMap[target.adAccountNo]?.historyReportActors ?? identity);
-  // 이력 종류 필터 — 계정별 저장값에서 복원. 비어있으면(미저장) 전체 포함.
+  // 이력 종류 필터 — 실제 선택된 종류의 집합. 기본은 전체 선택이고, 저장값(부분 선택)이
+  // 있으면 그걸 복원한다 (미저장/전체 선택은 undefined로 저장돼 여기로 온다).
   const savedGroups = metaMap[target.adAccountNo]?.historyReportGroups;
   const pickedGroups = new Set<string>(
-    (savedGroups ?? []).filter((k) => (GROUP_ORDER as string[]).includes(k)),
+    savedGroups
+      ? savedGroups.filter((k) => (GROUP_ORDER as string[]).includes(k))
+      : GROUP_ORDER,
   );
 
   const toDateInput = (d: Date) => {
@@ -3882,19 +3885,21 @@ async function openHistoryReportDialogFor(target: {
 
   // ─── 이력 종류 필터 — 날짜칸 우측 필터 아이콘 → 체크 토글 메뉴(중복 선택) ───
   const filterBtn = card.querySelector<HTMLButtonElement>(".dvads-hr-filter-btn")!;
+  const allPicked = () => pickedGroups.size === GROUP_ORDER.length;
   const syncFilterBtn = () => {
-    filterBtn.classList.toggle("is-active", pickedGroups.size > 0);
+    filterBtn.classList.toggle("is-active", !allPicked());
   };
   attachActionMenu({
     trigger: filterBtn,
     ariaLabel: "이력 종류 필터",
     items: () => [
       {
-        label: "전체보기",
-        checked: pickedGroups.size === 0,
+        // 전체 선택 상태에선 "전체해제", 하나라도 빠지면 "전체보기"(누르면 전체 선택).
+        label: allPicked() ? "전체해제" : "전체보기",
         keepOpen: true,
         onClick: () => {
-          pickedGroups.clear();
+          if (allPicked()) pickedGroups.clear();
+          else GROUP_ORDER.forEach((k) => pickedGroups.add(k));
           syncFilterBtn();
         },
       },
@@ -3906,8 +3911,6 @@ async function openHistoryReportDialogFor(target: {
         onClick: () => {
           if (pickedGroups.has(key)) pickedGroups.delete(key);
           else pickedGroups.add(key);
-          // 전부 고르면 전체보기와 같으니 전체보기 상태로 되돌린다.
-          if (pickedGroups.size === GROUP_ORDER.length) pickedGroups.clear();
           syncFilterBtn();
         },
       })),
@@ -3945,7 +3948,8 @@ async function openHistoryReportDialogFor(target: {
   // 칩만 바꾸고 닫은 선택이 다음에 유지된다. 실패는 warn만 (보고 흐름과 무관).
   const persistSelections = () => {
     void updateUserMetaMany([target.adAccountNo], {
-      historyReportGroups: pickedGroups.size > 0 ? [...pickedGroups] : undefined,
+      // 전체 선택은 undefined로 저장 — 복원 시 "기본 = 전체 선택"과 같은 의미.
+      historyReportGroups: pickedGroups.size === GROUP_ORDER.length ? undefined : [...pickedGroups],
       historyReportActors: [...chosen],
     }).catch((e) => console.warn("[dv-ads/history-report] 선택 저장 실패", e));
   };
@@ -4028,7 +4032,7 @@ async function openHistoryReportDialogFor(target: {
       try {
         const { collectHistoryReport, formatHistoryReportText } = groupMod;
         const report = await collectHistoryReport(customerId, period.since, period.until, [...chosen]);
-        if (pickedGroups.size > 0) {
+        if (pickedGroups.size < GROUP_ORDER.length) {
           report.groups = report.groups.filter((g) => pickedGroups.has(g.key));
           report.total = report.groups.reduce((n, g) => n + g.items.length, 0);
         }
