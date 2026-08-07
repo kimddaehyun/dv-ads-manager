@@ -156,6 +156,11 @@ export async function updateUserMeta(
   if ("brandSearchDaysThreshold" in patch && patch.brandSearchDaysThreshold == null) delete next.brandSearchDaysThreshold;
   // 끄기 = 키 제거 (false를 남겨두면 저장소에 의미 없는 값만 쌓인다)
   if ("changeWatch" in patch && !patch.changeWatch) delete next.changeWatch;
+  // F-Report 설정 — 기본값(전체/표기/0.5%)은 키 제거로 표현해 신규 캠페인 자동 포함을 보장.
+  if ("reportMinorRatio" in patch && patch.reportMinorRatio == null) delete next.reportMinorRatio;
+  if ("reportShowConvSplit" in patch && patch.reportShowConvSplit !== false) delete next.reportShowConvSplit;
+  if ("reportSaCampaignIds" in patch && patch.reportSaCampaignIds == null) delete next.reportSaCampaignIds;
+  if ("reportGfaCampaignIds" in patch && patch.reportGfaCampaignIds == null) delete next.reportGfaCampaignIds;
   all[adAccountNo] = next;
   // 이 계정 한 행만 push — 전체 맵을 매번 올리는 건 낭비.
   const addedList = await loadAddedList();

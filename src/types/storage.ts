@@ -194,6 +194,14 @@ export interface MultiAccountUserMeta {
   briefTone?: "short" | "detailed" | "numeric" | "soft" | "professional" | "friendly";
   /** F-Brief 이슈 기준 민감도. undefined = 보통(광고비 규모 자동 보정). */
   briefSensitivity?: "sensitive" | "normal" | "loose" | "custom";
+  /** F-Report 기타 행 접기 기준(캠페인 광고비 대비 비율). undefined = 기본 0.005(0.5%), 0 = 접지 않음. */
+  reportMinorRatio?: number;
+  /** F-Report 직접/간접 전환수 열 표기. undefined = 표기(기본). false만 저장한다. */
+  reportShowConvSplit?: boolean;
+  /** F-Report 포함할 검색광고 캠페인 id 목록. undefined = 전체(신규 캠페인 자동 포함). */
+  reportSaCampaignIds?: string[];
+  /** F-Report 포함할 디스플레이(GFA) 캠페인 id 목록. undefined = 전체. */
+  reportGfaCampaignIds?: string[];
   /** F-Brief 이슈 기준 직접 설정값 — briefSensitivity === "custom"일 때만 사용. */
   briefThresholds?: {
     costFloor?: number;

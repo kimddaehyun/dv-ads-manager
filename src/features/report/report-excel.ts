@@ -715,6 +715,47 @@ export function setColumnWidths(xml: string, widths: Record<string, number>): st
   return out.length ? xml.replace(/<sheetData>/, `${block}<sheetData>`) : xml;
 }
 
+// 열 숨김 (직접/간접 전환수 열 표기 끔). 열을 삭제하지 않고 hidden으로만 — 병합/수식/차트/열너비
+// 파장이 없고, 엑셀에서 열 다시 보이기 하면 값도 살아 있다. setColumnWidths처럼 기존 <col> 범위를
+// 대상 열 주위로 분할해 기존 너비·스타일은 보존하고 hidden="1"만 얹는다.
+export function hideColumns(xml: string, cols: string[]): string {
+  const targets = new Set(cols.map(colLetterToNum));
+  const colsM = xml.match(/<cols>([\s\S]*?)<\/cols>/);
+  const out: { min: number; tag: string }[] = [];
+  const covered = new Set<number>();
+  if (colsM) {
+    for (const m of colsM[1].matchAll(/<col\b[^>]*\/>/g)) {
+      const t = m[0];
+      const mn = Number((t.match(/min="(\d+)"/) ?? [])[1]);
+      const mx = Number((t.match(/max="(\d+)"/) ?? [])[1]) || mn;
+      if (!mn) continue;
+      // min/max를 뺀 나머지 속성(width/customWidth/style/hidden)은 그대로 보존.
+      const rest = t
+        .replace(/^<col\b/, "").replace(/\/>$/, "")
+        .replace(/\smin="\d+"/, "").replace(/\smax="\d+"/, "")
+        .trim();
+      const attrs = rest ? ` ${rest}` : "";
+      let cur = mn;
+      for (const k of [...targets].filter((k) => k >= mn && k <= mx).sort((a, b) => a - b)) {
+        if (cur <= k - 1) out.push({ min: cur, tag: `<col min="${cur}" max="${k - 1}"${attrs}/>` });
+        // 기존 hidden 속성(0/1 무관)은 떼고 새로 붙인다 — 중복 속성은 XML well-formed 위반.
+        const hidAttrs = `${attrs.replace(/\shidden="[^"]*"/g, "")} hidden="1"`;
+        out.push({ min: k, tag: `<col min="${k}" max="${k}"${hidAttrs}/>` });
+        covered.add(k);
+        cur = k + 1;
+      }
+      if (cur <= mx) out.push({ min: cur, tag: `<col min="${cur}" max="${mx}"${attrs}/>` });
+    }
+  }
+  for (const k of targets) {
+    if (!covered.has(k)) out.push({ min: k, tag: `<col min="${k}" max="${k}" hidden="1"/>` });
+  }
+  out.sort((a, b) => a.min - b.min);
+  const block = `<cols>${out.map((o) => o.tag).join("")}</cols>`;
+  if (colsM) return xml.replace(/<cols>[\s\S]*?<\/cols>/, block);
+  return xml.replace(/<sheetData>/, `${block}<sheetData>`);
+}
+
 // 행 범위 숨김 (from~to 포함). 존재하는 행만 처리.
 export function hideRowRange(xml: string, from: number, to: number): string {
   let out = xml;

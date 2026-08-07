@@ -5404,6 +5404,125 @@ td.dvads-period-delta-down {
   margin-left: auto;
 }
 
+/* ─── F-Report 리포트 설정 (톱니 → flyout 내 화면 전환) ─── */
+.dvads-rdp-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dvads-rdp-sub-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dvads-rdp-settings-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  color: #737373;
+  cursor: pointer;
+  transition: background 80ms ease, color 80ms ease;
+}
+.dvads-rdp-settings-btn:hover {
+  background: #F5F6F7;
+  color: #404040;
+}
+.dvads-rdp-settings-btn.is-active {
+  background: #FDF0E8;
+  color: #E6783B;
+}
+.dvads-rdp-set {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.dvads-rdp-set-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 16px 0;
+}
+.dvads-rdp-set-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #404040;
+  white-space: nowrap;
+}
+.dvads-rdp-set-ratio {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 13px;
+  color: #171717;
+  padding: 5px 8px;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  background: #ffffff;
+}
+.dvads-rdp-set-row .dvads-asset-bulk-switch {
+  margin-left: auto;
+}
+.dvads-rdp-set-camp-title {
+  padding-top: 14px;
+}
+.dvads-rdp-set-camp-list {
+  margin: 8px 16px 0;
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid #F3F4F6;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #737373;
+}
+.dvads-rdp-set-group + .dvads-rdp-set-group {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #F3F4F6;
+}
+.dvads-rdp-set-group-head,
+.dvads-rdp-set-camp {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.dvads-rdp-set-group-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: #404040;
+}
+.dvads-rdp-set-camp {
+  padding-left: 4px;
+}
+.dvads-rdp-set-group-head input,
+.dvads-rdp-set-camp input {
+  accent-color: #E6783B;
+  flex: none;
+}
+.dvads-rdp-set-camp-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #171717;
+}
+.dvads-rdp-set-camp-type {
+  flex: none;
+  font-size: 12px;
+  color: #A3A3A3;
+}
+
 /* ─── 다이얼로그 푸터 대형 버튼 통일 (2026-07-21) ───
    F-Brief 하단 버튼 비율(풀폭 양분, 높이 44px, 14px/600)을 모든 backdrop 다이얼로그
    푸터에 적용. 파일 끝에 두어 각 푸터의 기존 규칙(36px/13px 등)을 cascade로 덮는다.

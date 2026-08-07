@@ -41,15 +41,18 @@ function metricLine(m: ReportMetrics): string {
  * graceful — 비교 문단만 빠지고 문구 생성 자체는 진행된다.
  */
 export async function collectPrevKeywordMetrics(
-  customerId: number, range: DateRange,
+  customerId: number, range: DateRange, saCampaignIds?: string[] | null,
 ): Promise<Map<string, ReportMetrics> | null> {
   try {
     const prev = previousRange(range);
     // collectReportData의 키워드 수집과 동일한 필터/상한 (report-build.ts 주석 참조).
+    // 캠페인 선택(saCampaignIds)도 동일하게 — 안 걸면 제외한 캠페인의 이전 기간 키워드가
+    // 비교 기준에 섞여 "개선/처음 전환" 문구가 오분류된다 (codex P2, 2026-08-07).
     const filters = (tpCode: string): AdvReportFilter[] => [
       { type: "in", field: "nccCampaignTp", values: [tpCode] },
       { type: "bound", field: "salesAmt", operator: "gt", value: 0 },
       { type: "bound", field: "impCnt", operator: "gt", value: 0 },
+      ...(saCampaignIds?.length ? [{ type: "in", field: "nccCampaignId", values: saCampaignIds } as const] : []),
     ];
     const fetchOne = (tpCode: string) => fetchAdvancedReport({
       attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "expKeyword"],

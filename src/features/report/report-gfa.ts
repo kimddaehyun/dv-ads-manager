@@ -63,8 +63,11 @@ export interface GfaData {
 }
 
 // 디스플레이 합계 + 유형별 (단일 소스 = dashboard + campaignStats).
+// campaignIds: 리포트에 포함할 캠페인 id 목록(F-Report 캠페인 선택). null/undefined = 전체.
+// perCampaign 구성 단계에서 걸러 total/byType/byCampaign/campaignStats 호출까지 자연 정합.
 export async function fetchGfaData(
   adAccountNo: number, customerId: number, range: DateRange,
+  campaignIds?: string[] | null,
 ): Promise<GfaData> {
   // 1) dashboard — DA 캠페인의 노출/클릭/비용 + type + campaignId
   const body = JSON.stringify({
@@ -83,6 +86,7 @@ export async function fetchGfaData(
   for (const row of dash.results ?? []) {
     const id = row.campaign?.campaignId;
     if (!id) continue;
+    if (campaignIds && !campaignIds.includes(id)) continue; // 캠페인 선택 필터
     const me = row.metrics ?? {};
     perCampaign.set(id, {
       type: row.campaign?.type ?? "",
@@ -148,9 +152,43 @@ export async function fetchGfaData(
   return { total, byType, byCampaign };
 }
 
-// 합계만 필요할 때(전주 등). byType는 버림.
+// 합계만 필요할 때(전주 등). byType는 버림. campaignIds는 현재기간과 같은 필터를 전주에도 —
+// 안 넘기면 전주 디스플레이가 전체 값이라 증감이 왜곡된다.
 export async function fetchGfaTotal(
   adAccountNo: number, customerId: number, range: DateRange,
+  campaignIds?: string[] | null,
 ): Promise<ReportMetrics> {
-  return (await fetchGfaData(adAccountNo, customerId, range)).total;
+  return (await fetchGfaData(adAccountNo, customerId, range, campaignIds)).total;
+}
+
+// ── 캠페인 선택 UI용 목록 조회 (리포트 설정) ──
+// dashboard campaigns/search 재사용 — 성과와 무관하게 계정의 DA 캠페인 명단이 온다.
+export interface GfaCampaignItem {
+  id: string;
+  name: string;
+  typeLabel: string; // 웹사이트전환 등 (라벨 매핑 실패 시 코드에서 GFA_ 제거)
+}
+export async function fetchGfaCampaignList(
+  adAccountNo: number, customerId: number, range: DateRange,
+): Promise<GfaCampaignItem[]> {
+  const body = JSON.stringify({
+    startDate: range.since, endDate: range.until,
+    filter: "campaign.adPlatform:in:DA",
+    orderBy: "campaign.status:asc",
+    pageNumber: 1, pageSize: 1000,
+  });
+  const dash = await authFetch<DashboardSearchResponse>(
+    `/apis/dashboard/v1/adAccounts/${adAccountNo}/campaigns/search`,
+    { method: "POST", body },
+    customerId,
+  );
+  const out: GfaCampaignItem[] = [];
+  const seen = new Set<string>();
+  for (const row of dash.results ?? []) {
+    const id = row.campaign?.campaignId;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name: row.campaign?.name ?? id, typeLabel: typeLabel(row.campaign?.type ?? "") });
+  }
+  return out;
 }

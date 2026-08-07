@@ -9,7 +9,7 @@
 import {
   openXlsx, buildXlsx, forceRecalc, removeSheets, removeSheetDrawing, removeCalcChain,
   replaceChartColor,
-  readText, writeText, hideRowRange, type ZipFiles,
+  readText, writeText, hideRowRange, hideColumns, dropRowCellsAfter, type ZipFiles,
 } from "./report-excel";
 import {
   fillFixedSheets, expandDailyRows, insertSummaryDaily, SEARCH_DAILY_EXPAND, DISPLAY_DAILY_EXPAND,
@@ -41,6 +41,61 @@ export interface ReportTarget {
 export interface ReportMeta {
   authorName: string;
   createdDate: string; // "YYYY.MM.DD"
+}
+
+/**
+ * 수집에 영향을 주는 계정별 리포트 설정 — 캐시 키에 지문이 들어간다.
+ * F-Brief는 옵션 없이 호출해 기본 동작(전체 캠페인, 0.5% 접기)과 캐시를 그대로 유지한다.
+ */
+export interface ReportCollectOptions {
+  /** 기타 행 접기 기준(캠페인 광고비 대비). 0 = 접지 않음. 기본 0.005. */
+  minorRatio?: number;
+  /** 포함할 검색광고 캠페인 nccCampaignId 목록. null/undefined = 전체(필터 없음). */
+  saCampaignIds?: string[] | null;
+  /** 포함할 디스플레이(GFA) 캠페인 id 목록. null/undefined = 전체. */
+  gfaCampaignIds?: string[] | null;
+}
+
+/** 렌더 전용 옵션 — 수집 캐시와 무관하므로 캐시 키에 넣지 않는다. */
+export interface ReportRenderOptions {
+  /** 직접/간접 전환수 열 표기. false면 열 숨김. 기본 true. */
+  showConvSplit?: boolean;
+}
+
+// ── 캠페인 선택 UI용 목록 조회 (리포트 설정) ──
+// ncc/campaigns는 campaignType 파라미터 필수(2026-05-22 정찰) — 유형별 병렬 후 합산.
+const SA_LIST_TYPES = [
+  { api: "WEB_SITE", label: "파워링크" },
+  { api: "SHOPPING", label: "쇼핑검색" },
+  { api: "BRAND_SEARCH", label: "브랜드검색" },
+  { api: "POWER_CONTENTS", label: "파워컨텐츠" },
+  { api: "PLACE", label: "플레이스" },
+] as const;
+
+export interface SaCampaignItem {
+  id: string;
+  name: string;
+  typeLabel: string;
+}
+
+export async function fetchSaCampaignList(customerId: number): Promise<SaCampaignItem[]> {
+  const results = await Promise.allSettled(
+    SA_LIST_TYPES.map((t) =>
+      authFetch<Array<{ nccCampaignId?: string; name?: string }>>(
+        `/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=${t.api}`,
+        undefined, customerId,
+      ),
+    ),
+  );
+  const out: SaCampaignItem[] = [];
+  results.forEach((r, i) => {
+    if (r.status !== "fulfilled" || !Array.isArray(r.value)) return;
+    for (const c of r.value) {
+      if (!c?.nccCampaignId) continue;
+      out.push({ id: c.nccCampaignId, name: c.name ?? c.nccCampaignId, typeLabel: SA_LIST_TYPES[i].label });
+    }
+  });
+  return out;
 }
 
 // ── 라벨 매핑 (advanced-report 값 → 양식 라벨) ──
@@ -96,8 +151,12 @@ const GENDER_ORDER = ["남성", "여성", "알수없음"];
 const SEARCH_TYPE_ORDER = ["파워링크", "쇼핑검색광고", "플레이스", "브랜드검색/신제품검색", "파워컨텐츠"];
 
 // ── advanced-report 헬퍼 ──
-async function fetchTotal(customerId: number, range: DateRange): Promise<ReportMetrics> {
-  const res = await fetchAdvancedReport({ attributes: [], range, customerId });
+// extraFilters: 캠페인 선택 필터(nccCampaignId in) — 빈 배열이면 filters 파라미터 자체가 빠져
+// 기존 요청과 동일하다(fetchAdvancedReport가 length 0이면 생략).
+async function fetchTotal(
+  customerId: number, range: DateRange, extraFilters: AdvReportFilter[] = [],
+): Promise<ReportMetrics> {
+  const res = await fetchAdvancedReport({ attributes: [], range, customerId, filters: extraFilters });
   const idx = colIndex(res.head);
   return res.rows[0] ? rowMetrics(res.rows[0], idx) : ZERO_METRICS;
 }
@@ -106,8 +165,9 @@ async function fetchTotal(customerId: number, range: DateRange): Promise<ReportM
 async function fetchAggregated(
   customerId: number, range: DateRange, attr: string,
   labelFn: (raw: string) => string | null,
+  extraFilters: AdvReportFilter[] = [],
 ): Promise<Map<string, ReportMetrics>> {
-  const res = await fetchAdvancedReport({ attributes: [attr], range, customerId });
+  const res = await fetchAdvancedReport({ attributes: [attr], range, customerId, filters: extraFilters });
   const idx = colIndex(res.head);
   const out = new Map<string, ReportMetrics>();
   for (const r of res.rows) {
@@ -134,21 +194,24 @@ export async function buildReportModel(
   target: ReportTarget, range: DateRange, meta: ReportMeta, brandCur = 0, brandPrev = 0,
   displayCurrent?: GfaData | Promise<GfaData>,
   brandRaw: BrandRawContract[] = [], // 일자별에 브랜드 계약금액을 하루 단위로 나눠 넣기 위한 원본
+  collect: ReportCollectOptions = {}, // 캠페인 선택·접기 기준 (리포트 설정)
 ): Promise<ReportModel> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
   const prev = previousRange(range);
+  const saFilters = saCampaignFilters(collect.saCampaignIds);
+  const gfaIds = collect.gfaCampaignIds ?? null;
 
   // GFA(디스플레이)는 계정에 없거나 권한 문제면 0으로 graceful — hasDisplay로 시트/행 표시 결정.
   // ⚠️ 일시적 네트워크/인증 실패도 여기서 0이 되면 디스플레이가 통째로 빠진 리포트가 조용히 나온다.
   // 동시 요청 폭주 중 한 번의 일시 오류로 디스플레이가 통째로 사라지지 않게 1회 재시도 + 에러 로그.
   const gfaSafe = async (r: DateRange) => {
     try {
-      return await fetchGfaTotal(target.adAccountNo, cid, r);
+      return await fetchGfaTotal(target.adAccountNo, cid, r, gfaIds);
     } catch (e1) {
       console.warn("[dv-ads/report] 디스플레이 합계 1차 조회 실패 → 재시도", e1);
       try {
-        return await fetchGfaTotal(target.adAccountNo, cid, r);
+        return await fetchGfaTotal(target.adAccountNo, cid, r, gfaIds);
       } catch (e2) {
         console.warn("[dv-ads/report] 디스플레이 합계 조회 최종 실패 → 0으로 처리(디스플레이 누락 가능)", e2);
         return ZERO_METRICS;
@@ -165,20 +228,24 @@ export async function buildReportModel(
   // 디스플레이_상세(비동기 다운로드 파이프라인, 가장 느린 구간)는 합계만 확인되면(1~2초) 바로
   // 출발시켜 아래 SA 수집(키워드 보고서 페이지네이션 포함)과 겹쳐 돌린다 — 직렬로 두면 계정당
   // 그만큼 늦어진다. 결과 소비·실패 graceful 처리는 아래 hasDisplay 블록에서.
+  // 상세 4차원(일자/지면/성별/연령)에는 캠페인 차원이 없어 필터가 불가능하다 — 캠페인을 일부만
+  // 선택했으면 틀린 숫자를 싣는 대신 수집 자체를 생략해 디스플레이_상세 시트를 뺀다(graceful 경로).
   const detailP = gfaCurP.then((g) =>
-    g.impressions > 0 || g.cost > 0 ? fetchGfaDetail(target.adAccountNo, cid, range) : null,
+    gfaIds == null && (g.impressions > 0 || g.cost > 0)
+      ? fetchGfaDetail(target.adAccountNo, cid, range)
+      : null,
   );
   // Promise.all이 먼저 reject되면 아래 await detailP에 도달하지 못한다 — unhandled rejection 방지용
   // no-op catch (await 측 에러 전파에는 영향 없음).
   detailP.catch(() => {});
 
   const [saCurRaw, saPrevRaw, byDayMap, byPlaceRows, byGenderMap, byAgeMap, gfaCur, gfaPrev] = await Promise.all([
-    fetchTotal(cid, range),
-    fetchTotal(cid, prev),
-    fetchAggregated(cid, range, "ymd", (v) => ymdToIso(v)),
-    fetchPlacement(cid, range),
-    fetchAggregated(cid, range, "criterionGenderNm", genderLabel),
-    fetchAggregated(cid, range, "criterionAgeTpNm", ageLabel),
+    fetchTotal(cid, range, saFilters),
+    fetchTotal(cid, prev, saFilters),
+    fetchAggregated(cid, range, "ymd", (v) => ymdToIso(v), saFilters),
+    fetchPlacement(cid, range, saFilters, collect.minorRatio),
+    fetchAggregated(cid, range, "criterionGenderNm", genderLabel, saFilters),
+    fetchAggregated(cid, range, "criterionAgeTpNm", ageLabel, saFilters),
     gfaCurP,
     gfaSafe(prev),
   ]);
@@ -289,9 +356,14 @@ function normalizeNamed(
 // "기타 ..." 한 행으로 합친다. 합친 값도 그대로 더해지므로 소계/합계는 계속 정확하다.
 const MINOR_ROW_RATIO = 0.005;
 
-// 표 전체 총비용의 0.5%. 합계가 0이면 임계도 0이라 아무것도 안 접힌다(전부 0원인 기간).
-function minorThreshold(rows: { metrics: ReportMetrics }[]): number {
-  return rows.reduce((s, r) => s + r.metrics.cost, 0) * MINOR_ROW_RATIO;
+// 표 전체 총비용의 ratio(기본 0.5%). 합계가 0이거나 ratio 0(접지 않음)이면 임계 0이라 안 접힌다.
+function minorThreshold(rows: { metrics: ReportMetrics }[], ratio = MINOR_ROW_RATIO): number {
+  return rows.reduce((s, r) => s + r.metrics.cost, 0) * ratio;
+}
+
+// 캠페인 선택 → advanced-report `in` 필터. 미선택(null/undefined/빈 배열)이면 필터 없음(전체).
+function saCampaignFilters(ids: string[] | null | undefined): AdvReportFilter[] {
+  return ids && ids.length > 0 ? [{ type: "in", field: "nccCampaignId", values: ids }] : [];
 }
 
 // 전환이 하나라도 붙은 행. 비용이 작아도 성과가 난 것이라 접어서 묻으면 안 된다.
@@ -319,8 +391,10 @@ function foldMinorRows(
 // 지면별: mediaNm별 동적. 노출(impressions)>0인 지면만, 총비용 내림차순. (고정 7버킷 폐기)
 // 총비용 0.5% 미만 지면은 "기타 매체" 한 행으로 접는다(전환 난 지면은 남긴다 — 전환이 어느 지면에서
 // 나왔는지가 리포트의 핵심이라 소액이라고 묻으면 안 된다).
-async function fetchPlacement(customerId: number, range: DateRange): Promise<NamedMetrics[]> {
-  const res = await fetchAdvancedReport({ attributes: ["mediaNm"], range, customerId });
+async function fetchPlacement(
+  customerId: number, range: DateRange, extraFilters: AdvReportFilter[] = [], minorRatio?: number,
+): Promise<NamedMetrics[]> {
+  const res = await fetchAdvancedReport({ attributes: ["mediaNm"], range, customerId, filters: extraFilters });
   const idx = colIndex(res.head);
   const map = new Map<string, ReportMetrics>();
   for (const r of res.rows) {
@@ -332,7 +406,7 @@ async function fetchPlacement(customerId: number, range: DateRange): Promise<Nam
     .map(([label, metrics]) => ({ label, metrics }))
     .filter((p) => p.metrics.impressions > 0)
     .sort((a, b) => b.metrics.cost - a.metrics.cost);
-  return foldMinorRows(rows, minorThreshold(rows), "기타 매체", hasConversion);
+  return foldMinorRows(rows, minorThreshold(rows, minorRatio), "기타 매체", hasConversion);
 }
 
 // ── 브랜드검색 계약금액 (일할 계산) ──
@@ -359,12 +433,18 @@ interface BrandTimeContract {
 // 일할 입력으로 쓸 raw 계약 1건 (광고그룹ID + 계약 기간/금액/노출·취소 필드).
 export type BrandRawContract = ProrationContract & { adgroupId: string; contractStatus?: string };
 
-async function fetchBrandContracts(customerId: number): Promise<BrandRawContract[]> {
+async function fetchBrandContracts(
+  customerId: number, saCampaignIds?: string[] | null,
+): Promise<BrandRawContract[]> {
   const camps = await authFetch<BrandCampaignRow[]>(
     "/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=BRAND_SEARCH",
     undefined, customerId,
   ).catch(() => [] as BrandCampaignRow[]);
-  const campIds = (camps ?? []).map((c) => c.nccCampaignId).filter((x): x is string => !!x);
+  let campIds = (camps ?? []).map((c) => c.nccCampaignId).filter((x): x is string => !!x);
+  // 캠페인 선택 필터 — 미선택 브랜드 캠페인의 계약금액이 비용에 가산되지 않게 교집합.
+  if (saCampaignIds && saCampaignIds.length > 0) {
+    campIds = campIds.filter((id) => saCampaignIds.includes(id));
+  }
   if (campIds.length === 0) return [];
 
   const agLists = await Promise.all(campIds.map((id) => fetchAdgroupRowsByCampaign(id, customerId)));
@@ -410,9 +490,9 @@ async function fetchBrandContracts(customerId: number): Promise<BrandRawContract
 
 // 종합 캠페인 유형별(섹션3) 검색 유형 리스트. 브랜드검색 행은 비용(cost)을 계약금액으로 대체.
 async function fetchSummarySearchTypes(
-  customerId: number, range: DateRange, brandTotal: number,
+  customerId: number, range: DateRange, brandTotal: number, extraFilters: AdvReportFilter[] = [],
 ): Promise<SummaryType[]> {
-  const map = await fetchAggregated(customerId, range, "nccCampaignTp", campaignTypeLabel);
+  const map = await fetchAggregated(customerId, range, "nccCampaignTp", campaignTypeLabel, extraFilters);
   return SEARCH_TYPE_ORDER.filter((l) => map.has(l)).map((label) => {
     const metrics = map.get(label)!;
     if (label === "브랜드검색/신제품검색" && brandTotal > 0) {
@@ -426,6 +506,7 @@ async function fetchSummarySearchTypes(
 type CampGroupRow = { campaign: string; group: string; metrics: ReportMetrics };
 async function fetchCampaignGroups(
   customerId: number, range: DateRange, brandByAdgroup: Map<string, number>,
+  extraFilters: AdvReportFilter[] = [],
 ): Promise<CampaignTypeGroup[]> {
   // 이 시트는 **그룹의 진짜 총계**라 지표 필터를 걸면 안 된다(키워드 시트와 달리 여기 숫자가
   // 광고주에게 나가는 기준값이다). 대신 maxRows는 넉넉히 — 응답이 유형별로 뭉쳐 오므로 기본
@@ -433,6 +514,7 @@ async function fetchCampaignGroups(
   // 검색어 차원이 없어 행이 그룹 수만큼(수백~수천)이라, 상한을 올려도 왕복은 ceil(total/1000)뿐.
   const res = await fetchAdvancedReport({
     attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId"], range, customerId, maxRows: 30000,
+    filters: extraFilters,
   });
   const idx = colIndex(res.head);
   const byType = new Map<string, CampGroupRow[]>();
@@ -485,6 +567,7 @@ function sortByCampaign(rows: CampGroupRow[]): CampGroupRow[] {
 // 같은 리포트의 검색광고 시트(필터 없는 경로)와 노출·클릭률이 어긋난다는 뜻이다.
 export function buildKeywordGroups(
   res: AdvReportResult, apiType: string, keyAttr: "keyword" | "expKeyword",
+  minorRatio = MINOR_ROW_RATIO, // 0 = 접지 않음 (임계 0 → foldMinorRows 자연 no-op)
 ): KeywordGroup[] {
   const idx = colIndex(res.head);
   const items: { campaign: string; group: string; kw: string; metrics: ReportMetrics }[] = [];
@@ -520,7 +603,7 @@ export function buildKeywordGroups(
   const result = [...map.values()];
   for (const g of result) {
     g.keywords.sort((a, b) => b.metrics.cost - a.metrics.cost);
-    const threshold = (campaignCost.get(g.campaign) ?? 0) * MINOR_ROW_RATIO;
+    const threshold = (campaignCost.get(g.campaign) ?? 0) * minorRatio;
     g.keywords = foldMinorRows(
       g.keywords.map((k) => ({ label: k.keyword, metrics: k.metrics })), threshold, "기타 키워드",
       hasConversion, // 전환 난 키워드는 비용이 적어도 남긴다
@@ -676,11 +759,16 @@ let collectCache: { key: string; at: number; dataP: Promise<ReportData> } | null
  * F-Report·F-Brief가 이 함수를 공유한다. 실제 수집은 collectReportDataFresh — 여기는 캐시 껍데기.
  */
 export async function collectReportData(
-  target: ReportTarget, range: DateRange, meta: ReportMeta,
+  target: ReportTarget, range: DateRange, meta: ReportMeta, options: ReportCollectOptions = {},
 ): Promise<ReportData> {
-  const key = `${target.adAccountNo}|${target.masterCustomerId}|${range.since}|${range.until}`;
+  // 옵션 지문을 키에 포함 — 안 넣으면 캠페인 필터 결과와 전체 수집(F-Brief)이 서로의 캐시를 오염.
+  // 빈 배열([] = 디스플레이 제외)과 null(전체)은 다른 결과라 "*"와 ""로 구분한다.
+  const idsFp = (ids?: string[] | null) => (ids == null ? "*" : [...ids].sort().join(","));
+  const optFp = `${options.minorRatio ?? MINOR_ROW_RATIO}` +
+    `|sa:${idsFp(options.saCampaignIds)}|gfa:${idsFp(options.gfaCampaignIds)}`;
+  const key = `${target.adAccountNo}|${target.masterCustomerId}|${range.since}|${range.until}|${optFp}`;
   if (!collectCache || collectCache.key !== key || Date.now() - collectCache.at > COLLECT_CACHE_TTL_MS) {
-    const dataP = collectReportDataFresh(target, range, meta);
+    const dataP = collectReportDataFresh(target, range, meta, options);
     collectCache = { key, at: Date.now(), dataP };
     dataP.catch(() => {
       if (collectCache?.dataP === dataP) collectCache = null;
@@ -709,16 +797,18 @@ export async function collectReportData(
  * 확정 - 순서·동시성을 바꾸지 말 것.
  */
 async function collectReportDataFresh(
-  target: ReportTarget, range: DateRange, meta: ReportMeta,
+  target: ReportTarget, range: DateRange, meta: ReportMeta, options: ReportCollectOptions = {},
 ): Promise<ReportData> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
+  const saFilters = saCampaignFilters(options.saCampaignIds);
+  const minorRatio = options.minorRatio ?? MINOR_ROW_RATIO;
 
   // 브랜드검색 계약 raw 수집(없거나 실패 시 빈 목록) → 금주/전주 기간으로 각각 일할 계산.
   // 검색 비용 가산(금주/전주)·종합 섹션3·검색 섹션2 그룹 비용에 공통 사용.
   // 3-hop(캠페인→그룹→계약) 체인이라 앞에서 await로 막지 않고 promise로 시작해 비-brand 수집(디스플레이·
   // 키워드)과 동시 진행 — brand 값이 필요한 소비자에서만 각자 await(데이터 흐름은 동일, 시작만 앞당김).
-  const brandP = fetchBrandContracts(cid)
+  const brandP = fetchBrandContracts(cid, options.saCampaignIds)
     .catch((e) => {
       console.warn("[dv-ads/report] 브랜드 계약 조회 실패 → 빈 값", e);
       return [] as BrandRawContract[];
@@ -734,11 +824,11 @@ async function collectReportDataFresh(
   const emptyGfa: GfaData = { total: ZERO_METRICS, byType: [], byCampaign: [] };
   const displayDataP = (async (): Promise<GfaData> => {
     try {
-      return await fetchGfaData(target.adAccountNo, cid, range);
+      return await fetchGfaData(target.adAccountNo, cid, range, options.gfaCampaignIds);
     } catch (e1) {
       console.warn("[dv-ads/report] 디스플레이 유형별/캠페인별 1차 조회 실패 → 재시도", e1);
       try {
-        return await fetchGfaData(target.adAccountNo, cid, range);
+        return await fetchGfaData(target.adAccountNo, cid, range, options.gfaCampaignIds);
       } catch (e2) {
         console.warn("[dv-ads/report] 디스플레이 유형별/캠페인별 최종 실패 → 빈 값", e2);
         return emptyGfa;
@@ -763,6 +853,7 @@ async function collectReportDataFresh(
     // 노출 0 / 광고비 0 제외를 서버에서 — 클라이언트에서 걸러도 결과는 같지만 그러려고 다 받는 게 낭비.
     { type: "bound", field: "salesAmt", operator: "gt", value: 0 },
     { type: "bound", field: "impCnt", operator: "gt", value: 0 },
+    ...saFilters, // 캠페인 선택 (미선택이면 빈 배열이라 기존 요청 그대로)
   ];
   // filters는 문서에 없는 internal API 표면이라(정찰로 알아냄) 예고 없이 바뀔 수 있다.
   // 여기서 throw하면 Promise.all이 깨져 **리포트 전체**가 실패한다 — 키워드 시트는 없으면 제거되는
@@ -790,16 +881,16 @@ async function collectReportDataFresh(
   const [model, searchTypes, displayData, campGroups, plRes, shRes, productRes] = await Promise.all([
     (async () => {
       const { brandRaw, brandCur, brandPrev } = await brandP;
-      return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP, brandRaw);
+      return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP, brandRaw, options);
     })(),
     (async () => {
       const { brandCur } = await brandP;
-      return fetchSummarySearchTypes(cid, range, brandCur.total);
+      return fetchSummarySearchTypes(cid, range, brandCur.total, saFilters);
     })(),
     displayDataP,
     (async () => {
       const { brandCur } = await brandP;
-      return fetchCampaignGroups(cid, range, brandCur.byAdgroup);
+      return fetchCampaignGroups(cid, range, brandCur.byAdgroup, saFilters);
     })(),
     plReportP,
     shReportP,
@@ -808,9 +899,10 @@ async function collectReportDataFresh(
   // 파워링크·쇼핑검색 둘 다 '검색어(expKeyword)' 기준 (등록 키워드 keyword 아님).
   // 응답이 이미 유형별로 분리돼 오지만 buildKeywordGroups의 유형 필터는 그대로 둔다 — 필터가
   // 조용히 안 먹었을 때(코드 오타 등) 남의 유형이 섞여 들어오는 걸 막는 안전망.
-  const plKeywords = buildKeywordGroups(plRes, "파워링크", "expKeyword");
-  const shKeywords = buildKeywordGroups(shRes, "쇼핑검색", "expKeyword");
-  // 상품별 — 소재 성과 → 상품명 조인 → 상품명 기준 재합산 → 0.5% 접기 (순서 주의: 위 주석 참고)
+  const plKeywords = buildKeywordGroups(plRes, "파워링크", "expKeyword", minorRatio);
+  const shKeywords = buildKeywordGroups(shRes, "쇼핑검색", "expKeyword", minorRatio);
+  // 상품별 — 소재 성과 → 상품명 조인 → 상품명 기준 재합산. 접기는 폐기(상품 수가 적어 안 접는다)
+  // — 접기 임계 옵션(minorRatio)도 상품별에는 해당 없음.
   const productAdRows = buildProductAdRows(productRes, "쇼핑검색");
   // resolveProductInfo 결과를 변수로 뽑아 ReportData로도 반환(F-Brief 소재ID 매칭). 동작은 동일.
   const productInfo = await resolveProductInfo(cid, productAdRows.map((a) => a.label));
@@ -824,12 +916,15 @@ async function collectReportDataFresh(
   };
 }
 
-export async function buildReportBytes(target: ReportTarget, range: DateRange, meta: ReportMeta): Promise<Uint8Array> {
+export async function buildReportBytes(
+  target: ReportTarget, range: DateRange, meta: ReportMeta,
+  collectOpts?: ReportCollectOptions, renderOpts?: ReportRenderOptions,
+): Promise<Uint8Array> {
   // 양식 로드와 데이터 수집을 동시 출발 - 수집이 양식 fetch를 기다리지 않게(기존과 동일).
   const filesP = loadTemplate();
-  const dataP = collectReportData(target, range, meta);
+  const dataP = collectReportData(target, range, meta, collectOpts);
   const files = await filesP;
-  return renderReportBytes(files, await dataP);
+  return renderReportBytes(files, await dataP, renderOpts);
 }
 
 async function loadTemplate(): Promise<ZipFiles> {
@@ -838,11 +933,11 @@ async function loadTemplate(): Promise<ZipFiles> {
 }
 
 /** 이미 수집된 데이터로 엑셀만 렌더 — 문구 포함 생성(report-message)이 수집 결과를 공유할 때 사용. */
-export async function buildReportBytesFromData(data: ReportData): Promise<Uint8Array> {
-  return renderReportBytes(await loadTemplate(), data);
+export async function buildReportBytesFromData(data: ReportData, renderOpts?: ReportRenderOptions): Promise<Uint8Array> {
+  return renderReportBytes(await loadTemplate(), data, renderOpts);
 }
 
-function renderReportBytes(files: ZipFiles, data: ReportData): Uint8Array {
+function renderReportBytes(files: ZipFiles, data: ReportData, renderOpts?: ReportRenderOptions): Uint8Array {
   const {
     model, searchTypes, displayData, campGroups, plKeywords, shKeywords, shProducts,
   } = data;
@@ -881,6 +976,34 @@ function renderReportBytes(files: ZipFiles, data: ReportData): Uint8Array {
       removeSheetDrawing(files, DISPLAY_SHEET);
       writeText(files, DISPLAY_SHEET, hideRowRange(readText(files, DISPLAY_SHEET), 3, 13));
     }
+  }
+
+  // 직접/간접 전환수 표기 끔 — 열 숨김(hidden col). 열 삭제는 병합/수식/차트 파장이 커서 금지.
+  // sheet3/sheet7은 한 시트 안 두 표의 직/간접 열 위치가 달라(섹션1 C~N vs 동적 표 E~P·D~O)
+  // 단순 열 숨김이 다른 지표를 가린다 — 섹션1(헤더 14행 + 데이터 15~18행)은 M/N 셀을 아예 지워
+  // 표가 L(ROAS)에서 끝나 보이게 하고, 동적 표의 직/간접 열만 숨긴다.
+  if (renderOpts?.showConvSplit === false) {
+    const hide = (path: string, cols: string[]) => {
+      if (files[path]) writeText(files, path, hideColumns(readText(files, path), cols));
+    };
+    const dropSummaryMN = (path: string) => {
+      if (!files[path]) return;
+      let xml = readText(files, path);
+      for (let r = 14; r <= 18; r++) xml = dropRowCellsAfter(xml, r, "L");
+      writeText(files, path, xml);
+    };
+    hide("xl/worksheets/sheet2.xml", ["M", "N"]); // 종합 — 전 표가 C~N 배치
+    dropSummaryMN("xl/worksheets/sheet3.xml"); // 검색광고 섹션1
+    hide("xl/worksheets/sheet3.xml", ["O", "P"]); // 검색광고 섹션2(캠페인별, E~P)
+    hide("xl/worksheets/sheet4.xml", ["M", "N"]); // 검색_상세
+    hide("xl/worksheets/sheet5.xml", ["O", "P"]); // 파워링크_키워드 (B~D 라벨 + E~P)
+    hide("xl/worksheets/sheet6.xml", ["O", "P"]); // 쇼핑검색_키워드
+    if (model.hasDisplay) {
+      dropSummaryMN(DISPLAY_SHEET); // 디스플레이 섹션1
+      hide(DISPLAY_SHEET, ["N", "O"]); // 디스플레이 캠페인별 표(D~O)
+    }
+    if (model.hasDisplayDetail) hide("xl/worksheets/sheet8.xml", ["M", "N"]); // 디스플레이_상세
+    hide("xl/worksheets/sheet9.xml", ["M", "N"]); // 쇼핑검색_상품
   }
 
   // 비진행 매체 시트 제거. 디스플레이 시트는 디스플레이 미진행 시 제거.
