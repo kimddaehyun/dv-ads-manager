@@ -264,9 +264,17 @@ export function openReportSettings(opts: OpenReportSettingsOpts): void {
         return;
       }
       // 전부 체크 = null(전체 — 신규 캠페인 자동 포함). 디스플레이 전부 해제 = [](매체 제외).
-      const saIds = saBoxes.length > 0 && saChecked.length === saBoxes.length ? null : saChecked;
-      const gfaChecked = gfaBoxes.filter((b) => b.checked).map((b) => b.dataset.id!);
-      const gfaIds = gfaBoxes.length > 0 && gfaChecked.length === gfaBoxes.length ? null : gfaChecked;
+      // 저장돼 있던 ID가 이번 목록 조회에 안 잡힌 경우(예: 최근 30일 밖 디스플레이 캠페인)는
+      // 화면에 체크박스가 없다 — 사용자가 해제한 게 아니므로 보존해서 합친다 (codex P2, 2026-08-10).
+      const resolveIds = (boxes: HTMLInputElement[], savedIds: string[] | null): string[] | null => {
+        const checked = boxes.filter((b) => b.checked).map((b) => b.dataset.id!);
+        if (checked.length === boxes.length) return null; // 보이는 전부 체크 = 전체(숨은 ID도 포함)
+        const rendered = new Set(boxes.map((b) => b.dataset.id!));
+        const hidden = (savedIds ?? []).filter((id) => !rendered.has(id));
+        return [...checked, ...hidden];
+      };
+      const saIds = resolveIds(saBoxes, loaded.saCampaignIds);
+      const gfaIds = resolveIds(gfaBoxes, loaded.gfaCampaignIds);
       const sameIds = (a: string[] | null, b: string[] | null) =>
         a === null ? b === null : b !== null && a.length === b.length && a.every((v, i) => v === b[i]);
       if (saBoxes.length > 0 && !sameIds(saIds, loaded.saCampaignIds)) patch.saCampaignIds = saIds;
