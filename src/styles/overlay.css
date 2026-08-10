@@ -5404,7 +5404,7 @@ td.dvads-period-delta-down {
   margin-left: auto;
 }
 
-/* ─── F-Report 리포트 설정 (톱니 → flyout 내 화면 전환) ─── */
+/* ─── F-Report 리포트 설정 (행 메뉴 "리포트 설정" → 독립 flyout, report-settings.ts) ─── */
 .dvads-rdp-sub {
   display: flex;
   align-items: center;
@@ -5417,28 +5417,8 @@ td.dvads-period-delta-down {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dvads-rdp-settings-btn {
-  appearance: none;
-  border: 0;
-  background: transparent;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  color: #737373;
-  cursor: pointer;
-  transition: background 80ms ease, color 80ms ease;
-}
-.dvads-rdp-settings-btn:hover {
-  background: #F5F6F7;
-  color: #404040;
-}
-.dvads-rdp-settings-btn.is-active {
-  background: #FDF0E8;
-  color: #E6783B;
+.dvads-rdp-setfly {
+  width: 360px;
 }
 .dvads-rdp-set {
   display: flex;
@@ -5457,57 +5437,100 @@ td.dvads-period-delta-down {
   color: #404040;
   white-space: nowrap;
 }
-.dvads-rdp-set-ratio {
+/* 분류 기준 % 직접 입력 — 오버레이 표준 입력 스타일(회색 채움·테두리 없음, DESIGN.md "Input (오버레이)")
+   + 목표 ROAS와 같은 suffix 패턴 */
+.dvads-rdp-set-ratio-wrap {
   margin-left: auto;
-  font-family: inherit;
-  font-size: 13px;
-  color: #171717;
-  padding: 5px 8px;
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  width: 80px;
+  height: 32px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  padding: 0 12px;
+  background: #F3F4F6;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-rdp-set-ratio-wrap:focus-within {
   background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
+}
+.dvads-rdp-set-ratio {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: #171717;
+  text-align: right;
+  background: transparent;
+}
+.dvads-rdp-set-ratio-suffix {
+  flex: none;
+  margin-left: 4px;
+  font-size: 14px;
+  color: #9CA3AF;
 }
 .dvads-rdp-set-row .dvads-asset-bulk-switch {
   margin-left: auto;
 }
-.dvads-rdp-set-camp-title {
-  padding-top: 14px;
-}
 .dvads-rdp-set-camp-list {
   margin: 8px 16px 0;
-  max-height: 240px;
+  max-height: 280px;
   overflow-y: auto;
-  border: 1px solid #F3F4F6;
-  border-radius: 8px;
-  padding: 6px 10px;
   font-size: 13px;
   color: #737373;
 }
-.dvads-rdp-set-group + .dvads-rdp-set-group {
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid #F3F4F6;
+/* 캠페인 유형 띠 — F-Brief 선택 화면(.dvads-brief-pick-typeband) 디자인 이식(항상 파랑 유지).
+   클릭 = 유형 전체 선택/해제. 오른쪽 끝 위/아래 화살표 = 이전/다음 유형 띠로 이동.
+   sticky라 불투명 배경 필수. */
+.dvads-rdp-set-typeband {
+  position: sticky; top: 0; z-index: 2;
+  margin: 12px 0 2px; padding: 6px 8px 6px 12px;
+  background: #EFF6FF; border-radius: 8px;
+  font: 700 13px/1.4 Pretendard, -apple-system, sans-serif; color: #0072f5;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  cursor: pointer;
+  user-select: none;
 }
-.dvads-rdp-set-group-head,
+.dvads-rdp-set-typeband:first-child { margin-top: 0; }
+.dvads-rdp-set-typeband-nav { display: flex; gap: 2px; }
+.dvads-rdp-set-typeband-btn {
+  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
+  background: none; color: #0072f5; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.dvads-rdp-set-typeband-btn:hover:not(:disabled) { background: rgba(0, 114, 245, 0.12); }
+.dvads-rdp-set-typeband-btn:disabled { opacity: 0.3; cursor: default; }
+.dvads-rdp-set-typeband-btn svg { width: 14px; height: 14px; }
 .dvads-rdp-set-camp {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 5px 4px 5px 10px;
+  border-radius: 6px;
   cursor: pointer;
 }
-.dvads-rdp-set-group-head {
-  font-size: 13px;
-  font-weight: 600;
-  color: #404040;
+.dvads-rdp-set-camp:hover {
+  background: #F9FAFB;
 }
-.dvads-rdp-set-camp {
-  padding-left: 4px;
-}
-.dvads-rdp-set-group-head input,
+/* 커스텀 체크박스 — 주황 채움에 흰 체크 (accent-color는 체크색 제어 불가) */
 .dvads-rdp-set-camp input {
-  accent-color: #E6783B;
+  appearance: none;
   flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid #D1D5DB;
+  border-radius: 4px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: background 80ms ease, border-color 80ms ease;
+}
+.dvads-rdp-set-camp input:checked {
+  border-color: #E6783B;
+  background: #E6783B url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E") center / 10px 10px no-repeat;
 }
 .dvads-rdp-set-camp-name {
   flex: 1;
@@ -5516,11 +5539,6 @@ td.dvads-period-delta-down {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: #171717;
-}
-.dvads-rdp-set-camp-type {
-  flex: none;
-  font-size: 12px;
-  color: #A3A3A3;
 }
 
 /* ─── 다이얼로그 푸터 대형 버튼 통일 (2026-07-21) ───

@@ -3167,6 +3167,31 @@ function renderTableRow(
           },
         },
         {
+          label: "리포트 설정",
+          keepOpen: true,
+          onClick: (anchor) => {
+            // "리포트 생성"과 동일 — keepOpen 메뉴라 anchor 위치를 동기 캡처해 프록시로 넘긴다.
+            const rect = anchor.getBoundingClientRect();
+            const anchorProxy = {
+              getBoundingClientRect: () => rect,
+              isConnected: false,
+              contains: () => false,
+            } as unknown as HTMLElement;
+            void import("@/features/report/report")
+              .then(({ openReportSettingsFlow }) => {
+                openReportSettingsFlow(anchorProxy, {
+                  adAccountNo: entry.adAccountNo,
+                  masterCustomerId: entry.masterCustomerId,
+                  name: meta?.displayName?.trim() || entry.name,
+                });
+              })
+              .catch((e) => {
+                console.warn("[dv-ads/report] 리포트 설정 화면을 열지 못함", e);
+                showToast({ message: "리포트 설정 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
+              });
+          },
+        },
+        {
           label: "광고 성과 측정",
           keepOpen: true,
           onClick: (anchor) => {

@@ -22,9 +22,10 @@ import {
   buildSummaryPayload, collectPrevKeywordMetrics, composeReportMessage, showReportMessageDialog,
   showReportMessagesDialog, type ReportMessageItem,
 } from "./report-message";
+import { openReportDatePicker } from "./report-datepicker";
 import {
-  openReportDatePicker, type ReportPickerSettings, type ReportSettingsHooks,
-} from "./report-datepicker";
+  openReportSettings, type ReportPickerSettings, type ReportSettingsHooks,
+} from "./report-settings";
 import { loadAllUserMeta, updateUserMeta } from "@/features/multi-account/multi-account-storage";
 import type { MultiAccountUserMeta } from "@/types/storage";
 import { closePopover } from "@/features/multi-account/multi-account";
@@ -62,11 +63,15 @@ function renderOptsFrom(s: ReportPickerSettings): ReportRenderOptions {
   return { showConvSplit: s.showConvSplit };
 }
 
-// 설정 화면(datepicker)이 쓸 저장/조회/캠페인 목록 훅. 기본값은 키 제거로 저장해 깔끔하게 유지.
+// 설정 flyout(report-settings)이 쓸 저장/조회/캠페인 목록 훅. 기본값은 키 제거로 저장해 깔끔하게 유지.
+// updateUserMeta는 전체 meta를 읽고-고치고-쓰는 구조라, 연속 변경(접기 기준 → 토글)을 병렬로
+// 보내면 나중 쓰기가 먼저 것의 필드를 되돌린다 — 체인으로 직렬화 (codex P2, 2026-08-07).
+// 모듈 레벨인 이유: 설정 flyout 분리 후 생성이 저장소에서 설정을 읽는데, 설정 변경 직후
+// 바로 생성하면 저장(서버 왕복) 완료 전에 읽어 직전 변경이 빠진다 — 생성 시작 시 이 체인을
+// 기다려 경합 제거 (codex P2, 2026-08-10). 체인은 링크마다 catch라 reject 없음.
+let settingsSaveChain: Promise<unknown> = Promise.resolve();
+
 function settingsHooksFor(target: ReportTarget): ReportSettingsHooks {
-  // updateUserMeta는 전체 meta를 읽고-고치고-쓰는 구조라, 연속 변경(접기 기준 → 토글)을 병렬로
-  // 보내면 나중 쓰기가 먼저 것의 필드를 되돌린다 — 체인으로 직렬화 (codex P2, 2026-08-07).
-  let saveChain: Promise<unknown> = Promise.resolve();
   return {
     load: async () => settingsFromMeta((await loadAllUserMeta())[target.adAccountNo]),
     save: (patch) => {
@@ -77,10 +82,10 @@ function settingsHooksFor(target: ReportTarget): ReportSettingsHooks {
       if ("showConvSplit" in patch) metaPatch.reportShowConvSplit = patch.showConvSplit;
       if ("saCampaignIds" in patch) metaPatch.reportSaCampaignIds = patch.saCampaignIds ?? undefined;
       if ("gfaCampaignIds" in patch) metaPatch.reportGfaCampaignIds = patch.gfaCampaignIds ?? undefined;
-      // 실패해도 이번 생성에는 화면의 값이 그대로 쓰인다 — 저장만 다음 기회로.
-      saveChain = saveChain.then(() => updateUserMeta(target.adAccountNo, metaPatch)).catch((e) =>
-        console.warn("[dv-ads/report] 리포트 설정 저장 실패", e),
-      );
+      // 실패해도 flyout의 표시는 그대로 — 저장만 다음 기회로.
+      settingsSaveChain = settingsSaveChain
+        .then(() => updateUserMeta(target.adAccountNo, metaPatch))
+        .catch((e) => console.warn("[dv-ads/report] 리포트 설정 저장 실패", e));
     },
     loadCampaigns: async () => {
       const cid = target.masterCustomerId;
@@ -166,15 +171,22 @@ export function openReportFlow(anchor: HTMLElement, target: ReportTarget): void 
     subText: target.name,
     // 문구 포함 생성 = 담당자명 옆 토글로 선택 (2026-07-21, 드롭다운 방식 폐기).
     showMessageToggle: true,
-    settings: settingsHooksFor(target),
-    onConfirm: (range, author, _roas, withMessage, settings) =>
-      void runSingle(target, range, author, withMessage, settings),
+    onConfirm: (range, author, _roas, withMessage) =>
+      void runSingle(target, range, author, withMessage),
   });
+}
+
+// ── 리포트 설정 (행 메뉴 "리포트 설정" → flyout, 계정별 저장) ──
+export function openReportSettingsFlow(anchor: HTMLElement, target: ReportTarget): void {
+  if (target.masterCustomerId == null) {
+    showToast({ message: "이 계정 정보를 불러올 수 없어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
+    return;
+  }
+  openReportSettings({ anchor, subText: target.name, hooks: settingsHooksFor(target) });
 }
 
 async function runSingle(
   target: ReportTarget, range: DateRange, author: string, withMessage: boolean,
-  settings?: ReportPickerSettings,
 ): Promise<void> {
   if (running) return;
   running = true;
@@ -184,13 +196,14 @@ async function runSingle(
   showProgress("리포트를 만드는 중...", cancelRun);
   try {
     const meta = { authorName: author, createdDate: fmtDate(new Date()) };
-    // 계정별 리포트 설정 — 설정 화면에서 못 받았으면(복원 실패 등) 저장소에서 직접 읽는다.
-    const s = settings
-      ?? settingsFromMeta(
-        (await loadAllUserMeta().catch(() => ({}) as Awaited<ReturnType<typeof loadAllUserMeta>>))[
-          target.adAccountNo
-        ],
-      );
+    // 계정별 리포트 설정 — 행 메뉴 "리포트 설정"에서 저장해 둔 값을 읽어 적용(읽기 실패 시 기본값).
+    // 진행 중인 설정 저장이 있으면 먼저 기다린다 — 직전 변경 누락 경합 방지.
+    await settingsSaveChain;
+    const s = settingsFromMeta(
+      (await loadAllUserMeta().catch(() => ({}) as Awaited<ReturnType<typeof loadAllUserMeta>>))[
+        target.adAccountNo
+      ],
+    );
     // 문구 포함이면 수집 결과를 엑셀 렌더와 문구 조립이 공유한다(수집 2회 방지).
     // 이전 기간 키워드(지난 조치 효과 비교)는 문구 생성 시에만 — 본 수집과 병렬 출발, 실패 시 null.
     // 캠페인 선택 필터도 본 수집과 동일하게 적용.
@@ -282,6 +295,8 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
     };
     showProgress(`리포트를 만드는 중... (0/${targets.length})`, cancelRun);
     // 일괄 생성에도 각 계정의 저장된 리포트 설정(접기 기준/캠페인 선택/직간접 표기)을 개별 적용.
+    // 진행 중인 설정 저장이 있으면 먼저 기다린다 — 직전 변경 누락 경합 방지.
+    await settingsSaveChain;
     const allMeta = await loadAllUserMeta().catch(() => ({}) as Awaited<ReturnType<typeof loadAllUserMeta>>);
     const worker = async () => {
       // 취소되면 남은 광고주는 시작도 안 한다(진행 중인 것만 흘려보냄).

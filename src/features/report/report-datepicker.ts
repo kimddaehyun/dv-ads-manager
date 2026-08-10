@@ -11,7 +11,6 @@
 
 import { rangeForPreset, PRESET_LABELS, type ReportPreset, type DateRange } from "@/features/report/report-period";
 import { registerMenuSibling, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
-import { showToast } from "@/shared/toast";
 import { attachTooltip } from "@/shared/tooltip";
 // 담당자명은 사용자 설정 묶음(user_settings)의 일부 — 저장/조회는 multi-account-storage가 담당.
 import {
@@ -46,39 +45,6 @@ function monthKey(y: number, m: number): string {
   return `${y}-${m}`;
 }
 
-// ── 리포트 설정 (톱니 아이콘 → 화면 전환) ──
-// 값은 계정별 저장(MultiAccountUserMeta) — 저장/조회/캠페인 목록은 호출원(report.ts)이 주입한다.
-// datepicker가 report-build를 import하지 않게 하기 위함(F-Brief 번들 오염 방지).
-export interface ReportCampaignChoice {
-  id: string;
-  name: string;
-  typeLabel: string; // 파워링크/웹사이트전환 등
-}
-export interface ReportPickerSettings {
-  /** 기타 행 접기 기준(캠페인 광고비 대비 비율). 0 = 접지 않음. */
-  minorRatio: number;
-  /** 직접/간접 전환수 열 표기. */
-  showConvSplit: boolean;
-  /** 포함할 캠페인. null = 전체(신규 캠페인 자동 포함). */
-  saCampaignIds: string[] | null;
-  gfaCampaignIds: string[] | null;
-}
-export interface ReportSettingsHooks {
-  load: () => Promise<ReportPickerSettings>;
-  /** 변경 즉시 저장(fire-and-forget — 실패해도 이번 생성에는 화면의 값이 쓰인다). */
-  save: (patch: Partial<ReportPickerSettings>) => void;
-  loadCampaigns: () => Promise<{ sa: ReportCampaignChoice[]; gfa: ReportCampaignChoice[] }>;
-}
-
-// 접기 기준 프리셋. 저장값이 목록에 없으면(예: 예전 버전 값) 그 값을 임시 항목으로 추가한다.
-const RATIO_PRESETS: Array<{ value: number; label: string }> = [
-  { value: 0, label: "접지 않음" },
-  { value: 0.0025, label: "0.25%" },
-  { value: 0.005, label: "0.5% (기본)" },
-  { value: 0.01, label: "1%" },
-  { value: 0.02, label: "2%" },
-];
-
 export interface OpenDatePickerOpts {
   /** 옆으로 펼칠 기준 element (클릭된 메뉴 항목). */
   anchor: HTMLElement;
@@ -97,12 +63,7 @@ export interface OpenDatePickerOpts {
   initialPreset?: ReportPreset;
   /** 열릴 때 선택돼 있을 임의 기간 — 주어지면 initialPreset보다 우선(프리셋 비활성으로 시작). */
   initialRange?: DateRange;
-  /** 리포트 설정(접기 기준/캠페인 선택/직간접 표기) 훅. 주면 톱니 아이콘이 나타난다(F-Report 단일). */
-  settings?: ReportSettingsHooks;
-  onConfirm: (
-    range: DateRange, author: string, targetRoas: number | null, withMessage: boolean,
-    settings?: ReportPickerSettings,
-  ) => void;
+  onConfirm: (range: DateRange, author: string, targetRoas: number | null, withMessage: boolean) => void;
 }
 
 export function closeReportDatePicker(): void {
@@ -134,31 +95,6 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   el.innerHTML = `
     <div class="dvads-rdp-sub">
       <span class="dvads-rdp-sub-text"></span>
-      <button type="button" class="dvads-rdp-settings-btn" aria-label="리포트 설정">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-      </button>
-    </div>
-    <div class="dvads-rdp-set" style="display: none;">
-      <div class="dvads-rdp-set-row">
-        <span class="dvads-rdp-set-label">기타 행 접기 기준</span>
-        <button type="button" class="dvads-brief-info-icon dvads-rdp-set-ratio-info" aria-label="접기 기준 설명">i</button>
-        <select class="dvads-rdp-set-ratio" aria-label="기타 행 접기 기준"></select>
-      </div>
-      <div class="dvads-rdp-set-row">
-        <span class="dvads-rdp-set-label">직접/간접 전환수 표기</span>
-        <button type="button" class="dvads-brief-info-icon dvads-rdp-set-conv-info" aria-label="직접/간접 전환수 설명">i</button>
-        <input type="checkbox" class="dvads-asset-bulk-switch dvads-rdp-set-conv" aria-label="직접/간접 전환수 표기" />
-      </div>
-      <div class="dvads-rdp-set-row dvads-rdp-set-camp-title">
-        <span class="dvads-rdp-set-label">포함할 캠페인</span>
-        <button type="button" class="dvads-brief-info-icon dvads-rdp-set-camp-info" aria-label="캠페인 선택 설명">i</button>
-      </div>
-      <div class="dvads-rdp-set-camp-list"></div>
-      <div class="dvads-rdp-foot">
-        <div class="dvads-rdp-foot-btns">
-          <button type="button" class="dvads-rdp-cancel dvads-rdp-set-back">돌아가기</button>
-        </div>
-      </div>
     </div>
     <div class="dvads-rdp-main">
       <div class="dvads-rdp-presets"></div>
@@ -250,170 +186,6 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
       }
     });
   }
-
-  // ── 리포트 설정 화면 (톱니 → 화면 전환, 값은 계정별 저장) ──
-  const settingsBtn = el.querySelector<HTMLButtonElement>(".dvads-rdp-settings-btn")!;
-  const setView = el.querySelector<HTMLElement>(".dvads-rdp-set")!;
-  const mainView = el.querySelector<HTMLElement>(".dvads-rdp-main")!;
-  const msgRowEl = el.querySelector<HTMLElement>(".dvads-rdp-msgrow");
-  const mainFoot = el.querySelector<HTMLElement>(".dvads-rdp-msgrow + .dvads-rdp-foot");
-  const ratioSel = el.querySelector<HTMLSelectElement>(".dvads-rdp-set-ratio")!;
-  const convToggle = el.querySelector<HTMLInputElement>(".dvads-rdp-set-conv")!;
-  const campListEl = el.querySelector<HTMLElement>(".dvads-rdp-set-camp-list")!;
-
-  // 열릴 때 미리 조회해 두면 톱니를 누르든 바로 확인을 누르든 기다림이 짧다.
-  let curSettings: ReportPickerSettings | null = null;
-  const settingsP: Promise<void> = opts.settings
-    ? opts.settings.load().then((s) => { curSettings = s; }).catch((e) => {
-      console.warn("[dv-ads/report] 리포트 설정 불러오기 실패 → 기본값", e);
-    })
-    : Promise.resolve();
-  if (!opts.settings) settingsBtn.style.display = "none";
-
-  function showSettings(on: boolean): void {
-    setView.style.display = on ? "" : "none";
-    mainView.style.display = on ? "none" : "";
-    if (msgRowEl) msgRowEl.style.display = on ? "none" : "";
-    if (mainFoot) mainFoot.style.display = on ? "none" : "";
-    settingsBtn.classList.toggle("is-active", on);
-    requestAnimationFrame(() => position()); // 높이가 달라지므로 재배치
-  }
-
-  let setBuilt = false;
-  async function openSettings(): Promise<void> {
-    if (setView.style.display !== "none") { showSettings(false); return; } // 톱니 재클릭 = 닫기
-    showSettings(true);
-    if (setBuilt) return;
-    setBuilt = true;
-    attachTooltip(
-      el.querySelector<HTMLElement>(".dvads-rdp-set-ratio-info")!,
-      "총비용이 캠페인 광고비의 이 비율에 못 미치는 키워드와 지면을 '기타' 한 줄로 접어요",
-      { placement: "top" },
-    );
-    attachTooltip(
-      el.querySelector<HTMLElement>(".dvads-rdp-set-conv-info")!,
-      "끄면 엑셀에서 직접/간접 전환수 열을 숨겨요",
-      { placement: "top" },
-    );
-    attachTooltip(
-      el.querySelector<HTMLElement>(".dvads-rdp-set-camp-info")!,
-      "체크한 캠페인만 리포트에 넣어요. 전부 체크해 두면 새로 만든 캠페인도 자동으로 포함되고, 디스플레이를 전부 해제하면 리포트에서 빠져요",
-      { placement: "top" },
-    );
-    await settingsP;
-    const s: ReportPickerSettings = curSettings
-      ?? { minorRatio: 0.005, showConvSplit: true, saCampaignIds: null, gfaCampaignIds: null };
-    curSettings = s;
-    // 접기 기준 select — 저장값이 프리셋에 없으면 임시 항목으로 추가해 표시가 어긋나지 않게.
-    const presets = RATIO_PRESETS.some((p) => p.value === s.minorRatio)
-      ? RATIO_PRESETS
-      : [...RATIO_PRESETS, { value: s.minorRatio, label: `${s.minorRatio * 100}%` }]
-        .sort((a, b) => a.value - b.value);
-    for (const p of presets) {
-      const o = document.createElement("option");
-      o.value = String(p.value);
-      o.textContent = p.label;
-      ratioSel.appendChild(o);
-    }
-    ratioSel.value = String(s.minorRatio);
-    ratioSel.addEventListener("change", () => {
-      const v = Number(ratioSel.value);
-      if (!Number.isFinite(v) || !curSettings) return;
-      curSettings.minorRatio = v;
-      opts.settings?.save({ minorRatio: v });
-    });
-    convToggle.checked = s.showConvSplit;
-    convToggle.addEventListener("change", () => {
-      if (!curSettings) return;
-      curSettings.showConvSplit = convToggle.checked;
-      opts.settings?.save({ showConvSplit: convToggle.checked });
-    });
-    void buildCampaignList(s);
-  }
-
-  async function buildCampaignList(s: ReportPickerSettings): Promise<void> {
-    campListEl.textContent = "캠페인 목록을 불러오는 중...";
-    let lists: { sa: ReportCampaignChoice[]; gfa: ReportCampaignChoice[] };
-    try {
-      lists = await opts.settings!.loadCampaigns();
-    } catch (e) {
-      console.warn("[dv-ads/report] 캠페인 목록 조회 실패", e);
-      campListEl.textContent = "캠페인 목록을 불러오지 못했어요. 잠시 후 다시 열어 주세요";
-      return;
-    }
-    campListEl.textContent = "";
-    // minOne: 전부 해제 금지(검색광고 — 검색광고가 빠진 리포트는 만들 수 없다).
-    // 디스플레이는 전부 해제 허용 — 빈 목록([])으로 저장돼 디스플레이가 통째로 빠진다.
-    const makeGroup = (
-      title: string, items: ReportCampaignChoice[],
-      selected: string[] | null, key: "saCampaignIds" | "gfaCampaignIds", minOne: boolean,
-    ) => {
-      if (items.length === 0) return;
-      const wrap = document.createElement("div");
-      wrap.className = "dvads-rdp-set-group";
-      const head = document.createElement("label");
-      head.className = "dvads-rdp-set-group-head";
-      const master = document.createElement("input");
-      master.type = "checkbox";
-      const headText = document.createElement("span");
-      headText.textContent = `${title} (${items.length}개)`;
-      head.append(master, headText);
-      wrap.appendChild(head);
-      const boxes: HTMLInputElement[] = [];
-      const syncMaster = () => {
-        const n = boxes.filter((b) => b.checked).length;
-        master.checked = n === boxes.length;
-        master.indeterminate = n > 0 && n < boxes.length;
-      };
-      // 전부 체크는 "전체"로 저장(null) — 신규 캠페인 자동 포함. 전부 해제는 매체별로 다르다:
-      // 검색광고는 최소 1개 강제(되돌림), 디스플레이는 []로 저장해 매체 제외.
-      const commit = (revert?: () => void) => {
-        const checked = boxes.filter((b) => b.checked).map((b) => b.dataset.id!);
-        if (minOne && checked.length === 0) {
-          revert?.();
-          showToast({ message: "검색광고 캠페인은 최소 1개는 선택해야 해요", variant: "error" });
-          syncMaster();
-          return;
-        }
-        const ids = checked.length === boxes.length ? null : checked;
-        if (curSettings) curSettings[key] = ids;
-        opts.settings?.save({ [key]: ids });
-        syncMaster();
-      };
-      master.addEventListener("change", () => {
-        const before = boxes.map((b) => b.checked);
-        for (const b of boxes) b.checked = master.checked;
-        commit(() => boxes.forEach((b, i) => { b.checked = before[i]; }));
-      });
-      for (const item of items) {
-        const row = document.createElement("label");
-        row.className = "dvads-rdp-set-camp";
-        const box = document.createElement("input");
-        box.type = "checkbox";
-        box.dataset.id = item.id;
-        box.checked = selected == null || selected.includes(item.id);
-        box.addEventListener("change", () => commit(() => { box.checked = true; }));
-        boxes.push(box);
-        const name = document.createElement("span");
-        name.className = "dvads-rdp-set-camp-name";
-        name.textContent = item.name;
-        const type = document.createElement("span");
-        type.className = "dvads-rdp-set-camp-type";
-        type.textContent = item.typeLabel;
-        row.append(box, name, type);
-        wrap.appendChild(row);
-      }
-      syncMaster();
-      campListEl.appendChild(wrap);
-    };
-    makeGroup("검색광고", lists.sa, s.saCampaignIds, "saCampaignIds", true);
-    makeGroup("디스플레이", lists.gfa, s.gfaCampaignIds, "gfaCampaignIds", false);
-    if (!campListEl.hasChildNodes()) campListEl.textContent = "캠페인이 없어요";
-    requestAnimationFrame(() => position());
-  }
-
-  settingsBtn.addEventListener("click", () => void openSettings());
-  el.querySelector(".dvads-rdp-set-back")?.addEventListener("click", () => showSettings(false));
 
   // ── 프리셋 버튼 ──
   for (const p of PRESETS) {
@@ -653,8 +425,6 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     if (opts.showMessageToggle && !msgToggleRestored && !msgToggleTouched) {
       await msgRestorePromise;
     }
-    // 리포트 설정도 복원 완료를 기다린다 — 설정 화면을 안 열어도 저장값이 생성에 반영돼야 한다.
-    if (opts.settings) await settingsP;
     const author = authorInput.value.trim();
     // 목표 ROAS — 숫자만 취하고 0 이하/무효는 미설정(null) 취급.
     const roasNum = Number(roasInput.value.replace(/[^\d.]/g, ""));
@@ -675,11 +445,9 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
       );
     }
     finish();
-    opts.onConfirm(range, author, targetRoas, msgToggle.checked, curSettings ?? undefined);
+    opts.onConfirm(range, author, targetRoas, msgToggle.checked);
   }
-  // 취소는 반드시 :not(.dvads-rdp-set-back)으로 — 설정 화면의 "돌아가기"도 같은 클래스를 쓰는데
-  // DOM상 더 앞에 있어, 그냥 querySelector로 잡으면 핸들러가 그쪽에 붙어 취소가 죽는다(2026-08-07 실사고).
-  el.querySelector(".dvads-rdp-cancel:not(.dvads-rdp-set-back)")?.addEventListener("click", finish);
+  el.querySelector(".dvads-rdp-cancel")?.addEventListener("click", finish);
   el.querySelector(".dvads-rdp-confirm")?.addEventListener("click", () => void confirmReport());
   // 담당자명 칸에서 Enter -> 확인과 동일. 핸들러가 없으면 Enter가 호스트 페이지로
   // 전파돼 엉뚱한 동작을 부른다(`e.stopPropagation`). 한글 조합 중 Enter는 무시.

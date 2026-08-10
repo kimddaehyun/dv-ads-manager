@@ -372,6 +372,20 @@ className: "w-full h-10 px-3.5 py-2.5 text-sm bg-input rounded-lg outline-none r
 
 API 키 등 mono 입력은 추가로 `font-mono` 적용.
 
+### Input (오버레이 표준)
+
+오버레이(콘텐츠 스크립트) 쪽 텍스트 입력은 **회색 채움 + 테두리 없음**이 표준 — 새 입력칸은 항상 이 스타일로 (2026-08-10 확정, 레퍼런스 `.dvads-rdp-author`/`.dvads-rdp-set-ratio-wrap`):
+
+```css
+height: 32px; border: 0; border-radius: 10px; padding: 0 12px;
+background: #F3F4F6; font-size: 14px; color: #171717; outline: none;
+/* focus */ background: #ffffff; box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
+/* placeholder */ color: #9CA3AF;
+transition: background 120ms ease, box-shadow 120ms ease;
+```
+
+단위 suffix(%, 원 등)가 붙는 입력은 wrapper에 위 스타일을 주고(`:focus-within`으로 focus 전이) 내부 input은 투명 배경 — `.dvads-rdp-roas-wrap` 패턴.
+
 ### Field (label + input wrapper)
 
 ```tsx

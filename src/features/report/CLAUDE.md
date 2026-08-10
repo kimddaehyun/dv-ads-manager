@@ -20,7 +20,7 @@ F-MultiAccount popover에서 진입. 기간을 고르면 계정의 매체별 성
 
 ## Gotchas
 
-- **계정별 리포트 설정**(2026-08-07): 접기 임계(`minorRatio`)·캠페인 선택(`saCampaignIds`/`gfaCampaignIds`)·직간접 표기(`showConvSplit`)는 `MultiAccountUserMeta`에 계정별 저장, 기본값은 키 제거. UI는 datepicker 톱니 → 설정 화면(훅 주입 — datepicker가 report-build를 import하지 않게). **수집 옵션은 캐시 키 지문에 반드시 포함**하고 `null`(전체)과 `[]`(디스플레이 제외)를 구분(`*` vs 빈 문자열). `showConvSplit`은 렌더 전용이라 키에 넣지 않는다(F-Brief 캐시 공유 유지).
+- **계정별 리포트 설정**(2026-08-07): 접기 임계(`minorRatio`)·캠페인 선택(`saCampaignIds`/`gfaCampaignIds`)·직간접 표기(`showConvSplit`)는 `MultiAccountUserMeta`에 계정별 저장, 기본값은 키 제거. UI는 행 메뉴 "리포트 설정" → 독립 flyout(`report-settings.ts`, 2026-08-10 생성 flow에서 분리 — datepicker 톱니 폐기). 훅 주입은 report.ts(`settingsHooksFor`) — report-settings가 report-build를 import하지 않게. 일괄 생성은 각 계정의 저장값을 자동 적용(일괄 메뉴엔 설정 진입 없음). 생성(runSingle/runBatch)은 설정을 저장소에서 읽으므로 **읽기 전 `settingsSaveChain`을 await** — 설정 변경 직후 생성하면 서버 저장 완료 전에 읽어 직전 변경이 빠진다(codex P2, 2026-08-10). **수집 옵션은 캐시 키 지문에 반드시 포함**하고 `null`(전체)과 `[]`(디스플레이 제외)를 구분(`*` vs 빈 문자열). `showConvSplit`은 렌더 전용이라 키에 넣지 않는다(F-Brief 캐시 공유 유지).
 - **캠페인 선택 필터는 SA advanced-report 전 호출 + `collectPrevKeywordMetrics`(문구 이전 기간)까지 전부** 같은 `nccCampaignId in` 필터를 걸어야 시트 간·문구 비교 정합이 맞는다. 브랜드검색 계약은 campIds 교집합(클라이언트). GFA 상세 4차원은 캠페인 차원이 없어 부분 선택 시 수집 자체를 생략(상세 시트 제외).
 - **직/간접 열 숨김은 시트별 열 오프셋이 다르다** — sheet3/7은 한 시트에 섹션1(C~N)과 동적 표(E~P·D~O)가 공존해 단순 열 숨김이 다른 지표를 가린다 → 섹션1(14~18행)은 `dropRowCellsAfter`로 M/N 셀 제거 + 동적 표 열만 `hideColumns`. `hideColumns`는 기존 `hidden` 속성을 제거 후 추가(중복 속성 = XML 위반, 엑셀 복구 대화상자).
 - **`collectReportData`는 5분 TTL 1건 캐시**(2026-07-22) — 캐시 키는 계정+기간, meta(담당자/작성일)는 키에서 빼고 반환 시 model만 갈아끼운다. 반환은 최상위 배열·Map을 얕은 복사한 사본 — 소비자가 정렬/추가해도 캐시본 오염 없음(행 객체는 공유라 **행 내용 제자리 수정 금지**). 실제 수집은 `collectReportDataFresh`(병렬 구조 동결 대상은 이쪽).
