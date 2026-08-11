@@ -908,12 +908,14 @@ async function renderListView(wrap: HTMLElement) {
   // ─── 4단계: paint (이제 table이 popoverEl 서브트리에 있어 findRow 동작) ───
   // 캐시가 있으면 즉시 표시. 없는 행은 직후 backgroundRefreshStale이 반드시 새로고침하므로
   // "-" 대신 스켈레톤으로 시작해 로딩 중임을 보여준다 (데이터 도착 시 paintRow가 교체).
+  // 변경이력 알림 칩 — 스냅샷과 별개 저장소라 따로 칠한다. 스냅샷 paint보다 먼저 읽음
+  // 상태(readIssueTitles)를 채워야 읽은 알림이 잠깐 "확인 필요"로 떴다 꺼지는 깜빡임이 없다.
+  await paintChangeWatchRows(sorted.map((s) => s.entry.adAccountNo));
+  if (token !== renderListViewToken) return;
   for (const { entry, snap } of sorted) {
     if (snap) paintRow(entry.adAccountNo, snap, meta[entry.adAccountNo]);
     else paintRowLoading(entry.adAccountNo);
   }
-  // 변경이력 알림 칩 — 스냅샷과 별개 저장소라 따로 칠한다(fire-and-forget, 캐시 기준 즉시 표시).
-  void paintChangeWatchRows(sorted.map((s) => s.entry.adAccountNo));
   void refreshBadge();
 
   // 기존 검색 쿼리/상태 필터가 있으면(예: sort 변경 후 재렌더) 적용.
@@ -4328,6 +4330,12 @@ function syncIssueChip(row: HTMLTableRowElement) {
     badge.textContent = "확인 필요";
     badge.classList.add("is-warn");
     row.dataset.statusKind = "warn";
+  } else if (row.dataset.statusBizDepleted == null) {
+    // 스냅샷(알림·비즈머니)이 아직 안 도착한 행 — "이상 없음"을 선언했다가 데이터 도착 후
+    // "확인 필요"로 뒤집히는 깜빡임 방지. 판정 재료가 갖춰질 때까지 배지를 숨긴다.
+    badge.style.display = "none";
+    delete row.dataset.statusKind;
+    return;
   } else {
     badge.textContent = "이상 없음";
     badge.classList.add("is-ok");
