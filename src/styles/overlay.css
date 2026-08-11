@@ -5479,6 +5479,9 @@ td.dvads-period-delta-down {
   margin: 8px 16px 0;
   max-height: 280px;
   overflow-y: auto;
+  /* 바닥/천장에서 계속 스크롤해도 페이지로 전파 안 되게 — 전파되면 페이지 스크롤
+     감지(onWinScroll)가 flyout을 닫아버린다. */
+  overscroll-behavior: contain;
   font-size: 13px;
   color: #737373;
 }
@@ -5494,7 +5497,9 @@ td.dvads-period-delta-down {
   cursor: pointer;
   user-select: none;
 }
-.dvads-rdp-set-typeband:first-child { margin-top: 0; }
+/* 첫 띠는 margin-top 0 — 띠 앞에 높이 0 anchor div가 있어 :first-child로는 안 잡힌다.
+   margin이 있으면 sticky 고정 전까지 12px 밀려 올라가 "제목이 살짝 움직이는" 현상이 된다. */
+.dvads-rdp-set-camp-list > :first-child + .dvads-rdp-set-typeband { margin-top: 0; }
 .dvads-rdp-set-typeband-nav { display: flex; gap: 2px; }
 .dvads-rdp-set-typeband-btn {
   width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px;
