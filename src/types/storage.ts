@@ -150,6 +150,8 @@ export interface MultiAccountDirectoryCache {
   fetched_at: string;
   /** 전체 광고계정 명단 (페이지네이션 누적) */
   entries: MultiAccountDirectoryEntry[];
+  /** 명단을 받아온 네이버 로그인 ID — 로그인 전환 감지용. 구버전 캐시에는 없음 */
+  naverId?: string;
 }
 
 /**

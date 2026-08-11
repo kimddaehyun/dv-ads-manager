@@ -13,6 +13,8 @@ PRD §8 단일 자격증명 모델과 충돌 없음 — 광고관리자 로그�
 
 ## Gotchas
 
+- **디렉터리 캐시(24h)는 네이버 로그인 전환을 모른다** — 캐시에 `naverId`(access 응답 첫 항목의 로그인 ID)를 스탬프하고, `ensureDirectoryFresh`가 신선한 캐시라도 size=1 프로브로 현재 로그인과 비교해 다르면 즉시 재수집한다. 프로브 실패(null)면 기존 캐시 유지. `/apis/ad-account/v1.1/adAccounts/access`는 **page가 0부터 시작** — 1부터 세면 앞 100개가 통째로 빠진다(2026-08-11 실사고, 콘솔 정찰 중 오진 원인).
+
 - **캠페인 상세 SPA URL은 `/sa/campaigns/{nccCampaignId}`** — 2026-07-21 실사용 URL로 검증(예: `/manage/ad-accounts/454196/sa/campaigns/cmp-a001-01-...`). 2026-07-20의 404는 다른 형식이었던 것. 유형별 목록은 `campaigns-by/{TYPE}` — API campaignType ↔ SPA TYPE이 다름: `SHOPPING`↔`SHOPPING_NS`, `BRAND_SEARCH`↔`BRAND` (`ISSUE_DEST_CAMPAIGN_TYPES` 매핑 참조). 광고그룹 상세 `/sa/adgroups/{id}`도 검증됨.
 - **텍스트 휴리스틱 앵커 탐색(`findOperationChip`)의 fallback에도 위치 검증 필수** — "운영 관리" 텍스트는 계정 목록 드롭다운 안에도 나타나서, 위치 확인 없는 `el.parentElement` fallback이 열린 드롭다운 안에 버튼을 꽂는 사고(2026-07-20). 후보 span 자체가 헤더 영역(top<120, 크기>0)에 보여야 앵커 인정.
 

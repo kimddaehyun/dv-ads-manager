@@ -63,6 +63,7 @@ import {
 } from "@/features/multi-account/multi-account-storage";
 import {
   fetchAllDirectory,
+  fetchLoggedInNaverId,
   authFetch,
   collectAccount,
   yesterdayKST,
@@ -228,10 +229,11 @@ function registerMessageListener() {
     if (t === "MULTI_ACCOUNT_REFRESH_DIRECTORY") {
       void (async () => {
         try {
-          const entries = await fetchAllDirectory();
+          const { entries, naverId } = await fetchAllDirectory();
           const cache: MultiAccountDirectoryCache = {
             fetched_at: new Date().toISOString(),
             entries,
+            naverId: naverId ?? undefined,
           };
           await saveDirectory(cache);
           sendResponse({ ok: true, count: entries.length });
@@ -256,9 +258,19 @@ async function ensureDirectoryFresh() {
   directoryFetchInFlight = (async () => {
     try {
       const existing = await loadDirectory();
-      if (existing && !isDirectoryStale(existing)) return;
-      const entries = await fetchAllDirectory();
-      await saveDirectory({ fetched_at: new Date().toISOString(), entries });
+      if (existing && !isDirectoryStale(existing)) {
+        // 신선한 캐시라도 네이버 로그인이 바뀌었으면 이전 로그인 명단 — 즉시 재수집.
+        // (size=1 프로브 1회. 캐시에 naverId가 없는 구버전 캐시도 한 번 재수집해 스탬프.)
+        const current = await fetchLoggedInNaverId();
+        if (current && existing.naverId === current) return;
+        if (!current) return; // 판별 불가(오류/계정 0개) — 기존 캐시 유지
+      }
+      const { entries, naverId } = await fetchAllDirectory();
+      await saveDirectory({
+        fetched_at: new Date().toISOString(),
+        entries,
+        naverId: naverId ?? undefined,
+      });
     } catch (e) {
       console.warn("[dv-ads/multi-account] directory fetch 실패", e);
     } finally {

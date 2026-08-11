@@ -157,9 +157,13 @@ function readCookie(name: string): string | null {
 
 // ─── 광고계정 명단 (페이지네이션 누적) ───
 
-export async function fetchAllDirectory(): Promise<MultiAccountDirectoryEntry[]> {
+export async function fetchAllDirectory(): Promise<{
+  entries: MultiAccountDirectoryEntry[];
+  naverId: string | null;
+}> {
   const PAGE_SIZE = 50;
   const out: MultiAccountDirectoryEntry[] = [];
+  let naverId: string | null = null;
   let page = 0;
   let totalPages = 1;
   while (page < totalPages) {
@@ -169,6 +173,7 @@ export async function fetchAllDirectory(): Promise<MultiAccountDirectoryEntry[]>
     const json = await authFetch<DirectoryPageResponse>(url);
     totalPages = json.totalPages ?? 1;
     for (const item of json.content ?? []) {
+      if (!naverId && item.naverId) naverId = item.naverId;
       const ad = item.adAccount;
       if (!ad?.no || !ad.name) continue;
       out.push({
@@ -186,7 +191,23 @@ export async function fetchAllDirectory(): Promise<MultiAccountDirectoryEntry[]>
     page++;
     if (page >= 50) break; // 비정상 무한 페이지 방어
   }
-  return out;
+  return { entries: out, naverId };
+}
+
+/**
+ * 현재 로그인한 네이버 ID만 가볍게 조회 (size=1 프로브).
+ * 디렉터리 캐시가 어느 로그인으로 받아졌는지와 비교해 로그인 전환을 감지한다.
+ * 실패/판별 불가 시 null.
+ */
+export async function fetchLoggedInNaverId(): Promise<string | null> {
+  try {
+    const json = await authFetch<DirectoryPageResponse>(
+      "/apis/ad-account/v1.1/adAccounts/access?size=1&page=0",
+    );
+    return json.content?.[0]?.naverId ?? null;
+  } catch {
+    return null;
+  }
 }
 
 // ─── 비즈머니 잔액 ───
