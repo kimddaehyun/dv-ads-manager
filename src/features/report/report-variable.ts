@@ -446,9 +446,11 @@ export function renderSummaryTypes(
   let grand = ZERO_METRICS;
 
   // dashConv=true면 직접(M)/간접(N) 전환 칸을 '-'로 (디스플레이는 직간접 데이터 없음)
+  // 비용 0이면(브랜드검색/신제품검색 — 계약 기반이라 비용 제외) CPC(F)/총비용(G)/전환당비용(J)/ROAS(L)를 '-'로.
   const cellsFor = (m: ReportMetrics, dashConv: boolean): Record<string, CellValue> => {
     const cells = metricCells(TYPE_METRIC_COLS, m);
     if (dashConv) { cells.M = "-"; cells.N = "-"; }
+    if (m.cost === 0) { cells.F = "-"; cells.G = "-"; cells.J = "-"; cells.L = "-"; }
     return cells;
   };
   const emitTypes = (types: SummaryType[], subLabel: string, subStyle: Record<string, string>, dashConv: boolean) => {

@@ -20,14 +20,14 @@ import {
   DISPLAY_PLACEMENT, DISPLAY_CAMPAIGN_LAYOUT,
   type KeywordGroup, type CampaignTypeGroup, type SummaryType, type ProductRow,
 } from "./report-variable";
-import { authFetch, fetchAdgroupRowsByCampaign } from "@/features/multi-account/multi-account-data";
+import { authFetch } from "@/features/multi-account/multi-account-data";
 import {
   fetchAdvancedReport, colIndex, parseEntity, rowMetrics, addMetrics, CAMPAIGN_TP_CODE,
   ZERO_METRICS, type ReportMetrics, type AdvReportResult, type AdvReportFilter,
 } from "./report-data";
 import {
-  rangeForPreset, previousRange, rangeText, eachDay, dayLabel, ymdToIso, proratedBrand,
-  type DateRange, type ReportPreset, type ProrationContract,
+  rangeForPreset, previousRange, rangeText, eachDay, dayLabel, ymdToIso,
+  type DateRange, type ReportPreset,
 } from "./report-period";
 import { fetchGfaTotal, fetchGfaData, type GfaData } from "./report-gfa";
 import { fetchGfaDetail } from "./report-gfa-detail";
@@ -185,15 +185,11 @@ function orderedNamed(map: Map<string, ReportMetrics>, order: string[]): NamedMe
 }
 
 // ── ReportModel 조립 (검색광고) ──
-// brandCur/brandPrev = 브랜드검색 계약금액의 금주/전주 일할(proration) 비용 합계. 검색광고
-// 비용(salesAmt)은 브랜드가 0으로 잡히므로, 각 기간에 실제 집행된 일할 금액을 검색 총비용에
-// 가산해 종합·검색광고 시트의 비용·합계가 섹션3 브랜드 행과 정합되게 한다.
-// 전주도 동일 계약을 전주 기간으로 일할 계산하므로, 계약이 기간을 걸쳐 시작/종료되면 증감이
-// 실제 집행 변화를 반영한다(미변동 구간이면 증감 0).
+// 브랜드검색/신제품검색은 계약 기반이라 소진비용(salesAmt)이 0으로 잡힌다 — 계약금액 일할
+// 가산은 2026-08-12 폐기: 브랜드 비용은 리포트(총비용 포함)에서 제외하고 0으로 둔다.
 export async function buildReportModel(
-  target: ReportTarget, range: DateRange, meta: ReportMeta, brandCur = 0, brandPrev = 0,
+  target: ReportTarget, range: DateRange, meta: ReportMeta,
   displayCurrent?: GfaData | Promise<GfaData>,
-  brandRaw: BrandRawContract[] = [], // 일자별에 브랜드 계약금액을 하루 단위로 나눠 넣기 위한 원본
   collect: ReportCollectOptions = {}, // 캠페인 선택·접기 기준 (리포트 설정)
 ): Promise<ReportModel> {
   const cid = target.masterCustomerId;
@@ -252,23 +248,13 @@ export async function buildReportModel(
     gfaCurP,
     gfaSafe(prev),
   ]);
-  // 브랜드 일할 계약금액 가산 (금주/전주 검색 총비용에 각각 반영)
-  const saCur = brandCur > 0 ? { ...saCurRaw, cost: saCurRaw.cost + brandCur } : saCurRaw;
-  const saPrev = brandPrev > 0 ? { ...saPrevRaw, cost: saPrevRaw.cost + brandPrev } : saPrevRaw;
+  const saCur = saCurRaw;
+  const saPrev = saPrevRaw;
 
   // 일자별: 기간 내 모든 날짜를 라벨로, 데이터 매칭(없으면 0)
-  //
-  // 브랜드검색은 계약 기반이라 소진비용(salesAmt)이 0 → 다차원보고서 일자별에 비용이 안 잡힌다.
-  // 반면 총계(saCur)에는 계약금액 일할분(brandCur)이 더해져 있어, 그대로 두면 일자별 합계가
-  // 총계보다 브랜드 금액만큼 작다. 종합 시트에선 이 둘이 바로 위아래에 붙으므로 티가 난다.
-  // → 같은 일할 계산(proratedBrand)을 **하루 단위 기간**으로 돌려 날짜마다 나눠 넣는다.
-  //   (캠페인별 표가 이미 brandCur.byAdgroup으로 그룹 단위 배분을 하는 것과 같은 방식)
-  // 하루씩 Math.round 하므로 합계가 brandCur와 몇 원(30일 기준 최대 15원) 어긋날 수 있다.
   const byDay: NamedMetrics[] = eachDay(range).map((d) => {
     const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    const m = byDayMap.get(iso) ?? ZERO_METRICS;
-    const brand = brandRaw.length > 0 ? proratedBrand(brandRaw, { since: iso, until: iso }).total : 0;
-    return { label: dayLabel(d), metrics: brand > 0 ? { ...m, cost: m.cost + brand } : m };
+    return { label: dayLabel(d), metrics: byDayMap.get(iso) ?? ZERO_METRICS };
   });
 
   const hasDisplay = gfaCur.impressions > 0 || gfaCur.cost > 0;
@@ -418,104 +404,19 @@ async function fetchPlacement(
   return foldMinorRows(rows, minorThreshold(rows, minorRatio), "기타 매체", hasConversion);
 }
 
-// ── 브랜드검색 계약금액 (일할 계산) ──
-// 브랜드검색/신제품검색은 소진비용(salesAmt)이 0이라 advanced-report로 비용이 안 잡힌다.
-// 대신 계약금액(contractAmt)을 리포트 기간에 실제 집행된 일수만큼 안분(proration)해 비용으로
-// 쓴다. 계약은 광고그룹(PC/모바일 별도) 단위라 그룹별로 보관 — 검색광고 시트 섹션2 캠페인별
-// 표가 그룹 행이라 그룹 일할 비용으로 주입한다. 일할 공식·날짜 규칙은 report-period.ts 참조.
-// raw 계약을 한 번 받아 금주/전주 두 기간으로 각각 proratedBrand()를 돌린다(전주는 다른 기간).
-interface BrandCampaignRow { nccCampaignId?: string }
-// time-contracts 평면 배열 1건 = 계약 1건 (현재·예약·종료·취소 전부 포함).
-interface BrandTimeContract {
-  nccTimeContractId?: string;
-  nccAdgroupId?: string;
-  campaignTp?: string;
-  contractAmt?: number;
-  contractStatus?: string;
-  contractStartDt?: string;
-  contractEndDt?: string;
-  exposureStartDt?: string;
-  exposureEndDt?: string;
-  cancelStatus?: string;
-  cancelTm?: string;
-}
-// 일할 입력으로 쓸 raw 계약 1건 (광고그룹ID + 계약 기간/금액/노출·취소 필드).
-export type BrandRawContract = ProrationContract & { adgroupId: string; contractStatus?: string };
-
-async function fetchBrandContracts(
-  customerId: number, saCampaignIds?: string[] | null,
-): Promise<BrandRawContract[]> {
-  if (saExcludedBy(saCampaignIds)) return []; // 검색광고 제외 — 브랜드 계약도 비용 가산 대상 아님
-  const camps = await authFetch<BrandCampaignRow[]>(
-    "/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=BRAND_SEARCH",
-    undefined, customerId,
-  ).catch(() => [] as BrandCampaignRow[]);
-  let campIds = (camps ?? []).map((c) => c.nccCampaignId).filter((x): x is string => !!x);
-  // 캠페인 선택 필터 — 미선택 브랜드 캠페인의 계약금액이 비용에 가산되지 않게 교집합.
-  if (saCampaignIds && saCampaignIds.length > 0) {
-    campIds = campIds.filter((id) => saCampaignIds.includes(id));
-  }
-  if (campIds.length === 0) return [];
-
-  const agLists = await Promise.all(campIds.map((id) => fetchAdgroupRowsByCampaign(id, customerId)));
-  const adgroupIds = agLists.flat().map((a) => a.nccAdgroupId).filter((x): x is string => !!x);
-  if (adgroupIds.length === 0) return [];
-
-  // /time-contracts 는 x-ad-customer-id 계정 범위로 브랜드검색 계약 전체(현재·예약·종료·취소)를
-  // 평면 배열로 준다 — after-current-summaries(현재+다음만)와 달리 과거 종료 계약까지 포함하므로
-  // 지난달 등 과거 기간 리포트의 일할 비용이 정확히 잡힌다(겹침 없는 계약은 proration이 0으로 제외).
-  // nccAdgroupIds 파라미터는 실제 필터링하지 않고(계정 전체 반환) 라우트 충족용이라, chunk를 직렬로
-  // 돌리면 같은 전체 응답을 매번 받아 2번째부터 전부 dedup으로 버려진다 → 첫 chunk(최대 100개)만 보내
-  // 1회만 호출한다. 삭제된 옛 광고그룹 소속 계약도 함께 와 과거 집행분을 보존. dedup은 안전상 유지.
-  const out: BrandRawContract[] = [];
-  const seen = new Set<string>();
-  const chunk = adgroupIds.slice(0, 100);
-  const rows = await authFetch<BrandTimeContract[]>(
-    "/apis/sa/api/ncc/time-contracts?nccAdgroupIds=" + encodeURIComponent(chunk.join(",")),
-    undefined, customerId,
-  ).catch(() => [] as BrandTimeContract[]);
-  for (const c of rows ?? []) {
-    if (!c?.contractAmt || !c.nccAdgroupId) continue;
-    const key = c.nccTimeContractId ?? `${c.nccAdgroupId}:${c.contractStartDt}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push({
-      adgroupId: c.nccAdgroupId,
-      contractAmt: c.contractAmt,
-      contractStartDt: c.contractStartDt,
-      contractEndDt: c.contractEndDt,
-      exposureStartDt: c.exposureStartDt,
-      exposureEndDt: c.exposureEndDt,
-      // 정상 계약은 cancelStatus="NOT_CANCELED" + cancelTm=null. 실제 취소된 계약만 cancelTm을
-      // 일할 끝으로 반영(노출전 취소는 cancelTm이 시작보다 앞이라 overlap 0으로 자연 제외).
-      cancelTm:
-        c.cancelStatus && c.cancelStatus !== "NOT_CANCELED" && c.cancelTm
-          ? c.cancelTm
-          : undefined,
-      contractStatus: c.contractStatus,
-    });
-  }
-  return out;
-}
-
-// 종합 캠페인 유형별(섹션3) 검색 유형 리스트. 브랜드검색 행은 비용(cost)을 계약금액으로 대체.
+// 종합 캠페인 유형별(섹션3) 검색 유형 리스트. 브랜드검색/신제품검색은 계약 기반이라 비용이
+// 0으로 나온다(계약금액 일할 가산은 2026-08-12 폐기 — 브랜드 비용은 리포트에서 제외).
 async function fetchSummarySearchTypes(
-  customerId: number, range: DateRange, brandTotal: number, extraFilters: AdvReportFilter[] = [],
+  customerId: number, range: DateRange, extraFilters: AdvReportFilter[] = [],
 ): Promise<SummaryType[]> {
   const map = await fetchAggregated(customerId, range, "nccCampaignTp", campaignTypeLabel, extraFilters);
-  return SEARCH_TYPE_ORDER.filter((l) => map.has(l)).map((label) => {
-    const metrics = map.get(label)!;
-    if (label === "브랜드검색/신제품검색" && brandTotal > 0) {
-      return { label, metrics: { ...metrics, cost: metrics.cost + brandTotal } };
-    }
-    return { label, metrics };
-  });
+  return SEARCH_TYPE_ORDER.filter((l) => map.has(l)).map((label) => ({ label, metrics: map.get(label)! }));
 }
 
-// 검색광고 캠페인별(섹션2): 유형 → 캠페인 → 광고그룹 행. 브랜드 그룹은 비용을 계약 일할금액으로 대체.
+// 검색광고 캠페인별(섹션2): 유형 → 캠페인 → 광고그룹 행.
 type CampGroupRow = { campaign: string; group: string; metrics: ReportMetrics };
 async function fetchCampaignGroups(
-  customerId: number, range: DateRange, brandByAdgroup: Map<string, number>,
+  customerId: number, range: DateRange,
   extraFilters: AdvReportFilter[] = [],
 ): Promise<CampaignTypeGroup[]> {
   // 이 시트는 **그룹의 진짜 총계**라 지표 필터를 걸면 안 된다(키워드 시트와 달리 여기 숫자가
@@ -533,9 +434,7 @@ async function fetchCampaignGroups(
     const campEnt = parseEntity(r[idx["nccCampaignId"]] ?? "");
     const groupEnt = parseEntity(r[idx["nccAdgroupId"]] ?? "");
     if (!groupEnt.name) continue;
-    let metrics = rowMetrics(r, idx);
-    const contract = brandByAdgroup.get(groupEnt.id);
-    if (contract) metrics = { ...metrics, cost: metrics.cost + contract };
+    const metrics = rowMetrics(r, idx);
     const arr = byType.get(type) ?? [];
     arr.push({ campaign: campEnt.name, group: groupEnt.name, metrics });
     byType.set(type, arr);
@@ -803,7 +702,7 @@ export async function collectReportData(
 }
 
 /**
- * 병렬 구조(brandP/displayDataP를 await로 막지 않고 promise로 먼저 출발)는 성능 감사 2026-07-02
+ * 병렬 구조(displayDataP를 await로 막지 않고 promise로 먼저 출발)는 성능 감사 2026-07-02
  * 확정 - 순서·동시성을 바꾸지 말 것.
  */
 async function collectReportDataFresh(
@@ -814,21 +713,6 @@ async function collectReportDataFresh(
   const saExcluded = saExcludedBy(options.saCampaignIds); // [] = 검색광고 제외(디스플레이 단독)
   const saFilters = saCampaignFilters(options.saCampaignIds);
   const minorRatio = options.minorRatio ?? MINOR_ROW_RATIO;
-
-  // 브랜드검색 계약 raw 수집(없거나 실패 시 빈 목록) → 금주/전주 기간으로 각각 일할 계산.
-  // 검색 비용 가산(금주/전주)·종합 섹션3·검색 섹션2 그룹 비용에 공통 사용.
-  // 3-hop(캠페인→그룹→계약) 체인이라 앞에서 await로 막지 않고 promise로 시작해 비-brand 수집(디스플레이·
-  // 키워드)과 동시 진행 — brand 값이 필요한 소비자에서만 각자 await(데이터 흐름은 동일, 시작만 앞당김).
-  const brandP = fetchBrandContracts(cid, options.saCampaignIds)
-    .catch((e) => {
-      console.warn("[dv-ads/report] 브랜드 계약 조회 실패 → 빈 값", e);
-      return [] as BrandRawContract[];
-    })
-    .then((brandRaw) => ({
-      brandRaw, // 일자별 하루 단위 일할에 필요 (buildReportModel)
-      brandCur: proratedBrand(brandRaw, range),
-      brandPrev: proratedBrand(brandRaw, previousRange(range)),
-    }));
 
   // 현재기간 디스플레이(GFA)는 1회만 호출해 종합 .total(buildReportModel)·유형별·캠페인별에 공유.
   // 공유 결과라 일시 오류로 디스플레이가 통째로 빠지지 않게 1회 재시도(전주 gfaSafe와 동일 정책) 후 빈 값.
@@ -891,21 +775,10 @@ async function collectReportDataFresh(
   });
 
   const [model, searchTypes, displayData, campGroups, plRes, shRes, productRes] = await Promise.all([
-    (async () => {
-      const { brandRaw, brandCur, brandPrev } = await brandP;
-      return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP, brandRaw, options);
-    })(),
-    (async () => {
-      if (saExcluded) return [] as SummaryType[];
-      const { brandCur } = await brandP;
-      return fetchSummarySearchTypes(cid, range, brandCur.total, saFilters);
-    })(),
+    buildReportModel(target, range, meta, displayDataP, options),
+    saExcluded ? Promise.resolve([] as SummaryType[]) : fetchSummarySearchTypes(cid, range, saFilters),
     displayDataP,
-    (async () => {
-      if (saExcluded) return [] as CampaignTypeGroup[];
-      const { brandCur } = await brandP;
-      return fetchCampaignGroups(cid, range, brandCur.byAdgroup, saFilters);
-    })(),
+    saExcluded ? Promise.resolve([] as CampaignTypeGroup[]) : fetchCampaignGroups(cid, range, saFilters),
     plReportP,
     shReportP,
     productReportP,
