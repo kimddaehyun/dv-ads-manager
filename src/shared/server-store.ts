@@ -167,7 +167,10 @@ export async function pushGroups(groups: MultiAccountGroup[]): Promise<void> {
   const userId = await currentUserId();
   const ids = groups.map((g) => g.id);
 
-  const deleteQuery = supabase.from("account_groups").delete();
+  // PostgREST는 WHERE 없는 DELETE를 400("DELETE requires a WHERE clause")으로 거부한다 —
+  // 그룹 0개일 때 조건 없는 delete가 나가며 이관(migrate-local)이 영구 실패하던 실사고(2026-08-12).
+  // RLS가 본인 행만 지우게 막아주지만, 필터 요건 충족 겸 명시적으로 user_id 조건을 항상 건다.
+  const deleteQuery = supabase.from("account_groups").delete().eq("user_id", userId);
   const { error: deleteError } =
     ids.length > 0 ? await deleteQuery.not("id", "in", `(${ids.join(",")})`) : await deleteQuery;
   if (deleteError) throw deleteError;

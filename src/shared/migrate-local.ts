@@ -104,7 +104,10 @@ export async function runMigrationOnce(): Promise<void> {
         order: addedOrder.get(meta.adAccountNo) ?? 0,
       })),
     );
-    await pushGroups(localGroups);
+    // 그룹이 0개면 push 생략 — pushGroups는 전체 교체(목록에 없는 서버 행 삭제)라,
+    // 빈 로컬(신규 설치)로 upload 이관이 돌면 다른 기기에서 만든 서버 그룹을 지워버린다.
+    // (수정 전에는 조건 없는 DELETE 400 덕분에 우연히 파괴를 면하고 이관만 실패했다. 2026-08-12)
+    if (localGroups.length > 0) await pushGroups(localGroups);
     if (localCred) await vaultSave(localCred);
 
     // 전부 성공한 뒤에만 서버측 완료 마커 기록 — 이후 다른 기기는 download.
