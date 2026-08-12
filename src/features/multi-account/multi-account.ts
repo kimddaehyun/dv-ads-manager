@@ -172,8 +172,9 @@ export function initMultiAccount() {
   });
   window.addEventListener("resize", syncMount);
 
-  // 첫 페이지 진입 시 디렉터리 자동 갱신 + 마운트
-  void ensureDirectoryFresh();
+  // 첫 페이지 진입 시 디렉터리 자동 갱신 + 마운트.
+  // 신규 설치(로컬 명단 없음)면 이관+서버 새로고침+명단 수집이 끝날 때까지 버튼을 로딩 상태로 잠근다.
+  void prepareFirstLaunch();
   syncMount();
   // 첫 진입 시 활성 계정 자연 캐싱
   void autoUpdateActiveAccount();
@@ -250,6 +251,37 @@ function registerMessageListener() {
     }
     return false;
   });
+}
+
+// 첫 진입 준비 중(신규 설치) 버튼 로딩 잠금 — true 동안 클릭 무시 + 스피너 표시.
+let launchLoading = false;
+
+/**
+ * 첫 진입 데이터 준비. 로컬에 계정 명단이 있으면(기존 사용자) 기존처럼 백그라운드 갱신만.
+ * 없으면(신규 설치/저장소 초기화) 이관 → 서버 새로고침 → 명단 수집이 끝날 때까지
+ * 버튼을 로딩 상태로 잠가, 첫 열기가 빈 목록으로 뜨는 문제를 막는다(2026-08-12).
+ */
+async function prepareFirstLaunch() {
+  try {
+    const dir = await loadDirectory();
+    if (dir?.entries?.length) {
+      void ensureDirectoryFresh();
+      return;
+    }
+    launchLoading = true;
+    buttonEl?.classList.add("is-loading");
+    const { migrationSettled } = await import("@/shared/auth-gate");
+    await migrationSettled();
+    await refreshFromServer().catch((e) =>
+      console.warn("[multi-account] 첫 진입 서버 새로고침 실패", e),
+    );
+    await ensureDirectoryFresh();
+  } catch (e) {
+    console.warn("[multi-account] 첫 진입 준비 실패", e);
+  } finally {
+    launchLoading = false;
+    buttonEl?.classList.remove("is-loading");
+  }
 }
 
 async function ensureDirectoryFresh() {
@@ -337,9 +369,11 @@ function syncMount() {
     "</svg>";
   btn.addEventListener("click", (e) => {
     e.stopPropagation();
+    if (launchLoading) return; // 첫 진입 준비 중 — 스피너 표시, 클릭 무시
     if (popoverEl) closePopover();
     else void openPopover();
   });
+  if (launchLoading) btn.classList.add("is-loading"); // 준비 중 re-mount돼도 로딩 유지
 
   // iOS 스타일 알림 배지 — 사용자가 설정한 임계값(비즈머니/브랜드검색) 알림 카운트.
   // 초기엔 숨겨두고 refreshBadge가 카운트>0일 때 노출.
@@ -423,7 +457,13 @@ async function openPopover() {
   // 서버 최신 상태로 로컬 캐시 새로고침 — 다른 기기/프로필에서 바뀐 별칭·그룹·추가목록 반영.
   // fire-and-forget: 실패해도 로컬 캐시로 그대로 렌더되고, 다음에 열 때 다시 시도된다.
   if (!serverRefreshInFlight) {
-    serverRefreshInFlight = refreshFromServer()
+    serverRefreshInFlight = (async () => {
+      // refreshFromServer는 이관(첫 내려받기) 완료 전엔 가드에 걸려 빈손으로 끝난다 —
+      // 설치 직후 첫 열기에서도 실데이터를 받도록 이관이 끝나길 먼저 기다린다(기존 사용자는 즉시 통과).
+      const { migrationSettled } = await import("@/shared/auth-gate");
+      await migrationSettled();
+      await refreshFromServer();
+    })()
       .catch((e) => console.warn("[multi-account] 서버 새로고침 실패", e))
       .finally(() => {
         serverRefreshInFlight = null;

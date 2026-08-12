@@ -1922,6 +1922,23 @@ td.dvads-period-delta-down {
   border-color: #E6783B;
   color: #E6783B;
 }
+/* 첫 진입 준비 중 — 아이콘 대신 스피너, 클릭 비활성 시각 cue */
+.dvads-multi-btn.is-loading {
+  cursor: default;
+  pointer-events: none;
+}
+.dvads-multi-btn.is-loading svg {
+  display: none;
+}
+.dvads-multi-btn.is-loading::after {
+  content: "";
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ECEEF0;
+  border-top-color: #E6783B;
+  border-radius: 50%;
+  animation: dvads-spin 0.8s linear infinite;
+}
 /* open 상태 — popover 열려있는 동안 active 시각 cue (테두리 + 색 주황 유지) */
 .dvads-multi-btn.is-open {
   background: #fff8f3;

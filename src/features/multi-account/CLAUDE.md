@@ -13,6 +13,7 @@ PRD §8 단일 자격증명 모델과 충돌 없음 — 광고관리자 로그�
 
 ## Gotchas
 
+- **신규 설치 첫 열기는 "추가 목록"과 "디렉터리" 둘 다 있어야 그려진다** — `pickAddedEntries`가 디렉터리에 없는 계정 행을 숨기므로, 서버에서 추가 목록을 내려받아도 명단 수집이 안 끝났으면 빈 목록("추가된 계정 없음")으로 보인다. `prepareFirstLaunch`가 로컬 명단 없을 때 이관(`migrationSettled`)→서버 새로고침→명단 수집 완료까지 버튼을 `is-loading`(스피너+클릭 무시)으로 잠근다(2026-08-12).
 - **디렉터리 캐시(24h)는 네이버 로그인 전환을 모른다** — 캐시에 `naverId`(access 응답 첫 항목의 로그인 ID)를 스탬프하고, `ensureDirectoryFresh`가 신선한 캐시라도 size=1 프로브로 현재 로그인과 비교해 다르면 즉시 재수집한다. 프로브 실패(null)면 기존 캐시 유지. `/apis/ad-account/v1.1/adAccounts/access`는 **page가 0부터 시작** — 1부터 세면 앞 100개가 통째로 빠진다(2026-08-11 실사고, 콘솔 정찰 중 오진 원인).
 
 - **캠페인 상세 SPA URL은 `/sa/campaigns/{nccCampaignId}`** — 2026-07-21 실사용 URL로 검증(예: `/manage/ad-accounts/454196/sa/campaigns/cmp-a001-01-...`). 2026-07-20의 404는 다른 형식이었던 것. 유형별 목록은 `campaigns-by/{TYPE}` — API campaignType ↔ SPA TYPE이 다름: `SHOPPING`↔`SHOPPING_NS`, `BRAND_SEARCH`↔`BRAND` (`ISSUE_DEST_CAMPAIGN_TYPES` 매핑 참조). 광고그룹 상세 `/sa/adgroups/{id}`도 검증됨.

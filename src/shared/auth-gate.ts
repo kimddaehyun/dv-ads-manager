@@ -10,6 +10,14 @@ import { fetchAuthContext } from "@/shared/auth-state";
 import { runMigrationOnce } from "@/shared/migrate-local";
 
 let cached: Promise<boolean> | null = null;
+// 이관(runMigrationOnce) 진행 상태 — 설치 직후 첫 화면이 이관 완료 전에 열리면
+// 서버 데이터가 아직 로컬에 없다. 첫 렌더를 이관 뒤로 미루고 싶은 쪽이 이걸 기다린다.
+let migration: Promise<void> = Promise.resolve();
+
+/** 이관이 끝날 때까지 대기(실패해도 resolve). 이관이 안 도는 상태면 즉시 resolve. */
+export function migrationSettled(): Promise<void> {
+  return migration;
+}
 
 export async function requireApproved(): Promise<boolean> {
   if (!cached) {
@@ -20,7 +28,7 @@ export async function requireApproved(): Promise<boolean> {
         // 플래그로 idempotent, 재실행돼도 즉시 skip된다. runMigrationOnce가 승인 상태를
         // 자체 확인하지만 여기서도 approved일 때만 불러 불필요한 호출을 줄인다.
         if (approved) {
-          runMigrationOnce().catch((e) => {
+          migration = runMigrationOnce().catch((e) => {
             console.warn("[auth-gate] 이관 실패", e);
           });
         }
