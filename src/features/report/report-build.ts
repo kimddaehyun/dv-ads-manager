@@ -50,7 +50,7 @@ export interface ReportMeta {
 export interface ReportCollectOptions {
   /** 기타 행 접기 기준(캠페인 광고비 대비). 0 = 접지 않음. 기본 0.005. */
   minorRatio?: number;
-  /** 포함할 검색광고 캠페인 nccCampaignId 목록. null/undefined = 전체(필터 없음). */
+  /** 포함할 검색광고 캠페인 nccCampaignId 목록. null/undefined = 전체(필터 없음), [] = 검색광고 제외(디스플레이 단독). */
   saCampaignIds?: string[] | null;
   /** 포함할 디스플레이(GFA) 캠페인 id 목록. null/undefined = 전체. */
   gfaCampaignIds?: string[] | null;
@@ -199,6 +199,7 @@ export async function buildReportModel(
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
   const prev = previousRange(range);
+  const saExcluded = saExcludedBy(collect.saCampaignIds);
   const saFilters = saCampaignFilters(collect.saCampaignIds);
   const gfaIds = collect.gfaCampaignIds ?? null;
 
@@ -239,13 +240,15 @@ export async function buildReportModel(
   // no-op catch (await 측 에러 전파에는 영향 없음).
   detailP.catch(() => {});
 
+  // 검색광고 제외([]) 설정이면 SA 조회는 전부 생략하고 0/빈 값 — 디스플레이 단독 리포트.
+  const emptyAgg = new Map<string, ReportMetrics>();
   const [saCurRaw, saPrevRaw, byDayMap, byPlaceRows, byGenderMap, byAgeMap, gfaCur, gfaPrev] = await Promise.all([
-    fetchTotal(cid, range, saFilters),
-    fetchTotal(cid, prev, saFilters),
-    fetchAggregated(cid, range, "ymd", (v) => ymdToIso(v), saFilters),
-    fetchPlacement(cid, range, saFilters, collect.minorRatio),
-    fetchAggregated(cid, range, "criterionGenderNm", genderLabel, saFilters),
-    fetchAggregated(cid, range, "criterionAgeTpNm", ageLabel, saFilters),
+    saExcluded ? ZERO_METRICS : fetchTotal(cid, range, saFilters),
+    saExcluded ? ZERO_METRICS : fetchTotal(cid, prev, saFilters),
+    saExcluded ? emptyAgg : fetchAggregated(cid, range, "ymd", (v) => ymdToIso(v), saFilters),
+    saExcluded ? ([] as NamedMetrics[]) : fetchPlacement(cid, range, saFilters, collect.minorRatio),
+    saExcluded ? emptyAgg : fetchAggregated(cid, range, "criterionGenderNm", genderLabel, saFilters),
+    saExcluded ? emptyAgg : fetchAggregated(cid, range, "criterionAgeTpNm", ageLabel, saFilters),
     gfaCurP,
     gfaSafe(prev),
   ]);
@@ -331,7 +334,7 @@ export async function buildReportModel(
     displayByPlacement,
     displayByGender,
     displayByAge,
-    hasSearch: true,
+    hasSearch: !saExcluded,
     hasDisplay,
     hasDisplayDetail,
   };
@@ -361,7 +364,13 @@ function minorThreshold(rows: { metrics: ReportMetrics }[], ratio = MINOR_ROW_RA
   return rows.reduce((s, r) => s + r.metrics.cost, 0) * ratio;
 }
 
-// 캠페인 선택 → advanced-report `in` 필터. 미선택(null/undefined/빈 배열)이면 필터 없음(전체).
+// 검색광고를 리포트에서 통째로 빼는 설정인지 (빈 배열 = 제외, null/undefined = 전체).
+function saExcludedBy(ids: string[] | null | undefined): boolean {
+  return ids != null && ids.length === 0;
+}
+
+// 캠페인 선택 → advanced-report `in` 필터. null/undefined(전체)면 필터 없음.
+// ⚠️ 빈 배열도 필터 없음이 돼 버리므로, [] = 검색광고 제외는 호출 전에 saExcludedBy로 분기할 것.
 function saCampaignFilters(ids: string[] | null | undefined): AdvReportFilter[] {
   return ids && ids.length > 0 ? [{ type: "in", field: "nccCampaignId", values: ids }] : [];
 }
@@ -436,6 +445,7 @@ export type BrandRawContract = ProrationContract & { adgroupId: string; contract
 async function fetchBrandContracts(
   customerId: number, saCampaignIds?: string[] | null,
 ): Promise<BrandRawContract[]> {
+  if (saExcludedBy(saCampaignIds)) return []; // 검색광고 제외 — 브랜드 계약도 비용 가산 대상 아님
   const camps = await authFetch<BrandCampaignRow[]>(
     "/apis/sa/api/ncc/campaigns?recordSize=1001&campaignType=BRAND_SEARCH",
     undefined, customerId,
@@ -801,6 +811,7 @@ async function collectReportDataFresh(
 ): Promise<ReportData> {
   const cid = target.masterCustomerId;
   if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
+  const saExcluded = saExcludedBy(options.saCampaignIds); // [] = 검색광고 제외(디스플레이 단독)
   const saFilters = saCampaignFilters(options.saCampaignIds);
   const minorRatio = options.minorRatio ?? MINOR_ROW_RATIO;
 
@@ -858,7 +869,8 @@ async function collectReportDataFresh(
   // filters는 문서에 없는 internal API 표면이라(정찰로 알아냄) 예고 없이 바뀔 수 있다.
   // 여기서 throw하면 Promise.all이 깨져 **리포트 전체**가 실패한다 — 키워드 시트는 없으면 제거되는
   // 시트라, 빈 결과로 떨어뜨려 "키워드 시트만 빠진 리포트"로 살려 보낸다(상품별과 동일한 처리).
-  const fetchKeywordReport = (tpCode: string) => fetchAdvancedReport({
+  const emptyAdv: AdvReportResult = { head: [], rows: [], totalResults: 0 };
+  const fetchKeywordReport = (tpCode: string) => saExcluded ? Promise.resolve(emptyAdv) : fetchAdvancedReport({
     attributes: KEYWORD_ATTRS, range, customerId: cid, maxRows: 30000, filters: keywordFilters(tpCode),
   }).catch((e) => {
     console.warn(`[dv-ads/report] 키워드 조회 실패(${tpCode}) → 해당 키워드 시트 제거`, e);
@@ -870,7 +882,7 @@ async function collectReportDataFresh(
   // 키워드와 **같은 필터를 반드시 걸어야 한다**: 이 응답도 정렬 없이 유형별로 뭉쳐 오므로, 필터가
   // 없으면 앞쪽 파워링크 소재가 상한을 채워 쇼핑검색이 0건 → 시트 통째 실종(키워드에서 겪은 그 사고).
   // 광고비>0도 같이 — 접기를 없앤 뒤로 이걸 안 걸면 클릭 한 번 없는 소재가 전부 개별 행으로 나온다.
-  const productReportP = fetchAdvancedReport({
+  const productReportP = saExcluded ? Promise.resolve(emptyAdv) : fetchAdvancedReport({
     attributes: ["nccCampaignTp", "nccCampaignId", "nccAdgroupId", "nccAdId"], range, customerId: cid,
     maxRows: 30000, filters: keywordFilters(CAMPAIGN_TP_CODE.쇼핑검색),
   }).catch((e) => {
@@ -884,11 +896,13 @@ async function collectReportDataFresh(
       return buildReportModel(target, range, meta, brandCur.total, brandPrev.total, displayDataP, brandRaw, options);
     })(),
     (async () => {
+      if (saExcluded) return [] as SummaryType[];
       const { brandCur } = await brandP;
       return fetchSummarySearchTypes(cid, range, brandCur.total, saFilters);
     })(),
     displayDataP,
     (async () => {
+      if (saExcluded) return [] as CampaignTypeGroup[];
       const { brandCur } = await brandP;
       return fetchCampaignGroups(cid, range, brandCur.byAdgroup, saFilters);
     })(),
@@ -951,16 +965,21 @@ function renderReportBytes(files: ZipFiles, data: ReportData, renderOpts?: Repor
   // 동적: 종합 유형별 / 검색광고 캠페인별 / 키워드
   renderSummaryTypes(files, searchTypes, displayTypes);
   // 종합 섹션2 일자별 삽입 — renderSummaryTypes 뒤에. 아래 섹션이 최종 위치에 있어야 한 번에 밀린다.
-  insertSummaryDaily(files, model);
-  renderCampaignSheet(files, "xl/worksheets/sheet3.xml", campGroups);
-  renderKeywordSheet(files, "xl/worksheets/sheet5.xml", plKeywords);
-  renderKeywordSheet(files, "xl/worksheets/sheet6.xml", shKeywords, "쇼핑검색 키워드별 성과");
-  renderProductSheet(files, "xl/worksheets/sheet9.xml", shProducts, "쇼핑검색 상품별 성과");
-  // 검색_상세 지면별 → 맨 아래 동적 + 옛 영역 삭제 + 지면 그래프 제거(내부 처리) + 성별 그래프 여성색
-  renderDetailPlacement(files, model.byPlacement);
-  replaceChartColor(files, "xl/charts/chart5.xml", "92D050", "F67676");
-  // 월간(일수>7) 일자별 확장 — 지면 동적 이동 후 마지막에. 주간이면 no-op.
-  expandDailyRows(files, SEARCH_DAILY_EXPAND, model.byDay);
+  // 검색광고 제외 + 디스플레이 일자별도 없으면(부분 선택/상세 실패) summaryByDay가 전부 0이라
+  // 틀린 표를 싣는 대신 섹션 자체를 생략한다(codex P2, 2026-08-12).
+  if (model.hasSearch || model.displayByDay.length > 0) insertSummaryDaily(files, model);
+  // 검색광고 제외(디스플레이 단독)면 검색 계열 시트는 어차피 아래에서 제거 — 렌더 생략.
+  if (model.hasSearch) {
+    renderCampaignSheet(files, "xl/worksheets/sheet3.xml", campGroups);
+    renderKeywordSheet(files, "xl/worksheets/sheet5.xml", plKeywords);
+    renderKeywordSheet(files, "xl/worksheets/sheet6.xml", shKeywords, "쇼핑검색 키워드별 성과");
+    renderProductSheet(files, "xl/worksheets/sheet9.xml", shProducts, "쇼핑검색 상품별 성과");
+    // 검색_상세 지면별 → 맨 아래 동적 + 옛 영역 삭제 + 지면 그래프 제거(내부 처리) + 성별 그래프 여성색
+    renderDetailPlacement(files, model.byPlacement);
+    replaceChartColor(files, "xl/charts/chart5.xml", "92D050", "F67676");
+    // 월간(일수>7) 일자별 확장 — 지면 동적 이동 후 마지막에. 주간이면 no-op.
+    expandDailyRows(files, SEARCH_DAILY_EXPAND, model.byDay);
+  }
   // 디스플레이_상세도 동일 처리 (수집 성공 시). fillFixedSheets가 일자/성별/연령은 이미 채움.
   if (model.hasDisplayDetail) {
     renderDetailPlacement(files, model.displayByPlacement, DISPLAY_PLACEMENT, true);
@@ -1009,6 +1028,7 @@ function renderReportBytes(files: ZipFiles, data: ReportData, renderOpts?: Repor
   // 비진행 매체 시트 제거. 디스플레이 시트는 디스플레이 미진행 시 제거.
   // 디스플레이_상세는 분해 수집 성공 시 유지. 키워드 시트는 데이터 없으면 제거.
   const toRemove: string[] = [];
+  if (!model.hasSearch) toRemove.push("검색광고", "검색_상세");
   if (!model.hasDisplay) toRemove.push("디스플레이");
   if (!model.hasDisplayDetail) toRemove.push("디스플레이_상세");
   if (plKeywords.length === 0) toRemove.push("파워링크_키워드");

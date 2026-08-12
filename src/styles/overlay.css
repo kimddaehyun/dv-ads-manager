@@ -4619,7 +4619,7 @@ td.dvads-period-delta-down {
 }
 .dvads-rdp-sub {
   padding: 12px 16px 8px;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 600;
   color: #737373;
   border-bottom: 1px solid #F3F4F6;
@@ -5420,6 +5420,16 @@ td.dvads-period-delta-down {
 .dvads-rdp-setfly {
   width: 360px;
 }
+/* 설정 flyout은 마지막 행(직접/간접 토글)이 하단 버튼과 붙어 구분선이 행을 스치듯 겹친다 —
+   선을 빼고 여백으로만 구분 (2026-08-12). */
+.dvads-rdp-setfly .dvads-rdp-foot {
+  border-top: 0;
+}
+.dvads-rdp-setfly .dvads-rdp-set {
+  padding-bottom: 6px;
+}
+/* 첫 행(담당자)의 위 간격 기준은 컨텍스트 줄의 아래 구분선 — 그 위 8px는 줄 안쪽 여백이라
+   행 간격에 안 들어간다. 행 기본 top 16px를 그대로 둬야 아래 행 간격(16px)과 같아진다. */
 .dvads-rdp-set {
   display: flex;
   flex-direction: column;
@@ -5429,7 +5439,11 @@ td.dvads-period-delta-down {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 10px 16px 0;
+  padding: 16px 16px 0;
+  /* 행 간격(16px)은 모두 같지만 행 자체 높이가 다르면(입력 32px vs 토글 20px) 간격이 달라
+     보인다 — 입력 높이로 통일해 리듬을 맞춘다 (2026-08-12). */
+  min-height: 32px;
+  box-sizing: content-box;
 }
 .dvads-rdp-set-label {
   font-size: 14px;
@@ -5466,6 +5480,13 @@ td.dvads-period-delta-down {
   text-align: right;
   background: transparent;
 }
+/* 담당자 입력 — 분류 기준과 같은 회색 채움, 이름이 들어갈 만큼만 넓게 + 왼쪽 정렬 */
+.dvads-rdp-set-author-wrap {
+  width: 110px;
+}
+.dvads-rdp-set-author {
+  text-align: left;
+}
 .dvads-rdp-set-ratio-suffix {
   flex: none;
   margin-left: 4px;
@@ -5475,6 +5496,60 @@ td.dvads-period-delta-down {
 .dvads-rdp-set-row .dvads-asset-bulk-switch {
   margin-left: auto;
 }
+/* 캠페인 이름 검색 — 분류 기준 입력과 같은 회색 채움 스타일, 목록 폭 전체 사용.
+   행 간격은 위(설정 행들)만 넓히고 아래(유형 띠)와는 기존 간격 유지. */
+.dvads-rdp-set-search-row {
+  padding: 16px 16px 0;
+}
+.dvads-rdp-set-search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  box-sizing: border-box;
+  border-radius: 10px;
+  padding: 0 12px 0 8px;
+  background: #F3F4F6;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+.dvads-rdp-set-search-wrap:focus-within {
+  background: #ffffff;
+  box-shadow: 0 0 0 2px rgba(230, 120, 59, 0.3);
+}
+.dvads-rdp-set-search-btn {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: #9CA3AF;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.dvads-rdp-set-search-btn:hover {
+  color: #737373;
+}
+.dvads-rdp-set-search-btn svg {
+  width: 15px;
+  height: 15px;
+}
+.dvads-rdp-set-search {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: none;
+  font-family: inherit;
+  font-size: 14px;
+  color: #171717;
+}
+.dvads-rdp-set-search::placeholder {
+  color: #9CA3AF;
+}
 .dvads-rdp-set-camp-list {
   margin: 8px 16px 0;
   max-height: 280px;
@@ -5482,7 +5557,7 @@ td.dvads-period-delta-down {
   /* 바닥/천장에서 계속 스크롤해도 페이지로 전파 안 되게 — 전파되면 페이지 스크롤
      감지(onWinScroll)가 flyout을 닫아버린다. */
   overscroll-behavior: contain;
-  font-size: 13px;
+  font-size: 14px;
   color: #737373;
 }
 /* 캠페인 유형 띠 — F-Brief 선택 화면(.dvads-brief-pick-typeband) 디자인 이식(항상 파랑 유지).
@@ -5492,7 +5567,7 @@ td.dvads-period-delta-down {
   position: sticky; top: 0; z-index: 2;
   margin: 12px 0 2px; padding: 6px 8px 6px 12px;
   background: #EFF6FF; border-radius: 8px;
-  font: 700 13px/1.4 Pretendard, -apple-system, sans-serif; color: #0072f5;
+  font: 700 14px/1.4 Pretendard, -apple-system, sans-serif; color: #0072f5;
   display: flex; align-items: center; justify-content: space-between; gap: 8px;
   cursor: pointer;
   user-select: none;
@@ -5513,7 +5588,7 @@ td.dvads-period-delta-down {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 4px 5px 10px;
+  padding: 9px 4px 9px 10px;
   border-radius: 6px;
   cursor: pointer;
 }

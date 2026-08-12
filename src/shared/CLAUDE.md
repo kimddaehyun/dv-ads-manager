@@ -26,7 +26,8 @@
 
 ## 오버레이 UI 패턴 (전 기능 공통)
 
-- **토글 버튼으로 여는 flyout/패널은 open 함수에서 "같은 anchor면 닫고 return" 처리 필수** — 트리거 클릭은 바깥클릭 닫힘 판정에서 예외(제외 대상)라, 이 처리가 없으면 재클릭 시 "닫힘 → 곧바로 재오픈"이 돼 아무리 눌러도 안 꺼진다. `createDropdown`/`attachActionMenu`는 내장돼 있고, `openReportDatePicker`는 `openAnchor` 비교로 처리(2026-07-22 관리이력 보고 날짜 버튼 실사고 — 같은 유형 버그 반복됨). 새 flyout을 만들면 이 토글부터 넣을 것.
+- **토글 버튼으로 여는 flyout/패널은 open 함수에서 "같은 anchor면 닫고 return" 처리 필수** — 트리거 클릭은 바깥클릭 닫힘 판정에서 예외(제외 대상)라, 이 처리가 없으면 재클릭 시 "닫힘 → 곧바로 재오픈"이 돼 아무리 눌러도 안 꺼진다. `createDropdown`/`attachActionMenu`는 내장돼 있고, `openReportDatePicker`는 `openAnchor` 비교로 처리(2026-07-22 관리이력 보고 날짜 버튼 실사고 — 같은 유형 버그 반복됨). 새 flyout을 만들면 이 토글부터 넣을 것. **단 anchor 비교는 호출부가 클릭마다 새 anchorProxy를 만들면 성립하지 않는다**(keepOpen 행 메뉴가 그 경우) — 이때는 `toggleKey`(계정 번호 등) 비교 + "메뉴 패널 pointerdown으로 방금 닫힘(`menuClosedAt`) 후 같은 키 click 재오픈은 무시" 2단 처리가 필요(`report-settings.ts`/`report-datepicker.ts` 레퍼런스, 2026-08-12).
+- **"바깥 스크롤 = 닫기"는 내부 목록이 긴 flyout에 쓰지 말 것** — 휠을 capture로 막아도 ads.naver.com이 휠을 가로채 목록을 직접 굴리는 경로가 있어 scroll 이벤트가 뜨고, 목록을 굴리다 다른 영역으로 옮긴 순간 입력 중이던 창이 통째로 날아간다. 닫지 말고 `position()` 재계산만(`report-settings.ts`, 2026-08-12). 메뉴에서 연 flyout의 anchor는 rect를 캡처한 프록시라 실제로는 제자리 유지.
 - **Popover click-outside 닫힘은 mousedown 시작 위치 추적 필수** — 안에서 텍스트 드래그 → 밖에서 mouseup하면 click이 외부로 발화해 잘못 닫힘. `mousedown` capture로 시작 위치 기록 → 내부였으면 다음 click 1번 면제 (`multi-account.ts`·`period-compare.ts` 동일 패턴).
 - **DOM 빌드 → attach → paint 3단계 분리** — `popoverEl.querySelector`로 자식 행을 찾아 그리는 helper는 element가 attach된 *후* 호출. detached fragment 안에선 querySelector가 silent no-op. 패턴: 모든 row mount → table attach → paint loop.
 - **async render 깜빡임 방지** — await 데이터 로드를 *먼저* 끝낸 뒤 `DocumentFragment`에 빌드 → `wrap.replaceChildren(fragment)` atomic swap. rapid 재트리거 가능한 곳은 token guard 추가 — `const token = ++renderToken; await ...; if (token !== renderToken) return;` (`multi-account.ts:renderListView`).

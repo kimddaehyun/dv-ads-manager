@@ -156,11 +156,7 @@ export async function updateUserMeta(
   if ("brandSearchDaysThreshold" in patch && patch.brandSearchDaysThreshold == null) delete next.brandSearchDaysThreshold;
   // 끄기 = 키 제거 (false를 남겨두면 저장소에 의미 없는 값만 쌓인다)
   if ("changeWatch" in patch && !patch.changeWatch) delete next.changeWatch;
-  // F-Report 설정 — 기본값(전체/표기/0.5%)은 키 제거로 표현해 신규 캠페인 자동 포함을 보장.
-  if ("reportMinorRatio" in patch && patch.reportMinorRatio == null) delete next.reportMinorRatio;
-  if ("reportShowConvSplit" in patch && patch.reportShowConvSplit !== false) delete next.reportShowConvSplit;
-  if ("reportSaCampaignIds" in patch && patch.reportSaCampaignIds == null) delete next.reportSaCampaignIds;
-  if ("reportGfaCampaignIds" in patch && patch.reportGfaCampaignIds == null) delete next.reportGfaCampaignIds;
+  applyReportSettingRemovals(next, patch);
   all[adAccountNo] = next;
   // 이 계정 한 행만 push — 전체 맵을 매번 올리는 건 낭비.
   const addedList = await loadAddedList();
@@ -168,6 +164,20 @@ export async function updateUserMeta(
   await pushMeta(next, added, added ? addedList.indexOf(adAccountNo) : 0);
   await saveAllUserMeta(all);
   return all;
+}
+
+// F-Report 설정 — 기본값은 키 제거로 표현(신규 캠페인 자동 포함 보장, 저장소 깔끔).
+// 직/간접 표기는 기본이 끔(2026-08-12)이라 켬(true)만 저장하고 그 외는 키 제거.
+// 담당자(reportAuthorName)는 빈 값 = 키 제거(공통값 fallback 복귀).
+function applyReportSettingRemovals(
+  next: MultiAccountUserMeta,
+  patch: Partial<Omit<MultiAccountUserMeta, "adAccountNo">>,
+): void {
+  if ("reportMinorRatio" in patch && patch.reportMinorRatio == null) delete next.reportMinorRatio;
+  if ("reportShowConvSplit" in patch && patch.reportShowConvSplit !== true) delete next.reportShowConvSplit;
+  if ("reportSaCampaignIds" in patch && patch.reportSaCampaignIds == null) delete next.reportSaCampaignIds;
+  if ("reportGfaCampaignIds" in patch && patch.reportGfaCampaignIds == null) delete next.reportGfaCampaignIds;
+  if ("reportAuthorName" in patch && !patch.reportAuthorName) delete next.reportAuthorName;
 }
 
 // 여러 계정에 동일 patch를 한 번에 적용 — loadAllUserMeta 1회 + save 1회.
@@ -186,6 +196,7 @@ export async function updateUserMetaMany(
     if ("brandSearchDaysThreshold" in patch && patch.brandSearchDaysThreshold == null) delete next.brandSearchDaysThreshold;
   // 끄기 = 키 제거 (false를 남겨두면 저장소에 의미 없는 값만 쌓인다)
   if ("changeWatch" in patch && !patch.changeWatch) delete next.changeWatch;
+    applyReportSettingRemovals(next, patch);
     all[adAccountNo] = next;
   }
   const addedList = await loadAddedList();

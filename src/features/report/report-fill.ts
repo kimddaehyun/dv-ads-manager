@@ -154,6 +154,10 @@ function fillSummary(files: ZipFiles, model: ReportModel): void {
     B18: model.curPeriodLabel,
     B19: model.prevPeriodLabel,
   });
+  // 검색광고 제외(디스플레이 단독) — 매체표의 검색광고 행(25)을 숨긴다(값은 0으로 채워져 있음).
+  if (!model.hasSearch) {
+    writeText(files, SUMMARY_PATH, setRowHidden(readText(files, SUMMARY_PATH), 25));
+  }
   if (!model.hasDisplay) {
     writeText(files, SUMMARY_PATH, setRowHidden(readText(files, SUMMARY_PATH), 26));
   } else {
@@ -505,9 +509,11 @@ export function insertSummaryDaily(files: ZipFiles, model: ReportModel): void {
 export function fillFixedSheets(files: ZipFiles, model: ReportModel): void {
   fillCover(files, model);
   fillSummary(files, model);
-  fillSearchSummary(files, model);
+  if (model.hasSearch) fillSearchSummary(files, model);
   if (model.hasDisplay) fillDisplaySummary(files, model);
-  fillDetailSheet(files, SEARCH_DETAIL, { byDay: model.byDay, byGender: model.byGender, byAge: model.byAge });
+  if (model.hasSearch) {
+    fillDetailSheet(files, SEARCH_DETAIL, { byDay: model.byDay, byGender: model.byGender, byAge: model.byAge });
+  }
   if (model.hasDisplayDetail) {
     fillDetailSheet(files, DISPLAY_DETAIL, {
       byDay: model.displayByDay,

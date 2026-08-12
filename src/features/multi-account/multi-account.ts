@@ -109,8 +109,9 @@ let directoryFetchInFlight: Promise<void> | null = null;
 // 광고 유형 필터 — 검색광고(SA)/디스플레이(GFA) 표시 토글. popover 열 때 storage에서 로드.
 // collectAccount는 storage를 직접 읽으므로 이건 메뉴 체크 표시용 미러.
 let platformFilter: PlatformFilter = { sa: true, da: true };
-// popover를 열 때마다 서버 최신 상태로 로컬 캐시를 새로고침 — 중복 실행 방지용 in-flight 플래그.
-let serverRefreshInFlight = false;
+// popover를 열 때마다 서버 최신 상태로 로컬 캐시를 새로고침 — 중복 실행 방지용 in-flight promise.
+// 로컬 추가 목록이 비어 있는 첫 사용에서는 이 promise를 기다렸다가 렌더한다(빈 첫 화면 방지).
+let serverRefreshInFlight: Promise<void> | null = null;
 
 // F-Accounts(Task 9) — 별칭/그룹/추가목록 저장은 이제 서버 push가 먼저 일어나고 실패 시 throw한다.
 // 기존엔 chrome.storage.local만 썼기 때문에 거의 실패하지 않아 대부분의 호출부가 에러를 다루지
@@ -422,11 +423,10 @@ async function openPopover() {
   // 서버 최신 상태로 로컬 캐시 새로고침 — 다른 기기/프로필에서 바뀐 별칭·그룹·추가목록 반영.
   // fire-and-forget: 실패해도 로컬 캐시로 그대로 렌더되고, 다음에 열 때 다시 시도된다.
   if (!serverRefreshInFlight) {
-    serverRefreshInFlight = true;
-    void refreshFromServer()
+    serverRefreshInFlight = refreshFromServer()
       .catch((e) => console.warn("[multi-account] 서버 새로고침 실패", e))
       .finally(() => {
-        serverRefreshInFlight = false;
+        serverRefreshInFlight = null;
       });
   }
   // 광고 유형 필터 로드 (메뉴 체크 표시 동기화용). 실패해도 기본값(둘 다) 유지.
@@ -530,6 +530,15 @@ async function openPopover() {
 
   // 햄버거 → close 아이콘 모핑 트리거 (CSS transition)
   buttonEl?.classList.add("is-open");
+
+  // 첫 사용(로컬 추가 목록 없음)이면 보여줄 게 없으니 서버 새로고침을 기다렸다가 렌더 —
+  // 새 설치 직후 첫 열기가 빈 목록으로 떴다가 재열기에야 나오는 문제 방지(2026-08-12).
+  // "불러오는 중…" placeholder가 이미 붙은 뒤라 기다리는 동안에도 창은 떠 있다.
+  // 로컬에 데이터가 있으면 기다리지 않고 즉시 렌더(기존 동작).
+  const refreshToAwait = serverRefreshInFlight;
+  if (refreshToAwait && (await loadAddedList()).length === 0) {
+    await refreshToAwait;
+  }
 
   await renderPopoverBody(wrap);
 }
@@ -1450,6 +1459,8 @@ async function deleteGroupAndAccounts(group: MultiAccountGroup): Promise<void> {
 function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMenuItem[] {
   const entries = rows.map((r) => r.entry);
   const nos = entries.map((e) => e.adAccountNo);
+  // 리포트 flyout 상단 라벨 — 그룹 이름 그대로 + "(지금 대상 / 그룹 전체)".
+  const groupLabel = `${g.name} (${entries.length}/${g.accountNos.length})`;
   return [
     {
       label: "대행권 점검",
@@ -1459,7 +1470,13 @@ function groupHeaderMenuItems(g: MultiAccountGroup, rows: SortedRow[]): ActionMe
       label: "리포트 생성",
       keepOpen: true,
       disabled: nos.length === 0,
-      onClick: (anchor) => void openReportForEntries(anchor, entries),
+      onClick: (anchor) => void openReportForEntries(anchor, entries, groupLabel),
+    },
+    {
+      label: "리포트 설정",
+      keepOpen: true,
+      disabled: nos.length === 0,
+      onClick: (anchor) => void openReportSettingsForEntries(anchor, entries, groupLabel),
     },
     { separator: true },
     {
@@ -1501,6 +1518,7 @@ let reportEntryBusy = false;
 async function openReportForEntries(
   anchor: HTMLElement,
   entries: MultiAccountDirectoryEntry[],
+  subText?: string,
 ): Promise<void> {
   if (reportEntryBusy) return;
   reportEntryBusy = true;
@@ -1516,11 +1534,42 @@ async function openReportForEntries(
         name: metaMap[e.adAccountNo]?.displayName?.trim() || e.name,
       })),
       anchorRect,
+      subText,
     );
   } catch (e) {
     // 여기서 던지면 호출부가 `void`로 삼켜 아무 반응 없이 사라진다 — 반드시 알린다.
     console.warn("[dv-ads/report] 리포트 화면을 열지 못함", e);
     showToast({ message: "리포트 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
+  } finally {
+    reportEntryBusy = false;
+  }
+}
+
+// 다중 리포트 설정 진입 — 헤더 "설정" 메뉴와 그룹 헤더 메뉴가 공유. 캠페인 제외 항목
+// (담당자/분류 기준/직간접)을 선택 계정 전체에 일괄 저장한다. anchor rect는 동기 캡처.
+async function openReportSettingsForEntries(
+  anchor: HTMLElement,
+  entries: MultiAccountDirectoryEntry[],
+  subText?: string,
+): Promise<void> {
+  if (reportEntryBusy) return;
+  reportEntryBusy = true;
+  const anchorRect = anchor.getBoundingClientRect();
+  try {
+    const { openReportSettingsFlowBatch } = await import("@/features/report/report");
+    openReportSettingsFlowBatch(
+      anchor,
+      entries.map((e) => ({
+        adAccountNo: e.adAccountNo,
+        masterCustomerId: e.masterCustomerId,
+        name: e.name,
+      })),
+      anchorRect,
+      subText,
+    );
+  } catch (e) {
+    console.warn("[dv-ads/report] 리포트 설정 화면을 열지 못함", e);
+    showToast({ message: "리포트 설정 화면을 열지 못했어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
   } finally {
     reportEntryBusy = false;
   }
@@ -2826,6 +2875,16 @@ function listKebabItems(entries: MultiAccountDirectoryEntry[]): ActionMenuItem[]
       // openReportForEntries를 공유(anchor 위치 동기 캡처 포함).
       onClick: (anchor) =>
         void openReportForEntries(
+          anchor,
+          entries.filter((e) => selectedAccountNos.has(e.adAccountNo)),
+        ),
+    },
+    {
+      label: "리포트 설정",
+      disabled: !hasSelection,
+      keepOpen: true,
+      onClick: (anchor) =>
+        void openReportSettingsForEntries(
           anchor,
           entries.filter((e) => selectedAccountNos.has(e.adAccountNo)),
         ),

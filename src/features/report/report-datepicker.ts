@@ -26,6 +26,8 @@ const MONTHS_FWD = 2;
 
 let openEl: HTMLElement | null = null;
 let openAnchor: HTMLElement | null = null;
+let openKey: string | null = null; // 열려 있(었)던 flyout의 toggleKey
+let menuClosedAt = 0; // 옆 메뉴 패널 클릭(pointerdown)으로 닫힌 시각 — 직후 click 재오픈 차단용
 let dispose: (() => void) | null = null;
 
 function dayStart(d: Date): Date {
@@ -52,6 +54,9 @@ export interface OpenDatePickerOpts {
   anchorRect?: DOMRect;
   /** 상단 컨텍스트 한 줄 (예: 광고주명 / "N개 광고주"). */
   subText: string;
+  /** 같은 대상 재클릭 토글 판정 키(계정 번호 등). 메뉴가 클릭마다 새 anchor(proxy)를
+   *  만들면 anchor 비교가 항상 어긋나 토글이 안 되므로 이 키로 판정한다. */
+  toggleKey?: string;
   /** 담당자 입력란 표시 여부. 기본 true. F-Brief는 문구에 담당자명이 안 들어가 false. */
   showAuthor?: boolean;
   /** 목표 ROAS 입력란 표시(F-Brief). 값은 초기값(미설정이면 null). */
@@ -74,12 +79,19 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
   // 같은 앵커(트리거 버튼)로 다시 열면 토글로 닫는다 — 트리거 클릭은 flyout의
   // 바깥클릭 판정에서 예외라, 이 처리가 없으면 "닫힘 -> 곧바로 재오픈"이 돼
   // 버튼을 아무리 눌러도 안 꺼지는 버그가 된다 (createDropdown 트리거 토글과 동일 규칙).
-  if (openEl && openAnchor === opts.anchor) {
+  if (openEl && (opts.toggleKey != null ? openKey === opts.toggleKey : openAnchor === opts.anchor)) {
     closeReportDatePicker();
     return;
   }
+  // 메뉴 항목 재클릭은 pointerdown(onDocPointer)이 이미 flyout을 닫은 뒤 click이 도착한다 —
+  // 방금 그렇게 닫힌 같은 대상이면 재오픈하지 않는 게 토글이다. 스탬프는 어떤 열기 시도든
+  // 1회성으로 소비 — 남겨두면 다른 항목으로 갔다 빨리 돌아온 정상 클릭까지 무시한다(codex P3).
+  const reToggle = opts.toggleKey != null && opts.toggleKey === openKey && Date.now() - menuClosedAt < 600;
+  menuClosedAt = 0;
+  if (reToggle) return;
   // 이미 열려 있으면 닫고 새로 (중복 flyout 방지).
   closeReportDatePicker();
+  openKey = opts.toggleKey ?? null;
 
   const today = dayStart(new Date());
   const initPreset = opts.initialPreset ?? "lastWeek";
@@ -504,6 +516,7 @@ export function openReportDatePicker(opts: OpenDatePickerOpts): void {
     // finish()로 메뉴까지 닫으면 click이 완료되기 전에 버튼이 DOM에서 떨어져 그 항목의
     // onClick이 실행되지 않아 "전부 꺼짐"이 된다. 선택기만 접고 메뉴는 살려 클릭이 진행되게.
     if (t instanceof Element && t.closest(".dvads-dropdown-panel")) {
+      menuClosedAt = Date.now(); // 이어지는 click이 같은 항목 재오픈이면 토글로 무시
       dispose?.();
       return;
     }

@@ -116,6 +116,7 @@ export function openBriefFlow(anchor: HTMLElement, target: ReportTarget): void {
       anchor,
       anchorRect,
       subText: target.name,
+      toggleKey: `brief:${target.adAccountNo}`, // 메뉴 재클릭 토글(anchor는 클릭마다 새 proxy)
       showAuthor: false, // 문구에 담당자명이 안 들어간다
       showRoas: true, // 대신 목표 ROAS를 여기서 받는다(광고주별 저장)
       roasInitial: metaMap[target.adAccountNo]?.targetRoas ?? null,

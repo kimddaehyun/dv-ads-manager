@@ -26,7 +26,9 @@ import { openReportDatePicker } from "./report-datepicker";
 import {
   openReportSettings, type ReportPickerSettings, type ReportSettingsHooks,
 } from "./report-settings";
-import { loadAllUserMeta, updateUserMeta } from "@/features/multi-account/multi-account-storage";
+import {
+  loadAllUserMeta, updateUserMeta, updateUserMetaMany, loadReportAuthor,
+} from "@/features/multi-account/multi-account-storage";
 import type { MultiAccountUserMeta } from "@/types/storage";
 import { closePopover } from "@/features/multi-account/multi-account";
 
@@ -50,8 +52,9 @@ const DEFAULT_MINOR_RATIO = 0.005;
 
 function settingsFromMeta(meta: MultiAccountUserMeta | undefined): ReportPickerSettings {
   return {
+    author: meta?.reportAuthorName ?? "", // 계정별 담당자 — 미설정이면 훅/생성부가 공통값으로 채움
     minorRatio: meta?.reportMinorRatio ?? DEFAULT_MINOR_RATIO,
-    showConvSplit: meta?.reportShowConvSplit !== false,
+    showConvSplit: meta?.reportShowConvSplit ?? false, // 기본 끔 (2026-08-12, 명시 저장값만 존중)
     saCampaignIds: meta?.reportSaCampaignIds ?? null,
     gfaCampaignIds: meta?.reportGfaCampaignIds ?? null,
   };
@@ -71,22 +74,35 @@ function renderOptsFrom(s: ReportPickerSettings): ReportRenderOptions {
 // 기다려 경합 제거 (codex P2, 2026-08-10). 체인은 링크마다 catch라 reject 없음.
 let settingsSaveChain: Promise<unknown> = Promise.resolve();
 
+// 설정 patch → meta patch 변환 + 저장 체인 등록. 단일(updateUserMeta)/일괄(updateUserMetaMany) 공용.
+// 담당자(author)도 계정별(meta.reportAuthorName) — 빈 값 저장 = 키 제거(공통값 fallback 복귀).
+function queueSettingsSave(adAccountNos: number[], patch: Partial<ReportPickerSettings>): void {
+  const metaPatch: Partial<Omit<MultiAccountUserMeta, "adAccountNo">> = {};
+  if ("author" in patch) metaPatch.reportAuthorName = patch.author || undefined;
+  if ("minorRatio" in patch) {
+    metaPatch.reportMinorRatio = patch.minorRatio === DEFAULT_MINOR_RATIO ? undefined : patch.minorRatio;
+  }
+  if ("showConvSplit" in patch) metaPatch.reportShowConvSplit = patch.showConvSplit;
+  if ("saCampaignIds" in patch) metaPatch.reportSaCampaignIds = patch.saCampaignIds ?? undefined;
+  if ("gfaCampaignIds" in patch) metaPatch.reportGfaCampaignIds = patch.gfaCampaignIds ?? undefined;
+  // 실패해도 flyout의 표시는 그대로 — 저장만 다음 기회로.
+  settingsSaveChain = settingsSaveChain
+    .then(async () => {
+      if (Object.keys(metaPatch).length === 0) return;
+      if (adAccountNos.length === 1) await updateUserMeta(adAccountNos[0], metaPatch);
+      else await updateUserMetaMany(adAccountNos, metaPatch);
+    })
+    .catch((e) => console.warn("[dv-ads/report] 리포트 설정 저장 실패", e));
+}
+
 function settingsHooksFor(target: ReportTarget): ReportSettingsHooks {
   return {
-    load: async () => settingsFromMeta((await loadAllUserMeta())[target.adAccountNo]),
-    save: (patch) => {
-      const metaPatch: Partial<Omit<MultiAccountUserMeta, "adAccountNo">> = {};
-      if ("minorRatio" in patch) {
-        metaPatch.reportMinorRatio = patch.minorRatio === DEFAULT_MINOR_RATIO ? undefined : patch.minorRatio;
-      }
-      if ("showConvSplit" in patch) metaPatch.reportShowConvSplit = patch.showConvSplit;
-      if ("saCampaignIds" in patch) metaPatch.reportSaCampaignIds = patch.saCampaignIds ?? undefined;
-      if ("gfaCampaignIds" in patch) metaPatch.reportGfaCampaignIds = patch.gfaCampaignIds ?? undefined;
-      // 실패해도 flyout의 표시는 그대로 — 저장만 다음 기회로.
-      settingsSaveChain = settingsSaveChain
-        .then(() => updateUserMeta(target.adAccountNo, metaPatch))
-        .catch((e) => console.warn("[dv-ads/report] 리포트 설정 저장 실패", e));
+    load: async () => {
+      const [meta, fallbackAuthor] = await Promise.all([loadAllUserMeta(), loadReportAuthor()]);
+      const s = settingsFromMeta(meta[target.adAccountNo]);
+      return { ...s, author: s.author || fallbackAuthor }; // 계정별 값 우선, 없으면 공통값
     },
+    save: (patch) => queueSettingsSave([target.adAccountNo], patch),
     loadCampaigns: async () => {
       const cid = target.masterCustomerId;
       if (cid == null) throw new Error("계정 정보를 불러올 수 없어요");
@@ -169,10 +185,11 @@ export function openReportFlow(anchor: HTMLElement, target: ReportTarget): void 
   openReportDatePicker({
     anchor,
     subText: target.name,
-    // 문구 포함 생성 = 담당자명 옆 토글로 선택 (2026-07-21, 드롭다운 방식 폐기).
+    toggleKey: `report-gen:${target.adAccountNo}`, // 메뉴 재클릭 토글(anchor는 클릭마다 새 proxy)
+    showAuthor: false, // 담당자는 리포트 설정으로 이동 (2026-08-12) — 저장값을 생성 시 읽는다
     showMessageToggle: true,
-    onConfirm: (range, author, _roas, withMessage) =>
-      void runSingle(target, range, author, withMessage),
+    onConfirm: (range, _author, _roas, withMessage) =>
+      void runSingle(target, range, withMessage),
   });
 }
 
@@ -182,11 +199,53 @@ export function openReportSettingsFlow(anchor: HTMLElement, target: ReportTarget
     showToast({ message: "이 계정 정보를 불러올 수 없어요. 페이지를 새로고침한 뒤 다시 시도해 주세요", variant: "error" });
     return;
   }
-  openReportSettings({ anchor, subText: target.name, hooks: settingsHooksFor(target) });
+  openReportSettings({
+    anchor,
+    subText: target.name,
+    toggleKey: `report-settings:${target.adAccountNo}`, // 메뉴 재클릭 토글(anchor는 클릭마다 새 proxy)
+    hooks: settingsHooksFor(target),
+  });
+}
+
+// 여러 계정 일괄 설정 — 캠페인 선택은 계정마다 달라 제외(담당자/분류 기준/직간접만).
+// 값이 계정마다 다르면 기본값으로 보여주고, 사용자가 바꾼 항목만 전 계정에 저장된다.
+export function openReportSettingsFlowBatch(
+  anchor: HTMLElement, targets: ReportTarget[], anchorRect?: DOMRect, subText?: string,
+): void {
+  if (targets.length === 0) {
+    showToast({ message: "설정할 광고주를 선택해 주세요", variant: "error" });
+    return;
+  }
+  const nos = targets.map((t) => t.adAccountNo);
+  const common = <T,>(vals: T[], fallback: T): T =>
+    vals.every((v) => v === vals[0]) ? vals[0] : fallback;
+  openReportSettings({
+    anchor,
+    anchorRect,
+    subText: subText ?? `${targets.length}개 광고주`,
+    toggleKey: `report-settings-batch:${[...nos].sort((a, b) => a - b).join(",")}`,
+    showCampaigns: false,
+    hooks: {
+      load: async () => {
+        const [meta, fallbackAuthor] = await Promise.all([loadAllUserMeta(), loadReportAuthor()]);
+        const list = nos.map((no) => settingsFromMeta(meta[no]));
+        return {
+          // 계정별 실제 표기값(미설정은 공통값)이 전부 같으면 그 값, 다르면 빈 칸.
+          author: common(list.map((s) => s.author || fallbackAuthor), ""),
+          minorRatio: common(list.map((s) => s.minorRatio), DEFAULT_MINOR_RATIO),
+          showConvSplit: common(list.map((s) => s.showConvSplit), false),
+          saCampaignIds: null,
+          gfaCampaignIds: null,
+        };
+      },
+      save: (patch) => queueSettingsSave(nos, patch),
+      loadCampaigns: async () => ({ sa: [], gfa: [] }), // showCampaigns=false — 호출되지 않음
+    },
+  });
 }
 
 async function runSingle(
-  target: ReportTarget, range: DateRange, author: string, withMessage: boolean,
+  target: ReportTarget, range: DateRange, withMessage: boolean,
 ): Promise<void> {
   if (running) return;
   running = true;
@@ -195,7 +254,6 @@ async function runSingle(
   closePopover(); // 진행 오버레이가 뜨면 다계정 대시보드 팝오버는 닫는다
   showProgress("리포트를 만드는 중...", cancelRun);
   try {
-    const meta = { authorName: author, createdDate: fmtDate(new Date()) };
     // 계정별 리포트 설정 — 행 메뉴 "리포트 설정"에서 저장해 둔 값을 읽어 적용(읽기 실패 시 기본값).
     // 진행 중인 설정 저장이 있으면 먼저 기다린다 — 직전 변경 누락 경합 방지.
     await settingsSaveChain;
@@ -204,10 +262,13 @@ async function runSingle(
         target.adAccountNo
       ],
     );
+    // 담당자는 리포트 설정으로 이동(2026-08-12) — 계정별 값, 미설정이면 공통값(reportAuthor).
+    const author = (s.author || (await loadReportAuthor().catch(() => ""))).trim();
+    const meta = { authorName: author, createdDate: fmtDate(new Date()) };
     // 문구 포함이면 수집 결과를 엑셀 렌더와 문구 조립이 공유한다(수집 2회 방지).
     // 이전 기간 키워드(지난 조치 효과 비교)는 문구 생성 시에만 — 본 수집과 병렬 출발, 실패 시 null.
     // 캠페인 선택 필터도 본 수집과 동일하게 적용.
-    const prevKwP = withMessage && target.masterCustomerId != null
+    const prevKwP = withMessage && target.masterCustomerId != null && s.saCampaignIds?.length !== 0
       ? collectPrevKeywordMetrics(target.masterCustomerId, range, s.saCampaignIds)
       : null;
     const data = withMessage ? await collectReportData(target, range, meta, collectOptsFrom(s)) : null;
@@ -250,7 +311,9 @@ async function runSingle(
 }
 
 // ── 일괄 (여러 광고주 → zip 1개) ──
-export function openReportFlowBatch(anchor: HTMLElement, targets: ReportTarget[], anchorRect?: DOMRect): void {
+export function openReportFlowBatch(
+  anchor: HTMLElement, targets: ReportTarget[], anchorRect?: DOMRect, subText?: string,
+): void {
   const valid = targets.filter((t) => t.masterCustomerId != null);
   if (valid.length === 0) {
     showToast({ message: "리포트를 만들 광고주를 선택해 주세요", variant: "error" });
@@ -260,18 +323,24 @@ export function openReportFlowBatch(anchor: HTMLElement, targets: ReportTarget[]
   openReportDatePicker({
     anchor,
     anchorRect,
-    subText: `${valid.length}개 광고주`,
+    // 넘어온 라벨(그룹명+개수)은 대상 수가 그대로일 때만 — 계정 정보 없는 광고주가 걸러졌으면
+    // 실제 생성 수와 어긋나므로 기본 문구로 되돌린다 (codex P2, 2026-08-12).
+    subText: (subText && valid.length === targets.length) ? subText : `${valid.length}개 광고주`,
+    toggleKey: "report-gen-batch", // 일괄 메뉴 재클릭 토글
+    showAuthor: false, // 담당자는 리포트 설정으로 이동 (2026-08-12)
     showMessageToggle: true,
-    onConfirm: (range, author, _roas, withMessage) => void runBatch(valid, range, author, withMessage),
+    onConfirm: (range, _author, _roas, withMessage) => void runBatch(valid, range, withMessage),
   });
 }
 
-async function runBatch(targets: ReportTarget[], range: DateRange, author: string, withMessage: boolean): Promise<void> {
+async function runBatch(targets: ReportTarget[], range: DateRange, withMessage: boolean): Promise<void> {
   if (running) return;
   running = true;
   const token = ++runToken;
   const stale = () => token !== runToken;
-  const meta = { authorName: author, createdDate: fmtDate(new Date()) };
+  // 담당자는 계정별 값 우선, 미설정 계정은 공통값(reportAuthor) — 계정별 meta는 worker에서.
+  const fallbackAuthor = (await loadReportAuthor().catch(() => "")).trim();
+  const createdDate = fmtDate(new Date());
   const files: Record<string, Uint8Array> = {};
   // 문구는 zip의 txt에 더해 다이얼로그로도 보여준다(단일 생성과 동일 UX). 실패 광고주는 따로 센다.
   const messages: ReportMessageItem[] = [];
@@ -303,10 +372,11 @@ async function runBatch(targets: ReportTarget[], range: DateRange, author: strin
       while (next < targets.length && !stale()) {
         const t = targets[next++];
         const s = settingsFromMeta(allMeta[t.adAccountNo]);
+        const meta = { authorName: (s.author || fallbackAuthor).trim(), createdDate };
         try {
           if (withMessage) {
             // 수집 결과를 엑셀과 문구가 공유. 문구 실패는 엑셀을 막지 않는다(txt만 빠짐).
-            const prevKwP = t.masterCustomerId != null
+            const prevKwP = t.masterCustomerId != null && s.saCampaignIds?.length !== 0
               ? collectPrevKeywordMetrics(t.masterCustomerId, range, s.saCampaignIds)
               : null;
             const data = await collectReportData(t, range, meta, collectOptsFrom(s));

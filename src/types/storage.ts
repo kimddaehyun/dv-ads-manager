@@ -198,8 +198,10 @@ export interface MultiAccountUserMeta {
   briefSensitivity?: "sensitive" | "normal" | "loose" | "custom";
   /** F-Report 기타 행 접기 기준(캠페인 광고비 대비 비율). undefined = 기본 0.005(0.5%), 0 = 접지 않음. */
   reportMinorRatio?: number;
-  /** F-Report 직접/간접 전환수 열 표기. undefined = 표기(기본). false만 저장한다. */
+  /** F-Report 직접/간접 전환수 열 표기. undefined = 미표기(기본, 2026-08-12 기본 끔으로 변경). */
   reportShowConvSplit?: boolean;
+  /** F-Report 이 광고주 리포트 표지의 담당자명. undefined = 공통값(user_settings reportAuthor) 사용. */
+  reportAuthorName?: string;
   /** F-Report 포함할 검색광고 캠페인 id 목록. undefined = 전체(신규 캠페인 자동 포함). */
   reportSaCampaignIds?: string[];
   /** F-Report 포함할 디스플레이(GFA) 캠페인 id 목록. undefined = 전체. */
