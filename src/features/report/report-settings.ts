@@ -23,6 +23,9 @@ export interface ReportPickerSettings {
   author: string;
   /** 기타 키워드 분류 기준(캠페인 광고비 대비 비율). 0 = 분류하지 않음. */
   minorRatio: number;
+  /** 목표 ROAS(%). null = 미설정 — 문구의 부진 판정이 전환 0건만 본다.
+   *  F-Brief와 같은 `MultiAccountUserMeta.targetRoas`를 공유한다(광고주당 목표는 하나). */
+  targetRoas: number | null;
   /** 직접/간접 전환수 열 표기. */
   showConvSplit: boolean;
   /** 포함할 캠페인. null = 전체(신규 캠페인 자동 포함). */
@@ -95,6 +98,14 @@ export function openReportSettings(opts: OpenReportSettingsOpts): void {
         </span>
       </div>
       <div class="dvads-rdp-set-row">
+        <span class="dvads-rdp-set-label">목표 ROAS</span>
+        <button type="button" class="dvads-brief-info-icon dvads-rdp-set-roas-info" aria-label="목표 ROAS 설명">i</button>
+        <span class="dvads-rdp-set-ratio-wrap">
+          <input type="text" class="dvads-rdp-set-ratio dvads-rdp-set-roas" inputmode="decimal" placeholder="미설정" aria-label="목표 ROAS" />
+          <span class="dvads-rdp-set-ratio-suffix" aria-hidden="true">%</span>
+        </span>
+      </div>
+      <div class="dvads-rdp-set-row">
         <span class="dvads-rdp-set-label">기타 키워드 분류 기준</span>
         <button type="button" class="dvads-brief-info-icon dvads-rdp-set-ratio-info" aria-label="분류 기준 설명">i</button>
         <span class="dvads-rdp-set-ratio-wrap">
@@ -127,7 +138,8 @@ export function openReportSettings(opts: OpenReportSettingsOpts): void {
   (el.querySelector(".dvads-rdp-sub-text") as HTMLElement).textContent = opts.subText;
 
   const authorInput = el.querySelector<HTMLInputElement>(".dvads-rdp-set-author")!;
-  const ratioInput = el.querySelector<HTMLInputElement>(".dvads-rdp-set-ratio:not(.dvads-rdp-set-author)")!;
+  const ratioInput = el.querySelector<HTMLInputElement>(".dvads-rdp-set-ratio:not(.dvads-rdp-set-author):not(.dvads-rdp-set-roas)")!;
+  const roasInput = el.querySelector<HTMLInputElement>(".dvads-rdp-set-roas")!;
   const convToggle = el.querySelector<HTMLInputElement>(".dvads-rdp-set-conv")!;
   const searchInput = el.querySelector<HTMLInputElement>(".dvads-rdp-set-search")!;
   const campListEl = el.querySelector<HTMLElement>(".dvads-rdp-set-camp-list")!;
@@ -137,6 +149,11 @@ export function openReportSettings(opts: OpenReportSettingsOpts): void {
     campListEl.style.display = "none";
   }
 
+  attachTooltip(
+    el.querySelector<HTMLElement>(".dvads-rdp-set-roas-info")!,
+    "리포트 문구가 성과 부진을 가릴 때 쓰는 기준이에요\n비워 두면 전환이 0건인 것만 부진으로 봐요",
+    { placement: "top" },
+  );
   attachTooltip(
     el.querySelector<HTMLElement>(".dvads-rdp-set-ratio-info")!,
     "설정한 비율을 기준으로\n광고비 비중이 낮은 키워드와 지면을 기타 항목으로 분류해요",
@@ -163,9 +180,10 @@ export function openReportSettings(opts: OpenReportSettingsOpts): void {
       console.warn("[dv-ads/report] 리포트 설정 불러오기 실패 → 기본값", e);
     }
     const s: ReportPickerSettings = loaded
-      ?? { author: "", minorRatio: DEFAULT_MINOR_RATIO, showConvSplit: false, saCampaignIds: null, gfaCampaignIds: null };
+      ?? { author: "", minorRatio: DEFAULT_MINOR_RATIO, targetRoas: null, showConvSplit: false, saCampaignIds: null, gfaCampaignIds: null };
     loaded = s;
     authorInput.value = s.author;
+    roasInput.value = s.targetRoas == null ? "" : String(s.targetRoas);
     ratioInput.value = ratioToPercentText(s.minorRatio);
     convToggle.checked = s.showConvSplit;
     if (opts.showCampaigns !== false) void buildCampaignList(s);
@@ -322,6 +340,12 @@ export function openReportSettings(opts: OpenReportSettingsOpts): void {
     const patch: Partial<ReportPickerSettings> = {};
     const author = authorInput.value.trim();
     if (author !== loaded.author) patch.author = author;
+    // 목표 ROAS % — 빈 값 = 미설정(null, 전환 0건만 부진으로 봄). 0 이하/무효는 기존 값 유지.
+    const roasText = roasInput.value.replace(/[^\d.]/g, "");
+    const roas = roasText === "" ? null : Number(roasText);
+    if (roas === null || (Number.isFinite(roas) && roas > 0)) {
+      if (roas !== loaded.targetRoas) patch.targetRoas = roas;
+    }
     // 분류 기준 % — 숫자만 취하고, 빈 값/0 = 분류하지 않음. 무효 입력은 기존 값 유지.
     const pctText = ratioInput.value.replace(/[^\d.]/g, "");
     const pct = pctText === "" ? 0 : Number(pctText);

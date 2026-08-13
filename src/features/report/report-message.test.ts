@@ -50,8 +50,8 @@ function makeData(f: Fixture = {}): ReportData {
   } as unknown as ReportData;
 }
 
-const build = (f: Fixture = {}, prev?: Map<string, ReportMetrics> | null) =>
-  buildSummaryPayload("테스트업체", makeData(f), RANGE, prev);
+const build = (f: Fixture = {}, prev?: Map<string, ReportMetrics> | null, targetRoas?: number | null) =>
+  buildSummaryPayload("테스트업체", makeData(f), RANGE, prev, targetRoas);
 
 const names = (lines: string[]) => lines.join("\n");
 
@@ -106,6 +106,19 @@ describe("광고그룹 저효율 - 매체 분기", () => {
   it("브랜드검색/신제품검색은 어느 묶음에도 안 들어간다", () => {
     const p = build({ groups });
     expect(names([...p.lowGroupLines, ...p.lowSubGroupLines])).not.toContain("BR그룹");
+  });
+
+  it("ROAS 미달로 잡힌 그룹은 전환 0건이라고 쓰지 않는다", () => {
+    // 전환 3건 있는데 ROAS 25%라 목표(300%) 미달 — "전환 0건"으로 나가면 거짓 보고다.
+    const roasMiss = [{
+      keyword: "", type: "파워링크", group: "미달그룹",
+      metrics: met({ cost: 200_000, revenue: 50_000, purchaseConv: 3, clicks: 40 }),
+    }].map(({ type, group, metrics }) => ({ type, group, metrics }));
+    const out = names(build({ groups: roasMiss }, null, 300).lowGroupLines);
+    expect(out).toContain("미달그룹");
+    expect(out).not.toContain("전환 0건");
+    expect(out).toContain("전환 3건");
+    expect(out).toContain("ROAS 25.00%");
   });
 });
 
@@ -206,6 +219,57 @@ describe("성별 성과 - 격차 가드", () => {
       byGender: [g("남성", 100_000, 200_000), g("여성", 100_000, 400_000), g("알수없음", 100_000, 10_000)],
     }).genderLines);
     expect(out).not.toContain("알수없음");
+  });
+});
+
+describe("목표 ROAS 기준 부진 판정", () => {
+  // 전환은 나는데 수익률이 형편없는 키워드 (광고비 20만, 매출 5만 = ROAS 25%)
+  const poorRoas = [{ keyword: "손해키워드", metrics: met({ cost: 200_000, revenue: 50_000, purchaseConv: 2, clicks: 50 }) }];
+  const goodRoas = [{ keyword: "효자키워드", metrics: met({ cost: 200_000, revenue: 900_000, purchaseConv: 8, clicks: 50 }) }];
+
+  it("목표 미설정이면 전환이 있는 키워드는 부진으로 안 잡는다(기존 동작)", () => {
+    expect(build({ keywords: poorRoas }, null).lowKeywordLines).toEqual([]);
+  });
+
+  it("목표를 주면 ROAS 미달 키워드가 잡힌다", () => {
+    const out = names(build({ keywords: poorRoas }, null, 300).lowKeywordLines);
+    expect(out).toContain("손해키워드");
+    expect(out).toContain("ROAS 25.00%"); // 전환 0건이 아니라 실제 수치를 근거로 실어 보낸다
+  });
+
+  it("목표를 넘는 키워드는 잡지 않는다", () => {
+    expect(build({ keywords: goodRoas }, null, 300).lowKeywordLines).toEqual([]);
+  });
+
+  it("목표 기준은 이전 기간 판정에도 적용된다", () => {
+    // 이전에도 ROAS 25%로 미달이었으면 '두 기간 모두 부진'
+    const prev = new Map<string, ReportMetrics>([
+      ["손해키워드", met({ cost: 180_000, revenue: 45_000, purchaseConv: 2 })],
+    ]);
+    const p = build({ keywords: poorRoas }, prev, 300);
+    expect(names(p.lowKeywordBothLines)).toContain("손해키워드");
+    expect(p.lowKeywordRecentLines).toEqual([]);
+  });
+
+  it("이전 기간에 목표를 넘었으면 '이번에만 부진'으로 간다", () => {
+    const prev = new Map<string, ReportMetrics>([
+      ["손해키워드", met({ cost: 180_000, revenue: 900_000, purchaseConv: 9 })],
+    ]);
+    const p = build({ keywords: poorRoas }, prev, 300);
+    expect(names(p.lowKeywordRecentLines)).toContain("손해키워드");
+    expect(p.lowKeywordBothLines).toEqual([]);
+  });
+
+  it("이전 기간 집행이 문턱 미만이면 비교 근거가 없다고 명시한다", () => {
+    const prev = new Map<string, ReportMetrics>([["손해키워드", met({ cost: 1_000, revenue: 0 })]]);
+    const out = names(build({ keywords: poorRoas }, prev, 300).lowKeywordRecentLines);
+    expect(out).toContain("비교 어려움");
+    expect(out).not.toContain("전환 0건, 전환매출"); // 이전 성과가 있었던 것처럼 보이면 안 된다
+  });
+
+  it("목표값은 문자열로 payload에 실린다(미설정이면 빈 문자열)", () => {
+    expect(build({}, null, 300).targetRoasText).toBe("300%");
+    expect(build({}, null).targetRoasText).toBe("");
   });
 });
 

@@ -54,6 +54,7 @@ function settingsFromMeta(meta: MultiAccountUserMeta | undefined): ReportPickerS
   return {
     author: meta?.reportAuthorName ?? "", // 계정별 담당자 — 미설정이면 훅/생성부가 공통값으로 채움
     minorRatio: meta?.reportMinorRatio ?? DEFAULT_MINOR_RATIO,
+    targetRoas: meta?.targetRoas ?? null, // F-Brief와 공유 — 광고주당 목표는 하나
     showConvSplit: meta?.reportShowConvSplit ?? false, // 기본 끔 (2026-08-12, 명시 저장값만 존중)
     saCampaignIds: meta?.reportSaCampaignIds ?? null,
     gfaCampaignIds: meta?.reportGfaCampaignIds ?? null,
@@ -82,6 +83,7 @@ function queueSettingsSave(adAccountNos: number[], patch: Partial<ReportPickerSe
   if ("minorRatio" in patch) {
     metaPatch.reportMinorRatio = patch.minorRatio === DEFAULT_MINOR_RATIO ? undefined : patch.minorRatio;
   }
+  if ("targetRoas" in patch) metaPatch.targetRoas = patch.targetRoas ?? undefined;
   if ("showConvSplit" in patch) metaPatch.reportShowConvSplit = patch.showConvSplit;
   if ("saCampaignIds" in patch) metaPatch.reportSaCampaignIds = patch.saCampaignIds ?? undefined;
   if ("gfaCampaignIds" in patch) metaPatch.reportGfaCampaignIds = patch.gfaCampaignIds ?? undefined;
@@ -233,6 +235,7 @@ export function openReportSettingsFlowBatch(
           // 계정별 실제 표기값(미설정은 공통값)이 전부 같으면 그 값, 다르면 빈 칸.
           author: common(list.map((s) => s.author || fallbackAuthor), ""),
           minorRatio: common(list.map((s) => s.minorRatio), DEFAULT_MINOR_RATIO),
+          targetRoas: common(list.map((s) => s.targetRoas), null),
           showConvSplit: common(list.map((s) => s.showConvSplit), false),
           saCampaignIds: null,
           gfaCampaignIds: null,
@@ -282,7 +285,7 @@ async function runSingle(
     if (data) {
       showProgress("리포트 문구를 만드는 중...", cancelRun);
       try {
-        const message = await composeReportMessage(buildSummaryPayload(target.name, data, range, await prevKwP));
+        const message = await composeReportMessage(buildSummaryPayload(target.name, data, range, await prevKwP, s.targetRoas));
         if (stale()) return;
         hideProgress();
         showToast({ message: "리포트를 내려받았어요", variant: "success", keyword: filename });
@@ -382,7 +385,7 @@ async function runBatch(targets: ReportTarget[], range: DateRange, withMessage: 
             const data = await collectReportData(t, range, meta, collectOptsFrom(s));
             files[`${fileBase(t)}_${range.since}~${range.until}.xlsx`] = await buildReportBytesFromData(data, renderOptsFrom(s));
             try {
-              const message = await composeReportMessage(buildSummaryPayload(t.name, data, range, await prevKwP));
+              const message = await composeReportMessage(buildSummaryPayload(t.name, data, range, await prevKwP, s.targetRoas));
               files[`${fileBase(t)}_리포트문구.txt`] = strToU8(message);
               messages.push({ name: t.name, text: message });
             } catch (e) {

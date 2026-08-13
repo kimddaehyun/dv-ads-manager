@@ -132,6 +132,7 @@ export async function collectPrevKeywordMetrics(
 export function buildSummaryPayload(
   advertiser: string, data: ReportData, range: DateRange,
   prevKeywords?: Map<string, ReportMetrics> | null,
+  targetRoas?: number | null,
 ) {
   const m = data.model;
 
@@ -191,17 +192,27 @@ export function buildSummaryPayload(
     .slice(0, 5)
     .map((r) => `- 캠페인 [${r.name}] (디스플레이 - ${r.type}): ${metricLine(r.m)}`);
 
-  // 저효율 = 문턱 이상 썼는데 전환이 0. 문턱은 계정 규모 비례(lowEffFloor).
+  // 저효율 = 문턱 이상 썼는데 전환이 0, 또는 목표 ROAS 미달(목표 미설정이면 전환 0만).
+  // 목표를 계정 평균으로 자동 추정하지 않는다 — 계정이 통째로 부진한 달에 전부 "정상"이 된다
+  // (F-Brief와 같은 원칙, brief/CLAUDE.md).
   const floor = lowEffFloor(m.totalCurrent.cost);
-  const isLowEff = (mm: ReportMetrics) => mm.cost >= floor && mm.purchaseConv === 0 && mm.revenue === 0;
+  const roasPct = (mm: ReportMetrics) => (mm.cost > 0 ? (mm.revenue / mm.cost) * 100 : 0);
+  const isPoor = (mm: ReportMetrics) =>
+    (mm.purchaseConv === 0 && mm.revenue === 0) || (targetRoas != null && roasPct(mm) < targetRoas);
+  const isLowEff = (mm: ReportMetrics) => mm.cost >= floor && isPoor(mm);
 
   // 키워드 저효율 — 이전 기간 지표가 있으면 두 갈래로 나눠 보낸다(케이스마다 한 문단 유도).
   // 이전 기간에 없던 검색어는 비교 근거가 없어 "이번에만"에 넣는다(성급한 제외 제안 방지).
   const lowKeywords = allKeywords
     .filter((k) => isLowEff(k.metrics))
     .sort((a, b) => b.metrics.cost - a.metrics.cost);
+  // 전환이 0이면 "전환 0건", 목표 미달이면 실제 전환·매출·ROAS를 실어 근거를 남긴다.
+  const perfPart = (mm: ReportMetrics) =>
+    mm.purchaseConv === 0 && mm.revenue === 0
+      ? "전환 0건"
+      : `전환 ${mm.purchaseConv.toLocaleString()}건, 전환매출 ${won(mm.revenue)}, ROAS ${roasOf(mm)}`;
   const curPart = (k: (typeof lowKeywords)[number]) =>
-    `- 키워드 [${k.keyword}]: 이번 기간 광고비 ${won(k.metrics.cost)}, 클릭 ${k.metrics.clicks.toLocaleString()}회, 전환 0건`;
+    `- 키워드 [${k.keyword}]: 이번 기간 광고비 ${won(k.metrics.cost)}, 클릭 ${k.metrics.clicks.toLocaleString()}회, ${perfPart(k.metrics)}`;
   const lowKeywordLines: string[] = [];
   const lowKeywordBothLines: string[] = [];
   const lowKeywordRecentLines: string[] = [];
@@ -211,14 +222,18 @@ export function buildSummaryPayload(
   if (prevKeywords) {
     for (const k of lowKeywords) {
       const p = prevKeywords.get(k.keyword);
-      if (p && p.cost >= prevFloor && p.purchaseConv === 0) {
+      if (p && p.cost >= prevFloor && isPoor(p)) {
         if (lowKeywordBothLines.length < 5) {
-          lowKeywordBothLines.push(`${curPart(k)} / 이전 기간 광고비 ${won(p.cost)}, 전환 0건`);
+          lowKeywordBothLines.push(`${curPart(k)} / 이전 기간 광고비 ${won(p.cost)}, ${perfPart(p)}`);
         }
       } else if (lowKeywordRecentLines.length < 5) {
-        const prevPart = p
-          ? `이전 기간 광고비 ${won(p.cost)}, 전환 ${p.purchaseConv.toLocaleString()}건, 전환매출 ${won(p.revenue)}`
-          : "이전 기간 집행 없음";
+        // 이전 기간 집행이 문턱 미만이면 "그때는 좋았다"가 아니라 비교 근거가 없는 것 —
+        // 숫자만 주면 AI가 "이전에 전환 N건 발생"으로 잘못 쓴다.
+        const prevPart = !p
+          ? "이전 기간 집행 없음"
+          : p.cost < prevFloor
+            ? `이전 기간 광고비 ${won(p.cost)}로 집행이 적어 비교 어려움`
+            : `이전 기간 광고비 ${won(p.cost)}, ${perfPart(p)}`;
         lowKeywordRecentLines.push(`${curPart(k)} / ${prevPart}`);
       }
     }
@@ -234,7 +249,9 @@ export function buildSummaryPayload(
     .sort((a, b) => b.m.cost - a.m.cost);
   const groupLine = (r: (typeof lowGroups)[number]) => {
     const inCamp = r.campaign ? ` (캠페인 [${r.campaign}] 소속, ${r.type} 유형)` : ` (${r.type} 유형)`;
-    return `- 광고그룹 [${r.group}]${inCamp}: 광고비 ${won(r.m.cost)}, 클릭 ${r.m.clicks.toLocaleString()}회, 전환 0건`;
+    // perfPart 필수 — "전환 0건" 하드코딩이면 목표 ROAS 미달로 잡힌 그룹(전환은 있다)이
+    // 전환 0건으로 나가 광고주에게 거짓 숫자가 간다 (codex P2, 2026-08-13).
+    return `- 광고그룹 [${r.group}]${inCamp}: 광고비 ${won(r.m.cost)}, 클릭 ${r.m.clicks.toLocaleString()}회, ${perfPart(r.m)}`;
   };
   const lowGroupLines = lowGroups.filter((r) => isCoreType(r.type)).slice(0, 5).map(groupLine);
   const lowSubGroupLines = lowGroups.filter((r) => isSubType(r.type)).slice(0, 5).map(groupLine);
@@ -300,6 +317,8 @@ export function buildSummaryPayload(
     advertiser,
     angleHint,
     periodDesc,
+    // 미설정이면 빈 문자열 — 서버가 목표 블록을 통째로 빼고 전환 0건 기준으로만 말한다.
+    targetRoasText: targetRoas != null ? `${targetRoas}%` : "",
     periodText: `${range.since.replace(/-/g, ".")} ~ ${range.until.replace(/-/g, ".")}`,
     totals: {
       광고비: won(cur.cost),

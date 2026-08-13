@@ -178,6 +178,9 @@ function applyReportSettingRemovals(
   if ("reportSaCampaignIds" in patch && patch.reportSaCampaignIds == null) delete next.reportSaCampaignIds;
   if ("reportGfaCampaignIds" in patch && patch.reportGfaCampaignIds == null) delete next.reportGfaCampaignIds;
   if ("reportAuthorName" in patch && !patch.reportAuthorName) delete next.reportAuthorName;
+  // targetRoas는 report 접두가 없다 — F-Brief와 공유하는 광고주 목표라 리포트 설정에서 비우면
+  // 성과 측정 쪽 목표도 함께 사라진다(의도된 동작 — 광고주당 목표는 하나).
+  if ("targetRoas" in patch && patch.targetRoas == null) delete next.targetRoas;
 }
 
 // 여러 계정에 동일 patch를 한 번에 적용 — loadAllUserMeta 1회 + save 1회.
