@@ -10,6 +10,7 @@ import { wireBackdropDismiss } from "@/shared/dialog-dismiss";
 import { attachActionMenu, closeAllOpenDropdowns } from "@/shared/ui-dropdown";
 import { showToast } from "@/shared/toast";
 import { type ReportData } from "./report-build";
+import { type NamedMetrics } from "./report-fill";
 import {
   CAMPAIGN_TP_CODE, colIndex, fetchAdvancedReport, rowMetrics,
   type AdvReportFilter, type ReportMetrics,
@@ -30,6 +31,40 @@ const orderValueOf = (m: ReportMetrics) => (m.purchaseConv > 0 ? won(m.revenue /
 // (2026-07-22 사용자 결정: 계약·노출 기반이라 입찰 운영 코멘트 소재로 부적합). 성과 요약의
 // 합계(totals)에는 그대로 포함된다. 디스플레이는 displayLines로 별도 유지.
 const isCoreType = (t: string) => t.includes("파워링크") || t.includes("쇼핑검색");
+// 저효율 코멘트에 한해 보조 매체를 다시 넣는다(2026-08-13) — 조치 방향이 다르기 때문:
+// core(파워링크·쇼핑검색)는 주력이라 빼기 어려워 입찰가 조정만, sub(플레이스·파워컨텐츠)는
+// 노출 제외나 별도 분리도 제안 가능. 브랜드검색/신제품검색은 여전히 어느 쪽에도 안 들어간다.
+const isSubType = (t: string) => t.includes("플레이스") || t.includes("파워컨텐츠");
+
+/**
+ * 저효율 판정 금액 문턱 — 기간 총광고비의 1.5%(5천~20만, 천원 단위).
+ * 고정 5천 원이면 큰 계정에서 소액 키워드가 보고에 올라온다. F-Brief `brief-thresholds.ts`의
+ * 자동 보정과 같은 공식이되 하한만 5천 원(그쪽은 캠페인별이라 1만 원) — 규칙 엔진을
+ * report 번들로 끌어오지 않으려고 import 대신 여기 둔다.
+ */
+function lowEffFloor(totalCost: number): number {
+  if (!(totalCost > 0)) return 5_000;
+  return Math.min(200_000, Math.max(5_000, Math.round((totalCost * 0.015) / 1_000) * 1_000));
+}
+
+/**
+ * 성별 성과 재료 — 남녀 ROAS 격차가 뚜렷할 때만 만든다(없으면 빈 배열 → 문구에 성별 미등장).
+ * 격차 판정을 AI에 맡기면 보고마다 기준이 흔들려서 여기서 자른다. 배수는 F-Brief `SKEW_RATIO`와 동일.
+ * "알수없음"은 가중치를 걸 수 없는 구간이라 제외.
+ */
+const GENDER_SKEW_RATIO = 1.5;
+function buildGenderLines(byGender: NamedMetrics[], floor: number): string[] {
+  const male = byGender.find((r) => r.label === "남성");
+  const female = byGender.find((r) => r.label === "여성");
+  if (!male || !female) return [];
+  // 한쪽만 집행된 그룹은 가중치 조정 대상이 아니다(비교 대조군 부재).
+  if (male.metrics.cost < floor || female.metrics.cost < floor) return [];
+  if (male.metrics.revenue === 0 && female.metrics.revenue === 0) return [];
+  const roas = (m: ReportMetrics) => (m.cost > 0 ? m.revenue / m.cost : 0);
+  const [hi, lo] = [roas(male.metrics), roas(female.metrics)].sort((a, b) => b - a);
+  if (hi < lo * GENDER_SKEW_RATIO) return [];
+  return [male, female].map((r) => `- ${r.label}: ${metricLine(r.metrics)}`);
+}
 
 function metricLine(m: ReportMetrics): string {
   return `광고비 ${won(m.cost)}, 전환매출 ${won(m.revenue)}, ROAS ${roasOf(m)}, 전환 ${m.purchaseConv.toLocaleString()}건`;
@@ -156,23 +191,63 @@ export function buildSummaryPayload(
     .slice(0, 5)
     .map((r) => `- 캠페인 [${r.name}] (디스플레이 - ${r.type}): ${metricLine(r.m)}`);
 
-  // 저효율 = 광고비 5천 원 이상 썼는데 전환이 0. 비용 큰 순 상위 5개씩 (키워드/광고그룹).
-  const LOW_EFF_COST_FLOOR = 5_000;
-  const lowKeywordLines = allKeywords
-    .filter((k) => k.metrics.cost >= LOW_EFF_COST_FLOOR && k.metrics.purchaseConv === 0 && k.metrics.revenue === 0)
-    .sort((a, b) => b.metrics.cost - a.metrics.cost)
-    .slice(0, 5)
-    .map((k) => `- 키워드 [${k.keyword}]: 광고비 ${won(k.metrics.cost)}, 클릭 ${k.metrics.clicks.toLocaleString()}회, 전환 0건`);
-  const lowGroupLines = data.campGroups
-    .filter((g) => isCoreType(g.type))
+  // 저효율 = 문턱 이상 썼는데 전환이 0. 문턱은 계정 규모 비례(lowEffFloor).
+  const floor = lowEffFloor(m.totalCurrent.cost);
+  const isLowEff = (mm: ReportMetrics) => mm.cost >= floor && mm.purchaseConv === 0 && mm.revenue === 0;
+
+  // 키워드 저효율 — 이전 기간 지표가 있으면 두 갈래로 나눠 보낸다(케이스마다 한 문단 유도).
+  // 이전 기간에 없던 검색어는 비교 근거가 없어 "이번에만"에 넣는다(성급한 제외 제안 방지).
+  const lowKeywords = allKeywords
+    .filter((k) => isLowEff(k.metrics))
+    .sort((a, b) => b.metrics.cost - a.metrics.cost);
+  const curPart = (k: (typeof lowKeywords)[number]) =>
+    `- 키워드 [${k.keyword}]: 이번 기간 광고비 ${won(k.metrics.cost)}, 클릭 ${k.metrics.clicks.toLocaleString()}회, 전환 0건`;
+  const lowKeywordLines: string[] = [];
+  const lowKeywordBothLines: string[] = [];
+  const lowKeywordRecentLines: string[] = [];
+  // 이전 기간 금액은 이전 기간 문턱으로 잰다 — 기간 사이에 계정 광고비가 크게 변하면
+  // 현재 문턱으로 재는 순간 케이스가 뒤집힌다(codex P2, 2026-08-13).
+  const prevFloor = lowEffFloor(m.totalPrev.cost);
+  if (prevKeywords) {
+    for (const k of lowKeywords) {
+      const p = prevKeywords.get(k.keyword);
+      if (p && p.cost >= prevFloor && p.purchaseConv === 0) {
+        if (lowKeywordBothLines.length < 5) {
+          lowKeywordBothLines.push(`${curPart(k)} / 이전 기간 광고비 ${won(p.cost)}, 전환 0건`);
+        }
+      } else if (lowKeywordRecentLines.length < 5) {
+        const prevPart = p
+          ? `이전 기간 광고비 ${won(p.cost)}, 전환 ${p.purchaseConv.toLocaleString()}건, 전환매출 ${won(p.revenue)}`
+          : "이전 기간 집행 없음";
+        lowKeywordRecentLines.push(`${curPart(k)} / ${prevPart}`);
+      }
+    }
+  } else {
+    // 이전 기간 조회 실패 — 비교 없이 기존 한 묶음으로 폴백(문구 생성 자체는 진행).
+    lowKeywordLines.push(...lowKeywords.slice(0, 5).map(curPart));
+  }
+
+  // 광고그룹 저효율 — 매체별로 나눈다. 주력은 입찰가 조정, 보조는 제외/분리로 조치가 갈린다.
+  const lowGroups = data.campGroups
     .flatMap((g) => g.rows.map((r) => ({ type: g.type, campaign: r.campaign, group: r.group, m: r.metrics })))
-    .filter((r) => r.m.cost >= LOW_EFF_COST_FLOOR && r.m.purchaseConv === 0 && r.m.revenue === 0)
-    .sort((a, b) => b.m.cost - a.m.cost)
-    .slice(0, 5)
-    .map((r) => {
-      const inCamp = r.campaign ? ` (캠페인 [${r.campaign}] 소속, ${r.type} 유형)` : ` (${r.type} 유형)`;
-      return `- 광고그룹 [${r.group}]${inCamp}: 광고비 ${won(r.m.cost)}, 클릭 ${r.m.clicks.toLocaleString()}회, 전환 0건`;
-    });
+    .filter((r) => isLowEff(r.m))
+    .sort((a, b) => b.m.cost - a.m.cost);
+  const groupLine = (r: (typeof lowGroups)[number]) => {
+    const inCamp = r.campaign ? ` (캠페인 [${r.campaign}] 소속, ${r.type} 유형)` : ` (${r.type} 유형)`;
+    return `- 광고그룹 [${r.group}]${inCamp}: 광고비 ${won(r.m.cost)}, 클릭 ${r.m.clicks.toLocaleString()}회, 전환 0건`;
+  };
+  const lowGroupLines = lowGroups.filter((r) => isCoreType(r.type)).slice(0, 5).map(groupLine);
+  const lowSubGroupLines = lowGroups.filter((r) => isSubType(r.type)).slice(0, 5).map(groupLine);
+
+  // 정보성 검색어 판별은 서버 AI가 한다 — 업종마다 말이 달라 단어 목록을 코드에 두지 않는다.
+  // 광고비 상위 50개: 정보성은 키워드마다 금액이 작고 수가 많아 모여야 문제가 된다(실제 AE 보고
+  // 사례). 30개면 그 꼬리가 잘린다. 전체를 보내면 프롬프트가 길어져 소형 모델이 규칙을 흘린다.
+  const infoCandidateLines = [...allKeywords]
+    .sort((a, b) => b.metrics.cost - a.metrics.cost)
+    .slice(0, 50)
+    .map((k) => `- 키워드 [${k.keyword}]: 광고비 ${won(k.metrics.cost)}, 클릭 ${k.metrics.clicks.toLocaleString()}회, 전환 ${k.metrics.purchaseConv.toLocaleString()}건, 전환매출 ${won(k.metrics.revenue)}, ROAS ${roasOf(k.metrics)}`);
+
+  const genderLines = buildGenderLines(m.byGender, floor);
 
   // 지난 조치 효과: 이전 기간엔 광고비를 썼는데 전환이 없다가 이번에 전환이 나온 키워드(개선),
   // 이전 기간엔 없다가 이번에 처음 전환이 나온 키워드(신규). 매출 큰 순 5개씩.
@@ -207,6 +282,8 @@ export function buildSummaryPayload(
     "클릭률이나 평균클릭비용 등 효율 지표의 변화",
     "디스플레이 광고의 성과",
     "지난 기간 전환이 없다가 이번에 전환이 나온 키워드",
+    "정보를 찾는 검색어와 바로 사려는 검색어의 성과 차이",
+    "성별에 따른 성과 차이",
   ];
   const angleHint = ANGLES[Math.floor(Math.random() * ANGLES.length)];
 
@@ -251,7 +328,12 @@ export function buildSummaryPayload(
     displayLines,
     keywordLines,
     lowKeywordLines,
+    lowKeywordBothLines,
+    lowKeywordRecentLines,
     lowGroupLines,
+    lowSubGroupLines,
+    infoCandidateLines,
+    genderLines,
     improvedLines,
     newConvLines,
   };
