@@ -114,7 +114,7 @@ color: red
 ## 절대 하지 말 것
 
 - `src/lib/`의 코어 파일을 정리 단계에서 임의 수정·삭제 (수동 로직 변경은 별도 작업).
-- `manifest.config.ts`의 `host_permissions` 2개를 임의로 줄이거나 늘리기 (CLAUDE.md 정책).
+- `manifest.config.ts`의 `host_permissions`를 정리 단계에서 임의로 줄이기 (미사용으로 보여도 실제 fetch 대상일 수 있음 — 참고: naver-tag-picker가 같은 판단으로 지웠다 기능 전체가 죽은 이력).
 - `package.json`의 `version` 임의 변경 (릴리스 워크플로우 영향).
 - `npm run build`로 검증하지 않고 정리 종료.
 - 의심스러운 파일을 "아마 안 쓰는 것 같다"는 추측으로 삭제 (반드시 grep + 빌드 검증).

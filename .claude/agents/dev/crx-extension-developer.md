@@ -19,7 +19,7 @@ Examples:
 - <example>
   Context: manifest 권한을 추가하려는 요청
   user: "특정 도메인 fetch가 필요해서 host_permissions를 늘리고 싶어"
-  assistant: "CLAUDE.md의 host_permissions 4개 제약을 우선 확인하고, 콘텐츠 스크립트 컨텍스트에서 fetch 가능한지부터 검토하겠습니다."
+  assistant: "도메인을 추가하겠습니다. 다만 anti-bot 보호가 있는 곳이면 background 직접 fetch가 막히니 콘텐츠 스크립트 경유가 필요한지 함께 검토하겠습니다."
   </example>
 model: sonnet
 color: blue
@@ -66,10 +66,7 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 - React를 콘텐츠 스크립트에서 마운트할 때는 새 `<div>`를 host body에 append하고 거기에 `createRoot`.
 
 ### Manifest & 권한 정책
-- **`host_permissions`는 정확히 2개**:
-  - `https://ads.naver.com/*`
-  - `https://api.searchad.naver.com/*`
-- 모든 데이터는 검색광고 API 단일 채널만 사용 (2026-05-18 결정). 늘리면 Chrome 심사에서 사유 요구.
+- **`host_permissions` 개수 제약 없음** (2026-08-13 방침 폐기 — 사내 전용 배포라 웹스토어 심사가 없다). 새 도메인이 필요하면 추가하되, 좁혔다 넓혔다 왕복은 금지. 상세는 CLAUDE.md `공통 Gotchas`.
 - `web_accessible_resources`: 콘텐츠 스크립트에서 import할 정적 자산만 노출, 나머지는 빼둘 것.
 
 ### 네이버 API 호출 제약
@@ -110,7 +107,7 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 - 서비스 워커 로그는 `chrome://extensions` → "service worker" 링크 클릭으로 inspect.
 
 ### 5. 검토 체크리스트
-- [ ] `host_permissions` 2개 제약 유지
+- [ ] 새 도메인 추가 시 `manifest.config.ts`에 용도 주석 + CLAUDE.md 접근처 목록 갱신
 - [ ] 새 메시지 타입에 TS 타입 정의 + background 라우터 분기
 - [ ] 429/401/403/네트워크 에러가 친화적 메시지로 변환됨
 - [ ] 캐시 키가 정규화된 형태
@@ -132,7 +129,7 @@ manifest.config.ts            # @crxjs 빌드 시 manifest.json 생성
 
 ## 절대 하지 말 것
 
-- `host_permissions`를 무심코 확장 (Chrome 심사 리스크). 새 도메인이 정말 필요한지 의심부터 — 본 확장은 검색광고 API 단일 채널만 사용.
+- `host_permissions`를 좁혔다 넓혔다 왕복 (권한 증가 때마다 재승인 비용). 넓히는 것 자체는 자유.
 - background에서 anti-bot 보호된 도메인을 직접 fetch (콘텐츠 스크립트 경유 우선).
 - 코어 파일을 본 repo에서만 수정 (드리프트).
 - 사용자 광고 데이터를 외부로 전송.
