@@ -1,6 +1,10 @@
 # F-AutoSetup - 링크 하나로 광고 세팅 (AX 2호)
 
-> 상태: **설계 완료, 구현 미착수** (2026-08-13)
+> 상태: **보류** (2026-08-14 사용자 결정). 일부 구현 후 중단 — 확장에서는 메뉴를 내려 닿지 않는다.
+> 진행분과 재개 방법은 `src/features/auto-setup/CLAUDE.md` 머리말 참조.
+> **§8 열린 결정은 전부 확정됐고, 생성 방식은 화면 자동화가 아니라 내부 API POST로 뒤집혔다**
+> (라이브 정찰 결과: `2026-08-14-f-autosetup-ncc-write-recon.md`). 이 문서의 §5.5·§6(대량등록 CSV·
+> EUC-KR·화면 자동화)은 그 정찰로 **폐기**됐으니 재개 시 정찰 문서를 먼저 읽을 것.
 > 정찰 원본: 메모리 `project_f_autosetup_mass_manage`, `reference_naver_tag_picker`
 > 선행 AX: [F-Brief](./2026-07-16-f-brief-design.md) - AI 경계 원칙을 여기서 이어받되 더 넓게 쓴다
 

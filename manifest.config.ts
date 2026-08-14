@@ -36,6 +36,8 @@ export default defineManifest({
     // F-Brief — AI 문장 조립 중계 서버(Edge Function). 광고 데이터는 체크된 facts만 전송,
     // 서버는 저장/로깅하지 않는다(설계 §3·§6). brief-compose.ts의 FN_URL과 동일 도메인 필수.
     "https://gvyvrjncpwmcwycebrhf.supabase.co/*",
+    // F-AutoSetup이 임의 링크를 읽으려면 `<all_urls>`가 필요하지만 기능이 보류라 도로 뺐다
+    // (2026-08-14). **배포 전에 뺐으므로 사용자 재승인은 발생하지 않았다** — 재개 시 다시 넣는다.
   ],
   options_ui: {
     page: "src/options/index.html",

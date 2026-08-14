@@ -3332,6 +3332,9 @@ function renderTableRow(
         },
         // "세팅안 생성"은 완성 전이라 잠시 메뉴에서 제거(2026-07-20) — openSetupFlow는 유지,
         // 완성되면 여기 메뉴만 되살리면 된다.
+        // "링크로 광고 만들기"(F-AutoSetup)는 보류로 메뉴에서 제거(2026-08-14) — 코드는
+        // src/features/auto-setup/에 그대로 있다. 재개하면 여기 항목만 되살리면 된다.
+        // 단 `<all_urls>` 권한도 같이 되살려야 링크 읽기가 동작한다(그 폴더 CLAUDE.md 참조).
         {
           label: "관리 이력 보고",
           onClick: () =>

@@ -16,6 +16,7 @@ import type {
   ShoppingRankCache,
 } from "./storage";
 import type { AdDevice } from "./device";
+import type { ProductPageInfo } from "./auto-setup";
 
 /** 옵션 페이지 열기 */
 export interface OpenOptionsRequest {
@@ -181,6 +182,46 @@ export interface FetchImageBinaryResponse {
   error?: string;
 }
 
+/**
+ * F-AutoSetup — content(ads.naver.com) → background. 링크를 숨김 탭으로 열어 상품 정보를 읽는다.
+ * F-AssetBulk와 같은 hidden tab 방식이지만 대상이 임의 사이트라 붙박이 콘텐츠 스크립트를 못 쓴다 —
+ * `chrome.scripting.executeScript`로 추출 함수를 그때그때 주입한다.
+ *
+ * 못 읽으면 **원인을 따지지 않고**(캡챠인지 로그인인지 구조 변경인지 판별하려 들면 그 코드가 계속
+ * 깨진다) 탭을 앞으로 꺼내 `needsUser`로 알린다. 사람이 3초면 판단한다.
+ */
+export interface AutoSetupReadPageRequest {
+  type: "AUTO_SETUP_READ_PAGE";
+  url: string;
+}
+
+/** 사용자가 페이지를 처리한 뒤 같은 탭에서 다시 읽는다. */
+export interface AutoSetupRetryReadRequest {
+  type: "AUTO_SETUP_RETRY_READ";
+  tabId: number;
+}
+
+/** 사용자가 그만두면 열어둔 탭을 닫는다. */
+export interface AutoSetupCloseTabRequest {
+  type: "AUTO_SETUP_CLOSE_TAB";
+  tabId: number;
+}
+
+export interface AutoSetupReadPageResponse {
+  ok: boolean;
+  /** ok=true면 읽어낸 페이지 정보 */
+  info?: ProductPageInfo;
+  /** 사람 확인이 필요함 — 탭을 앞으로 꺼내뒀다. 이 tabId로 재시도한다. */
+  needsUser?: boolean;
+  tabId?: number;
+  /** 사용자 친화 한글 메시지 */
+  error?: string;
+}
+
+export interface AutoSetupCloseTabResponse {
+  ok: boolean;
+}
+
 /** 모든 in-bound 메시지 유니온 */
 export type ExtensionMessage =
   | OpenOptionsRequest
@@ -190,7 +231,10 @@ export type ExtensionMessage =
   | MultiAccountCollectAccountRequest
   | FetchProductPageRequest
   | ScrapeProductImagesRequest
-  | FetchImageBinaryRequest;
+  | FetchImageBinaryRequest
+  | AutoSetupReadPageRequest
+  | AutoSetupRetryReadRequest
+  | AutoSetupCloseTabRequest;
 
 /** 모든 out-bound 응답 유니온 */
 export type ExtensionResponse =
@@ -201,4 +245,6 @@ export type ExtensionResponse =
   | MultiAccountCollectResponse
   | FetchProductPageResponse
   | ScrapeProductImagesResponse
-  | FetchImageBinaryResponse;
+  | FetchImageBinaryResponse
+  | AutoSetupReadPageResponse
+  | AutoSetupCloseTabResponse;

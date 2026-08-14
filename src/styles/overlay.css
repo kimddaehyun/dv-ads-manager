@@ -5661,3 +5661,61 @@ td.dvads-period-delta-down {
 .dvads-actor-actions .dvads-cw-spacer {
   display: none;
 }
+
+/* ─── F-AutoSetup — 링크로 광고 만들기 ─── */
+/* 카드/제목/설명/버튼은 .dvads-input-* 를 그대로 쓴다. 여기는 이 기능 고유 부분만. */
+.dvads-autosetup-card {
+  width: 440px;
+}
+.dvads-autosetup-url {
+  width: 100%;
+  margin-bottom: 16px;
+}
+.dvads-autosetup-busy {
+  font-size: 13px;
+  color: #6B7280;
+  padding: 18px 0 22px;
+  text-align: center;
+}
+.dvads-autosetup-facts {
+  display: grid;
+  grid-template-columns: 84px 1fr;
+  gap: 8px 12px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.dvads-autosetup-facts dt {
+  color: #6B7280;
+}
+.dvads-autosetup-facts dd {
+  margin: 0;
+  color: #171717;
+  word-break: break-word;
+}
+.dvads-autosetup-warn {
+  font-size: 12px;
+  line-height: 1.5;
+  color: #92400E;
+  background: #FFFBEB;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+.dvads-autosetup-fix {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  font-family: inherit;
+  color: #171717;
+  resize: vertical;
+  margin-bottom: 16px;
+}
+.dvads-autosetup-fix:focus {
+  outline: none;
+  border-color: #E6783B;
+}

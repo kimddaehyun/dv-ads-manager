@@ -128,6 +128,8 @@ chrome.runtime.onMessage.addListener((msg: ExtensionMessage, _sender, sendRespon
       });
     return true;
   }
+  // F-AutoSetup(보류, 2026-08-14)의 AUTO_SETUP_* 분기는 제거했다 — 부르는 데가 없는데
+  // 임의 탭을 여는 처리기를 배포본에 남길 이유가 없다. 재개 방법은 auto-setup/CLAUDE.md.
   if (msg?.type === "FETCH_IMAGE_BINARY") {
     handleFetchImageBinary(msg.url)
       .then(sendResponse)
@@ -184,6 +186,10 @@ async function handleFetchProductPage(url: string): Promise<FetchProductPageResp
     await chrome.tabs.remove(tabId).catch(() => {});
   }
 }
+
+// F-AutoSetup(보류, 2026-08-14) 링크 읽기 처리기는
+// src/features/auto-setup/page-read-background.ts 로 옮겼다 — 지금은 아무도 import하지 않아
+// 번들에 안 들어간다. 재개 방법은 그 파일 머리말 참조.
 
 // ─── F-AssetBulk V2 — 이미지 binary fetch (광고 모달 업로드용) ───
 // shop-phinf.pstatic.net이 host_permissions에 있어 background fetch는 CORS 우회. ArrayBuffer로
