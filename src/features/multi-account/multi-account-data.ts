@@ -136,6 +136,8 @@ export async function authFetch<T>(
     const text = await resp.text().catch(() => "");
     throw new Error(`HTTP ${resp.status} ${text.slice(0, 200)}`);
   }
+  // DELETE 성공은 204 + 빈 본문이라 json() 파싱이 실패한다 — 호출부가 값을 안 쓰므로 undefined.
+  if (resp.status === 204) return undefined as T;
   return (await resp.json()) as T;
 }
 
