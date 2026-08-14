@@ -54,6 +54,7 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 - 버전은 `package.json`의 `version`이 단일 소스 — `manifest.config.ts`에서 자동 import.
 - **확장 reload 직후엔 크롬이 페이지 로드에 콘텐츠 스크립트를 못 넣는 공백이 있다** — background `onInstalled`가 열린 탭에 재주입(`reinjectContentScripts`, `scripting` 권한). 재주입 시 이전 고아 컨텍스트의 루프와 DOM 싸움 방지는 `src/shared/takeover.ts` 세대 표식(`claimTakeover`/`isStale`) — 새 주기 루프(interval·observer)를 만들면 isStale 은퇴 체크를 넣을 것 (2026-07-22).
 - **Vite 동적 import의 CSS preload는 페이지 도메인 기준 `/assets/*.css`로 나가 원천적으로 잘못된 URL** — 서버가 관대하면 우연히 통과하지만 진짜 404/차단이면 link error가 모듈 import 전체를 실패시킨다("다계정 모듈 로드 실패"). CSS는 manifest css로 크롬이 직접 주입하므로 콘텐츠 진입점의 `vite:preloadError` preventDefault 가드가 방어선 — 제거 금지 (2026-07-22 실사고).
+- **기능을 내릴 때 "화면 청크가 없다"만 보면 안 된다** — background(`src/background/index.ts`)가 그 기능 모듈을 정적 import하고 있으면 배포본에 그대로 실린다. 확인은 `dist/service-worker-loader.js`가 가리키는 실제 파일에서 해당 메시지 타입을 검색할 것. dist 최상위나 `dist/assets/*` 이름만 보면 로더에 가려 안 보인다 (2026-08-14 F-AutoSetup 보류 시 실제로 놓쳤던 지점).
 - **`tsc -b` incremental cache에 stale 에러가 남을 수 있음** — `rm -f tsconfig.*.tsbuildinfo && npm run typecheck`로 클린 재실행.
 - **사용자 노출 한글 메시지에 영문 기술용어 금지** (`reload`/`fetch`/`background` 등). `friendly-error.ts` 패턴 따라 일상 한글로. 배지 툴팁·토스트·다이얼로그 모두 동일.
 - **정보성 로그에 `console.warn`/`console.error` 금지 — `console.debug`만.** 크롬은 확장이 남긴 warn/error를 `chrome://extensions` "오류" 목록에 수집해 확장 카드에 경고 배지를 띄운다. 정상 동작 알림이 warn이면 사용자는 설치 실패로 오해한다(2026-08-14 실사고: F-PoP MAIN world "patch installed" 알림이 `all_frames`라 2회 찍혀 "문제 2개 발견됨" + 압축된 소스 전체가 오류 상세에 노출). 이미 쌓인 항목은 확장 관리 페이지 "모두 지우기"로 제거. warn/error는 진짜 실패 경로에만.
