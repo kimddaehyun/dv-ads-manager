@@ -258,8 +258,11 @@ declare const __APP_VERSION__: string;
     return xhrSend.call(this, body);
   };
 
+  // console.debug 필수 — warn/error는 크롬이 chrome://extensions 의 "오류"로 수집해서
+  // 정상 설치인데도 "문제 2개 발견됨"(all_frames라 메인+iframe 2회) 배지가 뜬다. 사용자가
+  // 설치 실패로 오해한 실사고(2026-08-14). 진단용 로그는 debug/log 레벨만 쓸 것.
   try {
-    console.warn(
+    console.debug(
       `[dv-ads/MAIN] patch installed · fetch+xhr wrapped · v${__APP_VERSION__} · trace=${DEBUG_TRACE}`,
     );
   } catch {
