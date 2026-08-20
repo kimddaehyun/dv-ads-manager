@@ -1,6 +1,6 @@
 # F-MultiAccount — 다계정 대시보드
 
-`/manage/ad-accounts/` URL에서 우상단 fixed 버튼(`dvads-multi-btn`) → `dvads-multi-popover`로 광고계정 명단(자동 fetch) + 어제 6지표 + 비즈머니 + 계약 D-day(≤5 빨강). 옵션 페이지에서 별칭/즐겨찾기/숨김 편집. 리포트(F-Report)·세팅안(F-Setup)·변경이력 알림(F-ChangeWatch)의 진입 메뉴도 이 popover에 있다.
+`/manage/ad-accounts/` URL에서 우상단 fixed 버튼(`dvads-multi-btn`) → `dvads-multi-popover`로 광고계정 명단(자동 fetch) + 어제 6지표 + 비즈머니 + 계약 D-day(≤5 빨강). 옵션 페이지에서 별칭/즐겨찾기/숨김 편집. 리포트(F-Report)·세팅안(F-Setup)·계정 알림 설정(F-ChangeWatch, 비즈머니/브랜드검색/예산 도달/변경 이력 4종 통합)의 진입 메뉴도 이 popover에 있다.
 
 ## 파일
 

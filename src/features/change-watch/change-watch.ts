@@ -51,13 +51,30 @@ interface HistorySearchResponse {
   data?: RawHistoryRow[];
 }
 
-// 예산 소진으로 노출이 멈춘 이벤트. UNLOCK(재개)은 알림 대상이 아니라 제외.
-// `ncc.charge.ACCOUNT_LOCK`은 계정 비즈머니 소진이라 여기서 뺐다 — 대상이 캠페인/그룹이
-// 아니라 계정 자체(data 없이 계정명만)이고, 그 알림은 이미 비즈머니 임계값이 담당한다.
+/**
+ * 예산 소진으로 노출이 멈춘 이벤트의 대상 이름. 여기 없는 종류(공유예산 등)도
+ * `ncc.charge.*_LOCK` 규칙으로 잡히고 라벨만 "예산"으로 폴백한다 — 네이버가 종류를
+ * 늘려도 놓치지 않게 이름을 나열하지 않는다 (2026-08-20).
+ */
 const LOCK_LABEL: Record<string, string> = {
-  "ncc.charge.CAMPAIGN_LOCK": "캠페인",
-  "ncc.charge.ADGROUP_LOCK": "광고그룹",
+  "ncc.charge.CAMPAIGN_LOCK": "캠페인 하루예산",
+  "ncc.charge.ADGROUP_LOCK": "광고그룹 하루예산",
 };
+
+/**
+ * 예산 도달 이벤트인지 판정하고 대상 이름을 돌려준다. 아니면 null.
+ *
+ * - 재개(`*_UNLOCK`)는 알림 대상이 아니다 — 멈춘 것만 알린다.
+ * - `ncc.charge.ACCOUNT_LOCK`은 계정 비즈머니 소진이라 뺀다(대상이 캠페인/그룹이 아니라
+ *   계정 자체이고, 그 알림은 비즈머니 임계값이 담당한다).
+ */
+function lockLabelOf(eventType: string): string | null {
+  if (!eventType.startsWith("ncc.charge.")) return null;
+  // "..._UNLOCK"은 끝 5글자가 "NLOCK"이라 "_LOCK"과 안 겹친다.
+  if (!eventType.endsWith("_LOCK")) return null;
+  if (eventType === "ncc.charge.ACCOUNT_LOCK") return null;
+  return LOCK_LABEL[eventType] ?? "예산";
+}
 
 // 변경자를 특정할 수 없는 행(빈 문자열)과 네이버 쪽 시스템 변경자는 뺀다.
 // 빈 문자열은 예산 잠금 계열이라 위에서 budget으로 따로 처리되고,
@@ -200,11 +217,10 @@ export async function fetchChangeHistory(
     throw new Error(json.errorMessage || "변경이력을 불러오지 못했어요");
   }
   const rows = json.data ?? [];
+  // 한도에 걸린 건 호출부(fetchChangeHistoryAll)가 기간을 쪼개 다시 받으므로 정상 경로다 —
+  // warn으로 남기면 확장 관리 페이지에 오류로 수집된다.
   if (rows.length >= MAX_ROWS) {
-    console.warn(
-      `[dv-ads/change-watch] 변경이력이 ${MAX_ROWS}건을 넘어 일부가 빠졌을 수 있어요`,
-      customerId,
-    );
+    console.debug("[dv-ads/change-watch] 한 번에 받을 수 있는 한도에 걸림", customerId);
   }
   return rows;
 }
@@ -245,8 +261,16 @@ export async function fetchChangeHistoryAll(
 /**
  * 원본 행 → 알림 목록. `ourActors`가 비어있으면 외부 수정은 판별이 불가능하므로
  * (우리 것도 남의 것으로 보임) 예산 알림만 만든다.
+ *
+ * `kinds`는 계정별로 켜둔 알림 종류 — 끈 종류는 애초에 만들지 않는다(둘 다 기본 포함).
  */
-export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): ChangeWatchEvent[] {
+export function classifyHistory(
+  rows: RawHistoryRow[],
+  ourActors: string[],
+  kinds?: { budget?: boolean; external?: boolean },
+): ChangeWatchEvent[] {
+  const wantBudget = kinds?.budget !== false;
+  const wantExternal = kinds?.external !== false;
   const ours = new Set(ourActors.map((a) => a.trim().toLowerCase()));
   const canDetectExternal = ours.size > 0;
   const out: ChangeWatchEvent[] = [];
@@ -257,8 +281,9 @@ export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): Cha
     if (!ts) continue;
     const objects = row.objects ?? [];
 
-    const lockScope = LOCK_LABEL[eventType];
-    if (lockScope) {
+    const lockLabel = lockLabelOf(eventType);
+    if (lockLabel) {
+      if (!wantBudget) continue;
       objects.forEach((obj, i) => {
         const budget = lockedBudget(obj);
         out.push({
@@ -268,15 +293,15 @@ export function classifyHistory(rows: RawHistoryRow[], ourActors: string[]): Cha
           actor: "",
           target: obj.displayName ?? "",
           summary: budget
-            ? `${lockScope} 일 예산 ${budget.toLocaleString("ko-KR")}원 도달`
-            : `${lockScope} 일 예산 도달`,
+            ? `${lockLabel} ${budget.toLocaleString("ko-KR")}원 도달`
+            : `${lockLabel} 도달`,
           ...entityIds(obj),
         });
       });
       continue;
     }
 
-    if (!canDetectExternal || !eventType.startsWith("ncc.heroes.")) continue;
+    if (!wantExternal || !canDetectExternal || !eventType.startsWith("ncc.heroes.")) continue;
     const actor = (row.actorDisplayName ?? "").trim();
     if (!isAttributed(actor)) continue;
     if (ours.has(actor.toLowerCase())) continue;

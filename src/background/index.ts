@@ -54,7 +54,9 @@ chrome.runtime.onInstalled.addListener(() => {
 /**
  * manifest에 선언된 콘텐츠 스크립트를 현재 열려 있는 매칭 탭에 즉시 주입.
  * 파일명은 빌드 해시가 붙으므로 getManifest()에서 동적으로 읽는다. 각 스크립트는
- * 자체 중복 가드(__dvadsMultiAccountInit, __dvadsFetchPatched 등)가 있어 재주입에 안전.
+ * 자체 중복 가드(__dvadsMultiAccountGen, __dvadsFetchPatched 등)가 있어 재주입에 안전.
+ * 가드는 **세대값 기준**이어야 한다 — window는 격리 세계에서 재주입된 새 컨텍스트와 공유되므로
+ * boolean 가드면 새 컨텍스트가 초기화를 건너뛰고, 옛 컨텍스트는 takeover로 은퇴해 UI가 사라진다.
  * 개별 탭 실패(권한 없는 페이지 등)는 무시하고 계속 진행.
  */
 async function reinjectContentScripts(): Promise<void> {

@@ -179,6 +179,12 @@ export interface MultiAccountUserMeta {
    */
   changeWatch?: boolean;
   /**
+   * 예산 도달 알림 끄기. **기본은 켜짐** — 광고가 멈춘 건 계정을 가릴 이유가 없어
+   * 명단에 있으면 항상 본다. 끈 계정만 `false`가 저장되고, 켜면 키를 지운다
+   * (기본값은 키 제거로 표현 — 다른 설정과 같은 규칙, 2026-08-20).
+   */
+  budgetWatch?: boolean;
+  /**
    * 관리이력 보고에 포함할 이력 종류(그룹 key 목록). undefined = 전체 포함.
    * 다이얼로그 좌측 필터에서 고르며 계정별로 기억한다.
    */

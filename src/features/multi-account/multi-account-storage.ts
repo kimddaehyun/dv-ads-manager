@@ -156,6 +156,8 @@ export async function updateUserMeta(
   if ("brandSearchDaysThreshold" in patch && patch.brandSearchDaysThreshold == null) delete next.brandSearchDaysThreshold;
   // 끄기 = 키 제거 (false를 남겨두면 저장소에 의미 없는 값만 쌓인다)
   if ("changeWatch" in patch && !patch.changeWatch) delete next.changeWatch;
+  // 예산 도달만 반대 — 기본이 켜짐이라 끈 계정(false)만 저장하고 켜면 키를 지운다.
+  if ("budgetWatch" in patch && patch.budgetWatch !== false) delete next.budgetWatch;
   applyReportSettingRemovals(next, patch);
   all[adAccountNo] = next;
   // 이 계정 한 행만 push — 전체 맵을 매번 올리는 건 낭비.
@@ -199,6 +201,7 @@ export async function updateUserMetaMany(
     if ("brandSearchDaysThreshold" in patch && patch.brandSearchDaysThreshold == null) delete next.brandSearchDaysThreshold;
   // 끄기 = 키 제거 (false를 남겨두면 저장소에 의미 없는 값만 쌓인다)
   if ("changeWatch" in patch && !patch.changeWatch) delete next.changeWatch;
+    if ("budgetWatch" in patch && patch.budgetWatch !== false) delete next.budgetWatch;
     applyReportSettingRemovals(next, patch);
     all[adAccountNo] = next;
   }
@@ -557,6 +560,14 @@ export async function clearChangeWatchStates(adAccountNos: number[]): Promise<vo
   await chrome.storage.local.remove(
     adAccountNos.map((no) => CHANGE_WATCH_PREFIX + String(no)),
   );
+}
+
+/**
+ * 예산 도달 알림이 켜져 있는지 — **기본은 켜짐**이라 `false`가 저장된 계정만 꺼짐이다.
+ * 변경 이력 알림(`changeWatch`)과 달리 계정을 골라 켜는 방식이 아니다(2026-08-20).
+ */
+export function isBudgetWatchOn(meta: MultiAccountUserMeta | undefined | null): boolean {
+  return meta?.budgetWatch !== false;
 }
 
 export function isChangeWatchFresh(state: ChangeWatchState | null): boolean {

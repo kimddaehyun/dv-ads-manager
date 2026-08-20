@@ -2570,6 +2570,23 @@ td.dvads-period-delta-down {
   color: #9CA3AF;
   text-align: center;
 }
+/* [더 보기] — 50개씩 이어붙이는 버튼. 목록 항목과 구분되게 위쪽 선 하나만. */
+.dvads-change-more-btn {
+  display: block;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-top: 1px solid #EFEFEF;
+  background: transparent;
+  font-family: inherit;
+  font-size: 13px;
+  color: #6B7280;
+  cursor: pointer;
+}
+.dvads-change-more-btn:hover {
+  background: #FAFAFA;
+  color: #171717;
+}
 
 /* ─── 변경이력 알림 다이얼로그 (켜기/끄기 + 제외 변경자 선택) ─────────── */
 
@@ -5718,4 +5735,32 @@ td.dvads-period-delta-down {
 .dvads-autosetup-fix:focus {
   outline: none;
   border-color: #E6783B;
+}
+
+/* ─── 계정 알림 설정 (통합 다이얼로그) ─── */
+/* 행/입력/토글은 리포트 설정(.dvads-rdp-set-*)을 그대로 쓰고, 여기는 카드 안에 놓기 위한
+   여백과 "값 + 토글"이 한 행에 같이 오는 경우만 다룬다. */
+.dvads-alerts-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #9CA3AF;
+}
+.dvads-alerts-row {
+  /* 카드 좌우 여백(22px)을 이미 쓰므로 행 자체 좌우 padding은 없앤다. */
+  padding: 16px 0 0;
+}
+.dvads-alerts-row .dvads-rdp-set-ratio-wrap {
+  margin-left: auto;
+  /* 금액(100,000원)이 답답하지 않게 리포트 설정(80px)보다 넓게. */
+  width: 120px;
+}
+/* 값 입력칸이 있는 행은 토글이 그 오른쪽에 붙는다 — 둘 다 auto면 사이가 벌어진다. */
+.dvads-alerts-row .dvads-rdp-set-ratio-wrap + .dvads-asset-bulk-switch {
+  margin-left: 10px;
+}
+.dvads-alerts-row.is-off .dvads-rdp-set-ratio-wrap {
+  opacity: 0.45;
+}
+.dvads-alerts-actors {
+  padding: 14px 0 0;
 }
