@@ -21,7 +21,9 @@ npm run package     # build + dist-zip/DV-Ads-Manager vX.Y.Z.zip
 
 ## Release
 
-`v*` 태그를 push 하면 `.github/workflows/release.yml`이 `npm run package`를 실행해 zip을 GitHub Release에 첨부한다. `package.json`의 `version`을 먼저 올리고 동일 버전으로 태그: `git tag v0.0.X && git push --tags`. zip 파일명 패턴을 바꾸면 `release.yml`의 `files:` 글롭과 `scripts/zip-dist.mjs`의 outFile 패턴도 동기화.
+`package.json`의 `version`을 먼저 올리고 → `npm run package` → 커밋 → 동일 버전으로 태그(`git tag v0.0.X && git push origin v0.0.X`) → **`gh release create v0.0.X "dist-zip/DV-Ads-Manager v0.0.X.zip" --generate-notes`로 직접 올린다.** `.github/workflows/release.yml`이 태그 push에 반응하도록 되어 있지만 **이 저장소에서 실행 기록이 0건** — Actions는 켜져 있고 파일도 remote에 있는데 GitHub이 워크플로 자체를 등록하지 않았다(2026-08-20 v0.0.10 확인). 태그만 밀고 CI를 기다리지 말 것. zip 파일명 패턴을 바꾸면 `release.yml`의 `files:` 글롭과 `scripts/zip-dist.mjs`의 outFile 패턴도 동기화.
+
+- **버전을 안 올린 채 로컬만 재빌드하면 배포본이 조용히 낡는다** — 태그는 옛 커밋에 박혀 있고 GitHub Release zip도 그대로라, 내 `dist/`는 최신인데 남들이 받는 건 옛 코드다(2026-08-20 v0.0.9에서 7커밋 누락 발견). 사용자에게 전달할 수정이면 반드시 버전 bump + 새 태그까지.
 
 ## 코드 지도 — 기능별 CLAUDE.md
 
